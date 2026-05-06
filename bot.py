@@ -2,9 +2,12 @@ import asyncio
 import os
 import sqlite3
 import calendar
+import logging
+import traceback
 from io import StringIO
 from datetime import datetime, timedelta
-
+from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo
 import pandas as pd
 import requests
 from aiogram import Bot, Dispatcher, F
@@ -15,6 +18,18 @@ from dotenv import load_dotenv
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+
+APP_TIMEZONE = ZoneInfo("Europe/Moscow")
+
+
+def now_local():
+    return datetime.now(APP_TIMEZONE)
+
+APP_TIMEZONE = ZoneInfo("Europe/Moscow")
+
+
+def now_local():
+    return datetime.now(APP_TIMEZONE)
 
 SHEET_ID = "1bRuO870pDBf6O-kXJ1O342SmxmjZgpsiacM2aPOJm9Y"
 GID = "1690889478"
@@ -92,7 +107,7 @@ async def load_sheet():
     global cached_df, cached_time
 
     async with cache_lock:
-        now = datetime.now()
+        now = now_local()
 
         if cached_df is not None and cached_time is not None:
             if (now - cached_time).total_seconds() < 60:
@@ -332,12 +347,12 @@ def selected_compare_text(user_id):
 
 
 def days_in_current_month():
-    now = datetime.now()
+    now = now_local()
     return calendar.monthrange(now.year, now.month)[1]
 
 
 def current_period():
-    today = datetime.now().day
+    today = now_local().day
     max_day = days_in_current_month()
 
     if today <= 15:
@@ -352,7 +367,7 @@ def is_day_published(day):
 
 
 def weekday_label(day):
-    now = datetime.now()
+    now = now_local()
     weekday_index = datetime(now.year, now.month, day).weekday()
     label = WEEKDAYS[weekday_index]
 
@@ -365,7 +380,7 @@ def weekday_label(day):
 
 
 def format_date(day):
-    return f"{day} {MONTHS[datetime.now().month]} ({weekday_label(day)})"
+    return f"{day} {MONTHS[now_local().month]} ({weekday_label(day)})"
 
 
 def clean_value(value):
@@ -564,7 +579,7 @@ async def get_day_schedule(name, day):
         if day < start:
             return f"{name}{role_text}\n\n{format_date(day)} — график уже не актуален"
 
-        return f"{name}{role_text}\n\n{day}–{max_day} {MONTHS[datetime.now().month]} — график пока не составлен"
+        return f"{name}{role_text}\n\n{day}–{max_day} {MONTHS[now_local().month]} — график пока не составлен"
 
     value = await get_day_value(row, day)
     shift = detect_shift(value)
@@ -614,12 +629,12 @@ async def get_range_schedule(name, start_day, end_day):
     while day <= end_day and day <= max_day:
         if day < period_start:
             old_end = min(15, period_start - 1, end_day)
-            result.append(f"{day}–{old_end} {MONTHS[datetime.now().month]} — график уже не актуален")
+            result.append(f"{day}–{old_end} {MONTHS[now_local().month]} — график уже не актуален")
             day = old_end + 1
             continue
 
         if day > period_end:
-            result.append(f"{day}–{max_day} {MONTHS[datetime.now().month]} — график пока не составлен")
+            result.append(f"{day}–{max_day} {MONTHS[now_local().month]} — график пока не составлен")
             break
 
         value = await get_day_value(row, day)
@@ -643,7 +658,7 @@ async def get_people(day, user_id):
         if day < start:
             return f"👥 {format_date(day)}\n\n{my_status}\n\nГрафик на эту дату уже не актуален."
 
-        return f"👥 {day}–{max_day} {MONTHS[datetime.now().month]}\n\n{my_status}\n\nГрафик на этот период пока не составлен."
+        return f"👥 {day}–{max_day} {MONTHS[now_local().month]}\n\n{my_status}\n\nГрафик на этот период пока не составлен."
 
     result = await get_people_for_day(day)
 
@@ -679,7 +694,7 @@ async def find_next_shift(name, from_day):
 
 
 async def get_notification_text(name):
-    today = datetime.now().day
+    today = now_local().day
 
     if not is_day_published(today):
         return None
@@ -792,7 +807,7 @@ async def notification_loop(bot):
     sent = {}
 
     while True:
-        now = datetime.now()
+        now = now_local()
         current_time = now.strftime("%H:%M")
         today_key = now.strftime("%Y-%m-%d")
 
@@ -1061,7 +1076,7 @@ async def today(message: Message):
         selecting_own_name.add(message.from_user.id)
         return await message.answer("Сначала выбери своё имя.", reply_markup=dep_kb())
 
-    result = await get_day_schedule(name, datetime.now().day)
+    result = await get_day_schedule(name, now_local().day)
     await loading_answer(message, "⏳ Смотрю график на сегодня...", result)
 
 
@@ -1073,7 +1088,7 @@ async def tomorrow(message: Message):
         selecting_own_name.add(message.from_user.id)
         return await message.answer("Сначала выбери своё имя.", reply_markup=dep_kb())
 
-    day = (datetime.now() + timedelta(days=1)).day
+    day = (now_local() + timedelta(days=1)).day
     result = await get_day_schedule(name, day)
     await loading_answer(message, "⏳ Смотрю график на завтра...", result)
 
@@ -1086,7 +1101,7 @@ async def week(message: Message):
         selecting_own_name.add(message.from_user.id)
         return await message.answer("Сначала выбери своё имя.", reply_markup=dep_kb())
 
-    start_day = datetime.now().day
+    start_day = now_local().day
     result = await get_range_schedule(name, start_day, start_day + 6)
     await loading_answer(message, "⏳ Собираю график на неделю...", result)
 
@@ -1105,13 +1120,13 @@ async def full_schedule(message: Message):
 
 @dp.message(F.text == "👥 Кто сегодня")
 async def who_today(message: Message):
-    result = await get_people(datetime.now().day, message.from_user.id)
+    result = await get_people(now_local().day, message.from_user.id)
     await loading_answer(message, "⏳ Проверяю, кто работает сегодня...", result)
 
 
 @dp.message(F.text == "👥 Кто завтра")
 async def who_tomorrow(message: Message):
-    day = (datetime.now() + timedelta(days=1)).day
+    day = (now_local() + timedelta(days=1)).day
     result = await get_people(day, message.from_user.id)
     await loading_answer(message, "⏳ Проверяю, кто работает завтра...", result)
 
