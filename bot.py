@@ -374,7 +374,7 @@ def weekday_label(day):
     is_red = weekday_index >= 4 or (now.month, day) in RU_HOLIDAYS
 
     if is_red:
-        return f"🔴 {label}"
+        return f"❗ {label}"
 
     return label
 
