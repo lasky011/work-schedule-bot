@@ -960,7 +960,7 @@ async def department_selected(message: Message):
 async def own_name_selected(message: Message):
     user_id = message.from_user.id
 
-    save_user(user_id, name=message.text)
+    save_user(user_id, name=message.text, notify=0, notify_time='')
     reset_modes(user_id)
 
     await message.answer(
