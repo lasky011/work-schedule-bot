@@ -21,12 +21,10 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 APP_TIMEZONE = ZoneInfo("Europe/Moscow")
 
-
 def now_local():
     return datetime.now(APP_TIMEZONE)
 
 APP_TIMEZONE = ZoneInfo("Europe/Moscow")
-
 
 def now_local():
     return datetime.now(APP_TIMEZONE)
@@ -37,43 +35,107 @@ CSV_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&
 
 dp = Dispatcher()
 
-conn = sqlite3.connect("users.db")
-cursor = conn.cursor()
+DATABASE_URL = os.getenv("DATABASE_URL")
 
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS users (
-    user_id INTEGER PRIMARY KEY,
-    name TEXT,
-    notify INTEGER DEFAULT 0,
-    notify_time TEXT
-)
-""")
-conn.commit()
+try:
+    import psycopg2
+except ImportError:
+    psycopg2 = None
+
+USE_POSTGRES = bool(DATABASE_URL)
+
+
+def get_db_connection():
+    if USE_POSTGRES:
+        return psycopg2.connect(DATABASE_URL)
+
+    return sqlite3.connect("users.db")
+
+
+def db_placeholder():
+    return "%s" if USE_POSTGRES else "?"
+
+
+def init_db():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS users (
+        user_id BIGINT PRIMARY KEY,
+        name TEXT,
+        notify INTEGER DEFAULT 0,
+        notify_time TEXT
+    )
+    """)
+
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+
+init_db()
 
 
 def save_user(user_id, name=None, notify=None, notify_time=None):
-    cursor.execute("SELECT user_id FROM users WHERE user_id=?", (user_id,))
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    ph = db_placeholder()
+
+    cursor.execute(
+        f"SELECT user_id FROM users WHERE user_id={ph}",
+        (user_id,)
+    )
+
     exists = cursor.fetchone()
 
     if not exists:
         cursor.execute(
-            "INSERT INTO users (user_id, name, notify, notify_time) VALUES (?, ?, ?, ?)",
+            f"INSERT INTO users (user_id, name, notify, notify_time) VALUES ({ph}, {ph}, {ph}, {ph})",
             (user_id, name, notify or 0, notify_time)
         )
     else:
         if name is not None:
-            cursor.execute("UPDATE users SET name=? WHERE user_id=?", (name, user_id))
+            cursor.execute(
+                f"UPDATE users SET name={ph} WHERE user_id={ph}",
+                (name, user_id)
+            )
+
         if notify is not None:
-            cursor.execute("UPDATE users SET notify=? WHERE user_id=?", (notify, user_id))
+            cursor.execute(
+                f"UPDATE users SET notify={ph} WHERE user_id={ph}",
+                (notify, user_id)
+            )
+
         if notify_time is not None:
-            cursor.execute("UPDATE users SET notify_time=? WHERE user_id=?", (notify_time, user_id))
+            cursor.execute(
+                f"UPDATE users SET notify_time={ph} WHERE user_id={ph}",
+                (notify_time, user_id)
+            )
 
     conn.commit()
+    cursor.close()
+    conn.close()
 
 
 def get_user(user_id):
-    cursor.execute("SELECT user_id, name, notify, notify_time FROM users WHERE user_id=?", (user_id,))
-    return cursor.fetchone()
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    ph = db_placeholder()
+
+    cursor.execute(
+        f"SELECT user_id, name, notify, notify_time FROM users WHERE user_id={ph}",
+        (user_id,)
+    )
+
+    user = cursor.fetchone()
+
+    cursor.close()
+    conn.close()
+
+    return user
 
 
 def get_user_name(user_id):
@@ -82,16 +144,22 @@ def get_user_name(user_id):
 
 
 def get_notify_users():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
     cursor.execute(
         "SELECT user_id, name, notify_time FROM users WHERE notify=1 AND name IS NOT NULL AND notify_time IS NOT NULL"
     )
-    return cursor.fetchall()
 
+    users = cursor.fetchall()
 
+    cursor.close()
+    conn.close()
+
+    return users
 cached_df = None
 cached_time = None
 cache_lock = asyncio.Lock()
-
 
 async def download_sheet():
     def sync():
@@ -101,7 +169,6 @@ async def download_sheet():
         return pd.read_csv(StringIO(r.text), header=None)
 
     return await asyncio.to_thread(sync)
-
 
 async def load_sheet():
     global cached_df, cached_time
@@ -116,7 +183,6 @@ async def load_sheet():
         cached_df = await download_sheet()
         cached_time = now
         return cached_df
-
 
 DEPARTMENTS = {
     "👔 Менеджер": [
@@ -189,7 +255,6 @@ viewing_colleague = {}
 comparing_users = set()
 compare_selected = {}
 
-
 def main_kb(user_id):
     name = get_user_name(user_id) or "Моё имя"
 
@@ -202,7 +267,6 @@ def main_kb(user_id):
         resize_keyboard=True
     )
 
-
 def my_schedule_kb():
     return ReplyKeyboardMarkup(
         keyboard=[
@@ -213,7 +277,6 @@ def my_schedule_kb():
         resize_keyboard=True
     )
 
-
 def today_tomorrow_kb():
     return ReplyKeyboardMarkup(
         keyboard=[
@@ -222,7 +285,6 @@ def today_tomorrow_kb():
         ],
         resize_keyboard=True
     )
-
 
 def colleague_kb():
     return ReplyKeyboardMarkup(
@@ -234,7 +296,6 @@ def colleague_kb():
         ],
         resize_keyboard=True
     )
-
 
 def compare_kb():
     return ReplyKeyboardMarkup(
@@ -248,7 +309,6 @@ def compare_kb():
         resize_keyboard=True
     )
 
-
 def dep_kb():
     return ReplyKeyboardMarkup(
         keyboard=[
@@ -260,13 +320,11 @@ def dep_kb():
         resize_keyboard=True
     )
 
-
 def own_names_kb(department):
     return ReplyKeyboardMarkup(
         keyboard=[[KeyboardButton(text=name)] for name in DEPARTMENTS[department]] + [[KeyboardButton(text="🏠 Главное меню")]],
         resize_keyboard=True
     )
-
 
 def colleague_names_kb(department, user_id):
     my_name = get_user_name(user_id)
@@ -279,7 +337,6 @@ def colleague_names_kb(department, user_id):
     buttons.append([KeyboardButton(text="🏠 Главное меню")])
 
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
-
 
 def compare_names_kb(department, user_id):
     my_name = get_user_name(user_id)
@@ -300,7 +357,6 @@ def compare_names_kb(department, user_id):
 
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
-
 def notifications_kb():
     return ReplyKeyboardMarkup(
         keyboard=[
@@ -310,7 +366,6 @@ def notifications_kb():
         ],
         resize_keyboard=True
     )
-
 
 async def loading_answer(message: Message, loading_text: str, result_text: str, reply_markup=None):
     loading = await message.answer(loading_text)
@@ -322,7 +377,6 @@ async def loading_answer(message: Message, loading_text: str, result_text: str, 
 
     await message.answer(result_text, reply_markup=reply_markup)
 
-
 def reset_modes(user_id):
     waiting_for_time.discard(user_id)
     selecting_own_name.discard(user_id)
@@ -331,11 +385,9 @@ def reset_modes(user_id):
     comparing_users.discard(user_id)
     compare_selected.pop(user_id, None)
 
-
 def reset_compare_mode(user_id):
     comparing_users.discard(user_id)
     compare_selected.pop(user_id, None)
-
 
 def selected_compare_text(user_id):
     selected = sorted(compare_selected.get(user_id, set()))
@@ -345,11 +397,9 @@ def selected_compare_text(user_id):
 
     return "Выбранные сотрудники:\n" + "\n".join([f"• {name}" for name in selected])
 
-
 def days_in_current_month():
     now = now_local()
     return calendar.monthrange(now.year, now.month)[1]
-
 
 def current_period():
     today = now_local().day
@@ -360,11 +410,9 @@ def current_period():
 
     return 16, max_day
 
-
 def is_day_published(day):
     start, end = current_period()
     return start <= day <= end
-
 
 def weekday_label(day):
     now = now_local()
@@ -378,10 +426,8 @@ def weekday_label(day):
 
     return label
 
-
 def format_date(day):
     return f"{day} {MONTHS[now_local().month]} ({weekday_label(day)})"
-
 
 def clean_value(value):
     text = str(value).strip()
@@ -393,7 +439,6 @@ def clean_value(value):
         return ""
 
     return text
-
 
 def is_work_shift(value):
     text = clean_value(value)
@@ -409,7 +454,6 @@ def is_work_shift(value):
 
     return False
 
-
 def detect_shift(value):
     text = clean_value(value)
 
@@ -424,14 +468,12 @@ def detect_shift(value):
 
     return text
 
-
 def is_valid_time(text):
     try:
         datetime.strptime(text.strip(), "%H:%M")
         return True
     except ValueError:
         return False
-
 
 def get_day_column(df, day):
     for i in range(len(df)):
@@ -445,7 +487,6 @@ def get_day_column(df, day):
                     return col_index
 
     return None
-
 
 async def find_row(name):
     df = await load_sheet()
@@ -465,7 +506,6 @@ async def find_row(name):
 
     return None, None
 
-
 async def get_day_value(row, day):
     df = await load_sheet()
     col = get_day_column(df, day)
@@ -477,7 +517,6 @@ async def get_day_value(row, day):
         return ""
 
     return row[col]
-
 
 async def get_people_for_day(day):
     df = await load_sheet()
@@ -508,7 +547,6 @@ async def get_people_for_day(day):
 
     return result
 
-
 async def get_common_day_off_people(name, day):
     df = await load_sheet()
     col = get_day_column(df, day)
@@ -537,7 +575,6 @@ async def get_common_day_off_people(name, day):
 
     return result
 
-
 async def get_my_status_for_day(user_id, day):
     my_name = get_user_name(user_id)
 
@@ -558,7 +595,6 @@ async def get_my_status_for_day(user_id, day):
         return f"✅ Ты работаешь: {detect_shift(value)}"
 
     return "🏖 Ты отдыхаешь."
-
 
 async def get_day_schedule(name, day):
     max_day = days_in_current_month()
@@ -607,7 +643,6 @@ async def get_day_schedule(name, day):
 
     return text
 
-
 async def get_range_schedule(name, start_day, end_day):
     row, role = await find_row(name)
 
@@ -643,7 +678,6 @@ async def get_range_schedule(name, start_day, end_day):
 
     return "\n".join(result)
 
-
 async def get_people(day, user_id):
     max_day = days_in_current_month()
 
@@ -671,7 +705,6 @@ async def get_people(day, user_id):
 
     return text.strip()
 
-
 async def find_next_shift(name, from_day):
     row, _ = await find_row(name)
 
@@ -691,7 +724,6 @@ async def find_next_shift(name, from_day):
             return day, value
 
     return None, None
-
 
 async def get_notification_text(name):
     today = now_local().day
@@ -737,7 +769,6 @@ async def get_notification_text(name):
         text += "\n\n🏖 Сегодня вместе с тобой отдыхают:\n" + "\n".join(common_off)
 
     return text
-
 
 async def compare_multiple(user_id):
     user = get_user(user_id)
@@ -795,13 +826,11 @@ async def compare_multiple(user_id):
 
     return text
 
-
 def active_name(user_id):
     if user_id in viewing_colleague:
         return viewing_colleague[user_id]
 
     return get_user_name(user_id)
-
 
 async def notification_loop(bot):
     sent = {}
@@ -829,7 +858,6 @@ async def notification_loop(bot):
 
         await asyncio.sleep(10)
 
-
 @dp.message(CommandStart())
 async def start(message: Message):
     user_id = message.from_user.id
@@ -846,14 +874,12 @@ async def start(message: Message):
         selecting_own_name.add(user_id)
         await message.answer("Сначала выбери своё подразделение:", reply_markup=dep_kb())
 
-
 @dp.message(F.text == "🏠 Главное меню")
 async def home(message: Message):
     user_id = message.from_user.id
     reset_modes(user_id)
 
     await message.answer("Главное меню:", reply_markup=main_kb(user_id))
-
 
 @dp.message(F.text == "📌 Мой график")
 async def my_schedule_menu(message: Message):
@@ -863,11 +889,9 @@ async def my_schedule_menu(message: Message):
 
     await message.answer("📌 Мой график:", reply_markup=my_schedule_kb())
 
-
 @dp.message(F.text == "📆 График сегодня/завтра")
 async def today_tomorrow_menu(message: Message):
     await message.answer("📆 График сегодня/завтра:", reply_markup=today_tomorrow_kb())
-
 
 @dp.message(F.text == "⬅️ Вернуться к себе")
 async def back_to_self(message: Message):
@@ -881,7 +905,6 @@ async def back_to_self(message: Message):
         f"Ты вернулся к своему графику.\nТвоё имя: {name}",
         reply_markup=main_kb(user_id)
     )
-
 
 @dp.message(F.text == "⬅️ Назад к коллеге")
 async def back_to_colleague(message: Message):
@@ -898,7 +921,6 @@ async def back_to_colleague(message: Message):
         reply_markup=colleague_kb()
     )
 
-
 @dp.message(F.text == "⬅️ Назад к сравнению")
 async def back_to_compare(message: Message):
     user_id = message.from_user.id
@@ -907,7 +929,6 @@ async def back_to_compare(message: Message):
         "🤝 Сравнение графиков\n\n" + selected_compare_text(user_id),
         reply_markup=compare_kb()
     )
-
 
 @dp.message(F.text.startswith("👤 "))
 async def choose_own_name(message: Message):
@@ -921,7 +942,6 @@ async def choose_own_name(message: Message):
 
     await message.answer("Выбери своё подразделение:", reply_markup=dep_kb())
 
-
 @dp.message(F.text == "👀 Коллеги")
 async def choose_colleague_department(message: Message):
     user_id = message.from_user.id
@@ -933,14 +953,12 @@ async def choose_colleague_department(message: Message):
 
     await message.answer("Выбери подразделение коллеги:", reply_markup=dep_kb())
 
-
 @dp.message(F.text == "➕ Добавить сотрудника")
 async def add_compare_person(message: Message):
     user_id = message.from_user.id
     comparing_users.add(user_id)
 
     await message.answer("Выбери подразделение сотрудника:", reply_markup=dep_kb())
-
 
 @dp.message(F.text.in_(list(DEPARTMENTS.keys())))
 async def department_selected(message: Message):
@@ -955,7 +973,6 @@ async def department_selected(message: Message):
         selecting_own_name.add(user_id)
         await message.answer("Выбери своё имя:", reply_markup=own_names_kb(department))
 
-
 @dp.message(F.text.in_(ALL_NAMES))
 async def own_name_selected(message: Message):
     user_id = message.from_user.id
@@ -967,7 +984,6 @@ async def own_name_selected(message: Message):
         f"Имя сохранено: {message.text}",
         reply_markup=main_kb(user_id)
     )
-
 
 @dp.message(F.text.startswith("👀 "))
 async def colleague_selected(message: Message):
@@ -983,7 +999,6 @@ async def colleague_selected(message: Message):
         f"👀 Ты смотришь график коллеги: {colleague_name}",
         reply_markup=colleague_kb()
     )
-
 
 @dp.message(F.text.startswith("➕ "))
 async def compare_person_selected(message: Message):
@@ -1005,7 +1020,6 @@ async def compare_person_selected(message: Message):
         reply_markup=compare_kb()
     )
 
-
 @dp.message((F.text.startswith("✅ ")) & (F.text != "✅ Посчитать совпадения"))
 async def compare_person_already_selected(message: Message):
     user_id = message.from_user.id
@@ -1015,7 +1029,6 @@ async def compare_person_already_selected(message: Message):
         f"{name} уже выбран.\n\n" + selected_compare_text(user_id),
         reply_markup=compare_kb()
     )
-
 
 @dp.message(F.text == "🤝 Совпадения")
 async def compare_menu(message: Message):
@@ -1041,7 +1054,6 @@ async def compare_menu(message: Message):
         reply_markup=compare_kb()
     )
 
-
 @dp.message(F.text == "✅ Посчитать совпадения")
 async def calculate_compare(message: Message):
     user_id = message.from_user.id
@@ -1049,7 +1061,6 @@ async def calculate_compare(message: Message):
     result = await compare_multiple(user_id)
 
     await loading_answer(message, "⏳ Сравниваю графики...", result, reply_markup=compare_kb())
-
 
 @dp.message(F.text == "🧹 Очистить выбранных")
 async def clear_compare(message: Message):
@@ -1067,7 +1078,6 @@ async def clear_compare(message: Message):
         reply_markup=compare_kb()
     )
 
-
 @dp.message(F.text == "📅 Сегодня")
 async def today(message: Message):
     name = active_name(message.from_user.id)
@@ -1078,7 +1088,6 @@ async def today(message: Message):
 
     result = await get_day_schedule(name, now_local().day)
     await loading_answer(message, "⏳ Смотрю график на сегодня...", result)
-
 
 @dp.message(F.text == "📆 Завтра")
 async def tomorrow(message: Message):
@@ -1092,7 +1101,6 @@ async def tomorrow(message: Message):
     result = await get_day_schedule(name, day)
     await loading_answer(message, "⏳ Смотрю график на завтра...", result)
 
-
 @dp.message(F.text == "🗓 Неделя")
 async def week(message: Message):
     name = active_name(message.from_user.id)
@@ -1105,7 +1113,6 @@ async def week(message: Message):
     result = await get_range_schedule(name, start_day, start_day + 6)
     await loading_answer(message, "⏳ Собираю график на неделю...", result)
 
-
 @dp.message(F.text == "📋 Весь график")
 async def full_schedule(message: Message):
     name = active_name(message.from_user.id)
@@ -1117,19 +1124,16 @@ async def full_schedule(message: Message):
     result = await get_range_schedule(name, 1, days_in_current_month())
     await loading_answer(message, "⏳ Собираю полный график...", result)
 
-
 @dp.message(F.text == "👥 Кто сегодня")
 async def who_today(message: Message):
     result = await get_people(now_local().day, message.from_user.id)
     await loading_answer(message, "⏳ Проверяю, кто работает сегодня...", result)
-
 
 @dp.message(F.text == "👥 Кто завтра")
 async def who_tomorrow(message: Message):
     day = (now_local() + timedelta(days=1)).day
     result = await get_people(day, message.from_user.id)
     await loading_answer(message, "⏳ Проверяю, кто работает завтра...", result)
-
 
 @dp.message(F.text == "🔔 Уведомления")
 async def notifications_menu(message: Message):
@@ -1155,7 +1159,6 @@ async def notifications_menu(message: Message):
         reply_markup=notifications_kb()
     )
 
-
 @dp.message(F.text == "🔔 Включить")
 async def notifications_on(message: Message):
     user_id = message.from_user.id
@@ -1176,14 +1179,12 @@ async def notifications_on(message: Message):
         reply_markup=main_kb(user_id)
     )
 
-
 @dp.message(F.text == "🔕 Выключить")
 async def notifications_off(message: Message):
     save_user(message.from_user.id, notify=0)
     waiting_for_time.discard(message.from_user.id)
 
     await message.answer("Уведомления выключены 🔕", reply_markup=main_kb(message.from_user.id))
-
 
 @dp.message(F.text == "✍️ Задать время")
 async def ask_notification_time(message: Message):
@@ -1197,7 +1198,6 @@ async def ask_notification_time(message: Message):
     waiting_for_time.add(user_id)
 
     await message.answer("Напиши время уведомления в формате ЧЧ:ММ\n\nНапример: 09:30")
-
 
 @dp.message()
 async def text_handler(message: Message):
@@ -1218,7 +1218,6 @@ async def text_handler(message: Message):
 
     await message.answer("Используй кнопки ниже.", reply_markup=main_kb(user_id))
 
-
 async def main():
     if not BOT_TOKEN:
         print("Ошибка: BOT_TOKEN не найден в .env")
@@ -1231,7 +1230,6 @@ async def main():
     asyncio.create_task(notification_loop(bot))
 
     await dp.start_polling(bot)
-
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -2,3 +2,5 @@ aiogram
 python-dotenv
 pandas
 requests
+psycopg2-binary
+psycopg2-binary
