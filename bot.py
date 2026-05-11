@@ -30,7 +30,7 @@ def now_local():
     return datetime.now(APP_TIMEZONE)
 
 SHEET_ID = "1bRuO870pDBf6O-kXJ1O342SmxmjZgpsiacM2aPOJm9Y"
-GID = "1690889478"
+GID = "1467004546"
 CSV_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid={GID}"
 
 dp = Dispatcher()
