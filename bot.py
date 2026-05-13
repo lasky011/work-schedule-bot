@@ -518,7 +518,7 @@ def get_day_column(df, day):
     return None
 
 async def find_row(name):
-    df = await load_sheet(day)
+    df = await load_sheet(now_local().day)
     role = None
 
     for i in range(len(df)):
