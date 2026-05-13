@@ -322,8 +322,8 @@ def get_day_column(df, day):
     return None
 
 
-async def find_row(name):
-    df = await load_full_sheet()
+async def find_row(name, day):
+    df = await load_sheet(now_local().day)
 
     role = None
 
@@ -345,7 +345,7 @@ async def find_row(name):
 
 
 async def get_day_value(row, day):
-    df = await load_full_sheet()
+    df = await load_sheet(now_local().day)
 
     col = get_day_column(df, day)
 
@@ -359,7 +359,7 @@ async def get_day_value(row, day):
 
 
 async def get_people_for_day(day):
-    df = await load_full_sheet()
+    df = await load_sheet(now_local().day)
 
     col = get_day_column(df, day)
 
@@ -392,7 +392,7 @@ async def get_people_for_day(day):
 
 
 async def get_day_schedule(name, day):
-    row, role = await find_row(name)
+    row, role = await find_row(name, day)
 
     if not row:
         return f"Не нашёл график для: {name}"
@@ -433,7 +433,7 @@ async def get_day_schedule(name, day):
 
 
 async def get_range_schedule(name, start_day, end_day):
-    row, role = await find_row(name)
+    row, role = await find_row(name, day)
 
     if not row:
         return f"Не нашёл график для: {name}"
@@ -637,7 +637,7 @@ async def main():
 
     bot = Bot(token=BOT_TOKEN)
 
-    await load_full_sheet()
+    await load_sheet(now_local().day)
 
     await dp.start_polling(bot)
 
