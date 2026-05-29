@@ -1,11 +1,13 @@
 import asyncio
 import os
+import sqlite3
 import calendar
 import logging
+import traceback
 from io import StringIO
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
-
+from zoneinfo import ZoneInfo
 import pandas as pd
 import requests
 from aiogram import Bot, Dispatcher, F
@@ -19,32 +21,183 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 APP_TIMEZONE = ZoneInfo("Europe/Moscow")
 
+def now_local():
+    return datetime.now(APP_TIMEZONE)
+
+APP_TIMEZONE = ZoneInfo("Europe/Moscow")
 
 def now_local():
     return datetime.now(APP_TIMEZONE)
 
-
 SHEET_ID = "1bRuO870pDBf6O-kXJ1O342SmxmjZgpsiacM2aPOJm9Y"
-
-# 1-15
-GID_FIRST = "1690889478"
-
-# 16-31
-GID_SECOND = "1467004546"
-
+GID_FIRST = "1690889478"   # вкладка 1-15
+GID_SECOND = "1467004546"  # вкладка 16-31
 
 def build_csv_url(gid):
-    return (
-        f"https://docs.google.com/spreadsheets/d/"
-        f"{SHEET_ID}/export?format=csv&gid={gid}"
-    )
-
+    return f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid={gid}"
 
 dp = Dispatcher()
 
-cached_df = None
-cached_time = None
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+try:
+    import psycopg2
+except ImportError:
+    psycopg2 = None
+
+USE_POSTGRES = bool(DATABASE_URL)
+
+
+def get_db_connection():
+    if USE_POSTGRES:
+        return psycopg2.connect(DATABASE_URL)
+
+    return sqlite3.connect("users.db")
+
+
+def db_placeholder():
+    return "%s" if USE_POSTGRES else "?"
+
+
+def init_db():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS users (
+        user_id BIGINT PRIMARY KEY,
+        name TEXT,
+        notify INTEGER DEFAULT 0,
+        notify_time TEXT
+    )
+    """)
+
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+
+init_db()
+
+
+def save_user(user_id, name=None, notify=None, notify_time=None):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    ph = db_placeholder()
+
+    cursor.execute(
+        f"SELECT user_id FROM users WHERE user_id={ph}",
+        (user_id,)
+    )
+
+    exists = cursor.fetchone()
+
+    if not exists:
+        cursor.execute(
+            f"INSERT INTO users (user_id, name, notify, notify_time) VALUES ({ph}, {ph}, {ph}, {ph})",
+            (user_id, name, notify or 0, notify_time)
+        )
+    else:
+        if name is not None:
+            cursor.execute(
+                f"UPDATE users SET name={ph} WHERE user_id={ph}",
+                (name, user_id)
+            )
+
+        if notify is not None:
+            cursor.execute(
+                f"UPDATE users SET notify={ph} WHERE user_id={ph}",
+                (notify, user_id)
+            )
+
+        if notify_time is not None:
+            cursor.execute(
+                f"UPDATE users SET notify_time={ph} WHERE user_id={ph}",
+                (notify_time, user_id)
+            )
+
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+
+def get_user(user_id):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    ph = db_placeholder()
+
+    cursor.execute(
+        f"SELECT user_id, name, notify, notify_time FROM users WHERE user_id={ph}",
+        (user_id,)
+    )
+
+    user = cursor.fetchone()
+
+    cursor.close()
+    conn.close()
+
+    return user
+
+
+def get_user_name(user_id):
+    user = get_user(user_id)
+    return user[1] if user and user[1] else None
+
+
+def get_notify_users():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        "SELECT user_id, name, notify_time FROM users WHERE notify=1 AND name IS NOT NULL AND notify_time IS NOT NULL"
+    )
+
+    users = cursor.fetchall()
+
+    cursor.close()
+    conn.close()
+
+    return users
+cached_df = {}
+cached_time = {}
 cache_lock = asyncio.Lock()
+
+async def download_sheet(gid):
+    def sync():
+        url = build_csv_url(gid)
+        r = requests.get(url, timeout=15)
+        r.raise_for_status()
+        r.encoding = "utf-8"
+        return pd.read_csv(StringIO(r.text), header=None)
+
+    return await asyncio.to_thread(sync)
+
+async def load_sheet(day):
+    """Для дней 1-15 читает первую вкладку, для 16-31 вторую."""
+    global cached_df, cached_time
+
+    day = int(day)
+    gid = GID_FIRST if day <= 15 else GID_SECOND
+    key = str(gid)
+
+    async with cache_lock:
+        now = now_local()
+        if key in cached_df and key in cached_time:
+            if (now - cached_time[key]).total_seconds() < 60:
+                return cached_df[key]
+
+        df = await download_sheet(gid)
+        cached_df[key] = df
+        cached_time[key] = now
+        return df
+
+async def load_full_sheet():
+    """Прогревает обе вкладки."""
+    df1 = await load_sheet(1)
+    df2 = await load_sheet(16)
+    return pd.concat([df1, df2], ignore_index=True)
 
 DEPARTMENTS = {
     "👔 Менеджер": [
@@ -80,14 +233,7 @@ DEPARTMENTS = {
 }
 
 ALL_NAMES = [name for group in DEPARTMENTS.values() for name in group]
-
-ROLES = [
-    "Менеджер",
-    "Официант",
-    "Бармен",
-    "Кальян",
-    "Хостес",
-]
+ROLES = ["Менеджер", "Официант", "Бармен", "Кальян", "Хостес"]
 
 MONTHS = [
     "",
@@ -105,227 +251,263 @@ MONTHS = [
     "декабря",
 ]
 
-WEEKDAYS = [
-    "пн",
-    "вт",
-    "ср",
-    "чт",
-    "пт",
-    "сб",
-    "вс",
-]
+WEEKDAYS = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]
 
 RU_HOLIDAYS = {
-    (1, 1), (1, 2), (1, 3), (1, 4),
-    (1, 5), (1, 6), (1, 7), (1, 8),
+    (1, 1), (1, 2), (1, 3), (1, 4), (1, 5), (1, 6), (1, 7), (1, 8),
     (2, 23),
     (3, 8),
-    (5, 1),
-    (5, 9),
+    (5, 1), (5, 9),
     (6, 12),
     (11, 4),
 }
 
-user_names = {}
-
+waiting_for_time = set()
+selecting_own_name = set()
+selecting_colleague = set()
 viewing_colleague = {}
 
+comparing_users = set()
+compare_selected = {}
 
-def main_kb():
+def main_kb(user_id):
+    name = get_user_name(user_id) or "Моё имя"
+
     return ReplyKeyboardMarkup(
         keyboard=[
-            [
-                KeyboardButton(text="📅 Сегодня"),
-                KeyboardButton(text="📆 Завтра"),
-            ],
-            [
-                KeyboardButton(text="🗓 Неделя"),
-                KeyboardButton(text="📋 Весь график"),
-            ],
-            [
-                KeyboardButton(text="👥 Кто сегодня"),
-                KeyboardButton(text="👥 Кто завтра"),
-            ],
-            [
-                KeyboardButton(text="👀 Коллеги"),
-            ],
+            [KeyboardButton(text="📌 Мой график"), KeyboardButton(text="📆 График сегодня/завтра")],
+            [KeyboardButton(text="👀 Коллеги"), KeyboardButton(text="🔔 Уведомления")],
+            [KeyboardButton(text=f"👤 {name}")],
         ],
         resize_keyboard=True
     )
 
+def my_schedule_kb():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="📅 Сегодня"), KeyboardButton(text="📆 Завтра")],
+            [KeyboardButton(text="🗓 Неделя"), KeyboardButton(text="📋 Весь график")],
+            [KeyboardButton(text="🏠 Главное меню")],
+        ],
+        resize_keyboard=True
+    )
+
+def today_tomorrow_kb():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="👥 Кто сегодня"), KeyboardButton(text="👥 Кто завтра")],
+            [KeyboardButton(text="🏠 Главное меню")],
+        ],
+        resize_keyboard=True
+    )
+
+def colleague_kb():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="📅 Сегодня"), KeyboardButton(text="📆 Завтра")],
+            [KeyboardButton(text="🗓 Неделя"), KeyboardButton(text="📋 Весь график")],
+            [KeyboardButton(text="🤝 Совпадения")],
+            [KeyboardButton(text="⬅️ Вернуться к себе")],
+        ],
+        resize_keyboard=True
+    )
+
+def compare_kb():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="➕ Добавить сотрудника")],
+            [KeyboardButton(text="✅ Посчитать совпадения")],
+            [KeyboardButton(text="🧹 Очистить выбранных")],
+            [KeyboardButton(text="⬅️ Назад к коллеге")],
+            [KeyboardButton(text="🏠 Главное меню")],
+        ],
+        resize_keyboard=True
+    )
 
 def dep_kb():
     return ReplyKeyboardMarkup(
         keyboard=[
-            [
-                KeyboardButton(text="👔 Менеджер"),
-                KeyboardButton(text="🍽 Официант"),
-            ],
-            [
-                KeyboardButton(text="🍸 Бармен"),
-                KeyboardButton(text="💨 Кальян"),
-            ],
-            [
-                KeyboardButton(text="🙋 Хостес"),
-            ],
+            [KeyboardButton(text="👔 Менеджер"), KeyboardButton(text="🍽 Официант")],
+            [KeyboardButton(text="🍸 Бармен"), KeyboardButton(text="💨 Кальян")],
+            [KeyboardButton(text="🙋 Хостес")],
+            [KeyboardButton(text="🏠 Главное меню")],
         ],
         resize_keyboard=True
     )
 
+def own_names_kb(department):
+    return ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text=name)] for name in DEPARTMENTS[department]] + [[KeyboardButton(text="🏠 Главное меню")]],
+        resize_keyboard=True
+    )
 
-def names_kb(dep):
+def colleague_names_kb(department, user_id):
+    my_name = get_user_name(user_id)
+    buttons = []
+
+    for name in DEPARTMENTS[department]:
+        if name != my_name:
+            buttons.append([KeyboardButton(text=f"👀 {name}")])
+
+    buttons.append([KeyboardButton(text="🏠 Главное меню")])
+
+    return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+
+def compare_names_kb(department, user_id):
+    my_name = get_user_name(user_id)
+    selected = compare_selected.get(user_id, set())
+    buttons = []
+
+    for name in DEPARTMENTS[department]:
+        if name == my_name:
+            continue
+
+        if name in selected:
+            buttons.append([KeyboardButton(text=f"✅ {name}")])
+        else:
+            buttons.append([KeyboardButton(text=f"➕ {name}")])
+
+    buttons.append([KeyboardButton(text="⬅️ Назад к сравнению")])
+    buttons.append([KeyboardButton(text="🏠 Главное меню")])
+
+    return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+
+def notifications_kb():
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text=name)]
-            for name in DEPARTMENTS[dep]
+            [KeyboardButton(text="🔔 Включить"), KeyboardButton(text="🔕 Выключить")],
+            [KeyboardButton(text="✍️ Задать время")],
+            [KeyboardButton(text="🏠 Главное меню")],
         ],
         resize_keyboard=True
     )
 
+async def loading_answer(message: Message, loading_text: str, result_text: str, reply_markup=None):
+    loading = await message.answer(loading_text)
 
-async def download_sheet(gid):
-    url = build_csv_url(gid)
+    try:
+        await loading.delete()
+    except Exception:
+        pass
 
-    def sync():
-        r = requests.get(url, timeout=10)
+    await message.answer(result_text, reply_markup=reply_markup)
 
-        r.raise_for_status()
-        r.encoding = "utf-8"
+def reset_modes(user_id):
+    waiting_for_time.discard(user_id)
+    selecting_own_name.discard(user_id)
+    selecting_colleague.discard(user_id)
+    viewing_colleague.pop(user_id, None)
+    comparing_users.discard(user_id)
+    compare_selected.pop(user_id, None)
 
-        return pd.read_csv(StringIO(r.text), header=None)
+def reset_compare_mode(user_id):
+    comparing_users.discard(user_id)
+    compare_selected.pop(user_id, None)
 
-    return await asyncio.to_thread(sync)
+def selected_compare_text(user_id):
+    selected = sorted(compare_selected.get(user_id, set()))
 
+    if not selected:
+        return "Выбранные сотрудники: пока никого."
 
-async def load_full_sheet():
-    global cached_df
-    global cached_time
+    return "Выбранные сотрудники:\n" + "\n".join([f"• {name}" for name in selected])
 
-    async with cache_lock:
-        now = now_local()
+def days_in_current_month():
+    now = now_local()
+    return calendar.monthrange(now.year, now.month)[1]
 
-        if cached_df is not None and cached_time is not None:
-            age = (now - cached_time).total_seconds()
+def current_period():
+    today = now_local().day
+    max_day = days_in_current_month()
 
-            if age < 60:
-                return cached_df
+    if today <= 15:
+        return 1, 15
 
-        df1 = await download_sheet(GID_FIRST)
-        df2 = await download_sheet(GID_SECOND)
+    return 16, max_day
 
-        df = pd.concat([df1, df2], ignore_index=True)
-
-        cached_df = df
-        cached_time = now
-
-        return df
-
-
-def clean_value(value):
-    text = str(value).strip()
-
-    if text.lower() in [
-        "",
-        "nan",
-        "none",
-        "-",
-        "—",
-        "выходной",
-    ]:
-        return ""
-
-    return text
-
-
-def is_work_shift(value):
-    value = clean_value(value)
-
-    if not value:
-        return False
-
-    if ":" in value:
-        return True
-
-    if value.startswith(("9", "10", "11", "12", "13", "14", "15", "16")):
-        return True
-
-    return False
-
-
-def detect_shift(value):
-    value = clean_value(value)
-
-    if not value:
-        return "выходной"
-
-    if value.startswith(("9", "10", "11")):
-        return f"{value} — утро"
-
-    if value.startswith(("12", "13", "14", "15", "16")):
-        return f"{value} — вечер"
-
-    return value
-
+def is_day_published(day):
+    start, end = current_period()
+    return 1 <= int(day) <= days_in_current_month()
 
 def weekday_label(day):
     now = now_local()
-
-    try:
-        weekday_index = datetime(
-            now.year,
-            now.month,
-            day
-        ).weekday()
-    except:
-        return ""
-
+    weekday_index = datetime(now.year, now.month, day).weekday()
     label = WEEKDAYS[weekday_index]
 
-    is_red = (
-        weekday_index >= 4
-        or (now.month, day) in RU_HOLIDAYS
-    )
+    is_red = weekday_index >= 4 or (now.month, day) in RU_HOLIDAYS
 
     if is_red:
         return f"❗ {label}"
 
     return label
 
-
 def format_date(day):
-    return (
-        f"{day} "
-        f"{MONTHS[now_local().month]} "
-        f"({weekday_label(day)})"
-    )
+    return f"{day} {MONTHS[now_local().month]} ({weekday_label(day)})"
 
+def clean_value(value):
+    text = str(value).strip()
 
-def days_in_month():
-    now = now_local()
+    if not text:
+        return ""
 
-    return calendar.monthrange(
-        now.year,
-        now.month
-    )[1]
+    if text.lower() in ["nan", "none", "выходной", "-", "—"]:
+        return ""
 
+    return text
+
+def is_work_shift(value):
+    text = clean_value(value)
+
+    if not text:
+        return False
+
+    if text.startswith(("9", "10", "11", "12", "13", "14", "15", "16")):
+        return True
+
+    if ":" in text or "-" in text:
+        return True
+
+    return False
+
+def detect_shift(value):
+    text = clean_value(value)
+
+    if not text:
+        return "выходной"
+
+    if text.startswith(("9", "10", "11")):
+        return f"{text} — утро"
+
+    if text.startswith(("12", "13", "14", "15", "16")):
+        return f"{text} — вечер"
+
+    return text
+
+def is_valid_time(text):
+    try:
+        datetime.strptime(text.strip(), "%H:%M")
+        return True
+    except ValueError:
+        return False
 
 def get_day_column(df, day):
-    target = str(day)
-
     for i in range(len(df)):
-        row = df.iloc[i].fillna("").astype(str).tolist()
+        first = str(df.iloc[i, 0]).strip()
 
-        for col_index, value in enumerate(row):
-            if str(value).strip() == target:
-                return col_index
+        if first in ROLES:
+            row = df.iloc[i].fillna("").astype(str).tolist()
+
+            for col_index, value in enumerate(row):
+                if str(value).strip() == str(day):
+                    return col_index
 
     return None
 
-
 async def find_row(name, day):
-    df = await load_sheet(now_local().day)
-
+    """Ищет строку сотрудника в правильной вкладке конкретного дня."""
+    df = await load_sheet(day)
     role = None
+    needle = str(name).strip().lower()
 
     for i in range(len(df)):
         first = str(df.iloc[i, 0]).strip()
@@ -335,18 +517,15 @@ async def find_row(name, day):
             continue
 
         row = df.iloc[i].fillna("").astype(str).tolist()
-
         row_text = " ".join(row).lower()
 
-        if name.lower() in row_text:
+        if needle and needle in row_text:
             return row, role
 
     return None, None
 
-
 async def get_day_value(row, day):
-    df = await load_sheet(now_local().day)
-
+    df = await load_sheet(day)
     col = get_day_column(df, day)
 
     if col is None:
@@ -357,17 +536,15 @@ async def get_day_value(row, day):
 
     return row[col]
 
-
 async def get_people_for_day(day):
-    df = await load_sheet(now_local().day)
-
+    df = await load_sheet(day)
     col = get_day_column(df, day)
 
     if col is None:
         return {}
 
-    result = {}
     role = None
+    result = {}
 
     for i in range(len(df)):
         first = str(df.iloc[i, 0]).strip()
@@ -384,263 +561,713 @@ async def get_people_for_day(day):
             value = row[col]
 
             if name and is_work_shift(value):
-                result[role].append(
-                    f"{name} — {detect_shift(value)}"
-                )
+                result[role].append(f"{name} — {detect_shift(value)}")
 
     return result
 
+async def get_common_day_off_people(name, day):
+    df = await load_sheet(day)
+    col = get_day_column(df, day)
 
-async def get_day_schedule(name, day):
-    row, role = await find_row(name, day)
+    if col is None:
+        return []
+
+    result = []
+
+    for i in range(len(df)):
+        first = str(df.iloc[i, 0]).strip()
+
+        if first in ROLES:
+            continue
+
+        row = df.iloc[i].fillna("").astype(str).tolist()
+
+        if len(row) <= col:
+            continue
+
+        person_name = clean_value(row[0])
+        value = row[col]
+
+        if person_name and person_name != name and not is_work_shift(value):
+            result.append(person_name)
+
+    return result
+
+async def get_my_status_for_day(user_id, day):
+    my_name = get_user_name(user_id)
+
+    if not my_name:
+        return "👤 Твоё имя не выбрано."
+
+    if not is_day_published(day):
+        return "👤 Твой график: график пока не составлен."
+
+    row, _ = await find_row(my_name, day)
 
     if not row:
-        return f"Не нашёл график для: {name}"
+        return f"👤 Твой график: не нашёл имя {my_name}."
 
     value = await get_day_value(row, day)
 
-    status = (
-        "✅ ты работаешь"
-        if is_work_shift(value)
-        else "🏖 ты отдыхаешь"
-    )
+    if is_work_shift(value):
+        return f"✅ Ты работаешь: {detect_shift(value)}"
 
-    text = (
-        f"{name}\n"
-        f"Должность: {role}\n\n"
-        f"{format_date(day)} — {detect_shift(value)}\n"
-        f"{status}"
-    )
+    return "🏖 Ты отдыхаешь."
 
-    people = await get_people_for_day(day)
+async def get_day_schedule(name, day):
+    max_day = days_in_current_month()
 
-    coworkers = []
+    if day > max_day:
+        return "Такой даты в этом месяце нет."
 
-    for role_name, items in people.items():
-        for item in items:
-            person_name = item.split(" — ")[0]
-
-            if person_name != name:
-                coworkers.append(item)
-
-    if coworkers:
-        text += (
-            f"\n\n👥 {format_date(day)} работают:\n"
-            + "\n".join(coworkers)
-        )
-
-    return text
-
-
-async def get_range_schedule(name, start_day, end_day):
     row, role = await find_row(name, day)
 
     if not row:
         return f"Не нашёл график для: {name}"
 
-    result = [
-        name,
-        f"Должность: {role}",
-        "",
-    ]
+    role_text = f"\nДолжность: {role}" if role else ""
 
-    max_day = days_in_month()
+    if not is_day_published(day):
+        start, end = current_period()
 
-    for day in range(start_day, end_day + 1):
-        if day > max_day:
-            break
+        if day < start:
+            return f"{name}{role_text}\n\n{format_date(day)} — график уже не актуален"
 
         value = await get_day_value(row, day)
+        return f"{name}{role_text}\n\n{format_date(day)} — {detect_shift(value)}"
 
-        result.append(
-            f"{format_date(day)} — {detect_shift(value)}"
-        )
+    value = await get_day_value(row, day)
+    shift = detect_shift(value)
+
+    status = "✅ ты работаешь" if is_work_shift(value) else "🏖 ты отдыхаешь"
+
+    text = f"{name}{role_text}\n\n{format_date(day)} — {shift}\n{status}"
+
+    people_by_role = await get_people_for_day(day)
+    coworkers = []
+
+    for role_name, people in people_by_role.items():
+        for person in people:
+            person_name = person.split(" — ")[0].strip()
+            if person_name != name:
+                coworkers.append(person)
+
+    if coworkers:
+        text += f"\n\n👥 {format_date(day)} работают:\n" + "\n".join(coworkers)
+
+    if not is_work_shift(value):
+        common_off = await get_common_day_off_people(name, day)
+        if common_off:
+            text += f"\n\n🏖 {format_date(day)} вместе отдыхают:\n" + "\n".join(common_off)
+
+    return text
+
+async def get_range_schedule(name, start_day, end_day):
+    max_day = days_in_current_month()
+    period_start, period_end = current_period()
+
+    result = [name]
+    saved_role = None
+    found_any = False
+    role_line_index = None
+
+    day = start_day
+
+    while day <= end_day and day <= max_day:
+        if day < period_start:
+            old_end = min(15, period_start - 1, end_day)
+            if role_line_index is None:
+                result.append("Должность: ")
+                role_line_index = 1
+                result.append("")
+            result.append(f"{day}–{old_end} {MONTHS[now_local().month]} — график уже не актуален")
+            day = old_end + 1
+            continue
+
+        if day > period_end:
+            if role_line_index is None:
+                result.append("Должность: ")
+                role_line_index = 1
+                result.append("")
+            row2, role2 = await find_row(name, day)
+
+            if row2:
+                value2 = await get_day_value(row2, day)
+                result.append(f"{format_date(day)} — {detect_shift(value2)}")
+            break
+
+        row, role = await find_row(name, day)
+
+        if row:
+            found_any = True
+            if role:
+                saved_role = role
+            value = await get_day_value(row, day)
+        else:
+            value = ""
+
+        if role_line_index is None:
+            result.append(f"Должность: {saved_role or role or ''}")
+            role_line_index = 1
+            result.append("")
+
+        result.append(f"{format_date(day)} — {detect_shift(value)}")
+        day += 1
+
+    if not found_any:
+        return f"Не нашёл график для: {name}"
+
+    if saved_role and role_line_index is not None:
+        result[role_line_index] = f"Должность: {saved_role}"
 
     return "\n".join(result)
 
+async def get_people(day, user_id):
+    max_day = days_in_current_month()
 
-async def get_people(day):
+    if day > max_day:
+        return "Такой даты в этом месяце нет."
+
+    my_status = await get_my_status_for_day(user_id, day)
+
+    if not is_day_published(day):
+        start, end = current_period()
+
+        if day < start:
+            return f"👥 {format_date(day)}\n\n{my_status}\n\nГрафик на эту дату уже не актуален."
+
+        return f"👥 {day}–{max_day} {MONTHS[now_local().month]}\n\n{my_status}\n\nГрафик на этот период пока не составлен."
+
     result = await get_people_for_day(day)
 
     text = f"👥 {format_date(day)} работают:\n\n"
+    text += my_status + "\n\n"
 
     for role_name, people in result.items():
         if people:
-            text += (
-                f"{role_name}\n"
-                + "\n".join(people)
-                + "\n\n"
-            )
+            text += f"{role_name}\n" + "\n".join(people) + "\n\n"
 
     return text.strip()
 
+async def find_next_shift(name, from_day):
+    max_day = days_in_current_month()
+    period_start, period_end = current_period()
+
+    for day in range(from_day + 1, period_end + 1):
+        if day > max_day:
+            break
+
+        row, _ = await find_row(name, day)
+        if not row:
+            continue
+
+        value = await get_day_value(row, day)
+
+        if is_work_shift(value):
+            return day, value
+
+    return None, None
+
+async def get_notification_text(name):
+    today = now_local().day
+
+    if not is_day_published(today):
+        return None
+
+    row, _ = await find_row(name, today)
+
+    if not row:
+        return None
+
+    value = await get_day_value(row, today)
+
+    if is_work_shift(value):
+        return (
+            f"🔔 Ежедневное уведомление\n\n"
+            f"{name}\n"
+            f"{format_date(today)}\n"
+            f"✅ Сегодня ты работаешь: {detect_shift(value)}"
+        )
+
+    next_day, next_value = await find_next_shift(name, today)
+    common_off = await get_common_day_off_people(name, today)
+
+    text = (
+        f"🔔 Ежедневное уведомление\n\n"
+        f"{name}\n"
+        f"{format_date(today)}\n"
+        f"🏖 Сегодня ты отдыхаешь"
+    )
+
+    if next_day:
+        off_days_count = next_day - today
+        text += (
+            f"\n\nДо ближайшей смены: {off_days_count} дн.\n"
+            f"Ближайшая смена: {format_date(next_day)} — {detect_shift(next_value)}"
+        )
+    else:
+        text += "\n\nБлижайшей смены в актуальном графике пока нет."
+
+    if common_off:
+        text += "\n\n🏖 Сегодня вместе с тобой отдыхают:\n" + "\n".join(common_off)
+
+    return text
+
+async def compare_multiple(user_id):
+    user = get_user(user_id)
+
+    if not user or not user[1]:
+        return "Сначала выбери своё имя."
+
+    my_name = user[1]
+    selected = sorted(compare_selected.get(user_id, set()))
+
+    if not selected:
+        return "Добавь хотя бы одного сотрудника для сравнения."
+
+    all_people = [my_name] + selected
+
+    period_start, period_end = current_period()
+
+    common_work = []
+    common_off = []
+
+    for day in range(period_start, period_end + 1):
+        values = {}
+
+        for name in all_people:
+            row, _ = await find_row(name, day)
+            if not row:
+                return f"Не смог найти график для: {name}"
+            values[name] = await get_day_value(row, day)
+
+        all_work = all(is_work_shift(value) for value in values.values())
+        all_off = all(not is_work_shift(value) for value in values.values())
+
+        if all_work:
+            shifts_text = " / ".join([f"{name}: {detect_shift(values[name])}" for name in all_people])
+            common_work.append(f"{format_date(day)} — {shifts_text}")
+
+        if all_off:
+            common_off.append(f"{format_date(day)}")
+
+    text = "🤝 Совпадения по группе\n\n"
+    text += "Участники:\n" + "\n".join([f"• {name}" for name in all_people])
+    text += f"\n\nПериод: {period_start}–{period_end}\n\n"
+
+    text += "✅ Все работают в один день:\n"
+    text += "\n".join(common_work) if common_work else "нет"
+    text += "\n\n"
+
+    text += "🏖 Все отдыхают в один день:\n"
+    text += "\n".join(common_off) if common_off else "нет"
+
+    return text
 
 def active_name(user_id):
     if user_id in viewing_colleague:
         return viewing_colleague[user_id]
 
-    return user_names.get(user_id)
+    return get_user_name(user_id)
 
+async def notification_loop(bot):
+    sent = {}
+
+    while True:
+        now = now_local()
+        current_time = now.strftime("%H:%M")
+        today_key = now.strftime("%Y-%m-%d")
+
+        for user_id, name, notify_time in get_notify_users():
+            if notify_time != current_time:
+                continue
+
+            key = f"{user_id}-{today_key}-{notify_time}"
+
+            if sent.get(key):
+                continue
+
+            text = await get_notification_text(name)
+
+            if text:
+                await bot.send_message(user_id, text)
+
+            sent[key] = True
+
+        await asyncio.sleep(10)
 
 @dp.message(CommandStart())
 async def start(message: Message):
+    user_id = message.from_user.id
+    reset_modes(user_id)
+
+    user = get_user(user_id)
+
+    if user and user[1]:
+        await message.answer(
+            f"Привет 👋\nТвоё имя: {user[1]}\n\nВыбери раздел:",
+            reply_markup=main_kb(user_id)
+        )
+    else:
+        selecting_own_name.add(user_id)
+        await message.answer("Сначала выбери своё подразделение:", reply_markup=dep_kb())
+
+@dp.message(F.text == "🏠 Главное меню")
+async def home(message: Message):
+    user_id = message.from_user.id
+    reset_modes(user_id)
+
+    await message.answer("Главное меню:", reply_markup=main_kb(user_id))
+
+@dp.message(F.text == "📌 Мой график")
+async def my_schedule_menu(message: Message):
+    user_id = message.from_user.id
+    viewing_colleague.pop(user_id, None)
+    reset_compare_mode(user_id)
+
+    await message.answer("📌 Мой график:", reply_markup=my_schedule_kb())
+
+@dp.message(F.text == "📆 График сегодня/завтра")
+async def today_tomorrow_menu(message: Message):
+    await message.answer("📆 График сегодня/завтра:", reply_markup=today_tomorrow_kb())
+
+@dp.message(F.text == "⬅️ Вернуться к себе")
+async def back_to_self(message: Message):
+    user_id = message.from_user.id
+    viewing_colleague.pop(user_id, None)
+    reset_compare_mode(user_id)
+
+    name = get_user_name(user_id) or "не выбрано"
+
     await message.answer(
-        "Выбери подразделение:",
-        reply_markup=dep_kb()
+        f"Ты вернулся к своему графику.\nТвоё имя: {name}",
+        reply_markup=main_kb(user_id)
     )
 
+@dp.message(F.text == "⬅️ Назад к коллеге")
+async def back_to_colleague(message: Message):
+    user_id = message.from_user.id
+    comparing_users.discard(user_id)
+
+    colleague_name = viewing_colleague.get(user_id)
+
+    if not colleague_name:
+        return await message.answer("Коллега не выбран.", reply_markup=main_kb(user_id))
+
+    await message.answer(
+        f"👀 Ты смотришь график коллеги: {colleague_name}",
+        reply_markup=colleague_kb()
+    )
+
+@dp.message(F.text == "⬅️ Назад к сравнению")
+async def back_to_compare(message: Message):
+    user_id = message.from_user.id
+
+    await message.answer(
+        "🤝 Сравнение графиков\n\n" + selected_compare_text(user_id),
+        reply_markup=compare_kb()
+    )
+
+@dp.message(F.text.startswith("👤 "))
+async def choose_own_name(message: Message):
+    user_id = message.from_user.id
+
+    waiting_for_time.discard(user_id)
+    selecting_colleague.discard(user_id)
+    viewing_colleague.pop(user_id, None)
+    reset_compare_mode(user_id)
+    selecting_own_name.add(user_id)
+
+    await message.answer("Выбери своё подразделение:", reply_markup=dep_kb())
+
+@dp.message(F.text == "👀 Коллеги")
+async def choose_colleague_department(message: Message):
+    user_id = message.from_user.id
+
+    waiting_for_time.discard(user_id)
+    selecting_own_name.discard(user_id)
+    reset_compare_mode(user_id)
+    selecting_colleague.add(user_id)
+
+    await message.answer("Выбери подразделение коллеги:", reply_markup=dep_kb())
+
+@dp.message(F.text == "➕ Добавить сотрудника")
+async def add_compare_person(message: Message):
+    user_id = message.from_user.id
+    comparing_users.add(user_id)
+
+    await message.answer("Выбери подразделение сотрудника:", reply_markup=dep_kb())
 
 @dp.message(F.text.in_(list(DEPARTMENTS.keys())))
-async def dep_selected(message: Message):
-    await message.answer(
-        "Выбери имя:",
-        reply_markup=names_kb(message.text)
-    )
+async def department_selected(message: Message):
+    user_id = message.from_user.id
+    department = message.text
 
+    if user_id in comparing_users:
+        await message.answer("Выбери сотрудника для сравнения:", reply_markup=compare_names_kb(department, user_id))
+    elif user_id in selecting_colleague:
+        await message.answer("Выбери коллегу:", reply_markup=colleague_names_kb(department, user_id))
+    else:
+        selecting_own_name.add(user_id)
+        await message.answer("Выбери своё имя:", reply_markup=own_names_kb(department))
 
 @dp.message(F.text.in_(ALL_NAMES))
-async def name_selected(message: Message):
-    user_names[message.from_user.id] = message.text
+async def own_name_selected(message: Message):
+    user_id = message.from_user.id
 
-    viewing_colleague.pop(message.from_user.id, None)
+    save_user(user_id, name=message.text, notify=0, notify_time='')
+    reset_modes(user_id)
 
     await message.answer(
         f"Имя сохранено: {message.text}",
-        reply_markup=main_kb()
+        reply_markup=main_kb(user_id)
     )
-
-
-@dp.message(F.text == "👀 Коллеги")
-async def colleagues(message: Message):
-    await message.answer(
-        "Выбери подразделение коллеги:",
-        reply_markup=dep_kb()
-    )
-
 
 @dp.message(F.text.startswith("👀 "))
 async def colleague_selected(message: Message):
-    name = message.text.replace("👀 ", "").strip()
+    user_id = message.from_user.id
+    colleague_name = message.text.replace("👀 ", "").strip()
 
-    viewing_colleague[message.from_user.id] = name
+    viewing_colleague[user_id] = colleague_name
+    selecting_colleague.discard(user_id)
+
+    compare_selected[user_id] = {colleague_name}
 
     await message.answer(
-        f"Теперь смотришь график: {name}",
-        reply_markup=main_kb()
+        f"👀 Ты смотришь график коллеги: {colleague_name}",
+        reply_markup=colleague_kb()
     )
 
+@dp.message(F.text.startswith("➕ "))
+async def compare_person_selected(message: Message):
+    user_id = message.from_user.id
+    name = message.text.replace("➕ ", "").strip()
+
+    my_name = get_user_name(user_id)
+
+    if name == my_name:
+        return await message.answer("Себя добавлять не нужно — ты уже участвуешь в сравнении.")
+
+    if user_id not in compare_selected:
+        compare_selected[user_id] = set()
+
+    compare_selected[user_id].add(name)
+
+    await message.answer(
+        f"Добавил: {name}\n\n" + selected_compare_text(user_id),
+        reply_markup=compare_kb()
+    )
+
+@dp.message((F.text.startswith("✅ ")) & (F.text != "✅ Посчитать совпадения"))
+async def compare_person_already_selected(message: Message):
+    user_id = message.from_user.id
+    name = message.text.replace("✅ ", "").strip()
+
+    await message.answer(
+        f"{name} уже выбран.\n\n" + selected_compare_text(user_id),
+        reply_markup=compare_kb()
+    )
+
+@dp.message(F.text == "🤝 Совпадения")
+async def compare_menu(message: Message):
+    user_id = message.from_user.id
+
+    colleague_name = viewing_colleague.get(user_id)
+
+    if not colleague_name:
+        return await message.answer(
+            "Сначала выбери коллегу через раздел «👀 Коллеги».",
+            reply_markup=main_kb(user_id)
+        )
+
+    comparing_users.add(user_id)
+
+    if user_id not in compare_selected:
+        compare_selected[user_id] = {colleague_name}
+    else:
+        compare_selected[user_id].add(colleague_name)
+
+    await message.answer(
+        "🤝 Сравнение графиков\n\n" + selected_compare_text(user_id),
+        reply_markup=compare_kb()
+    )
+
+@dp.message(F.text == "✅ Посчитать совпадения")
+async def calculate_compare(message: Message):
+    user_id = message.from_user.id
+
+    result = await compare_multiple(user_id)
+
+    await loading_answer(message, "⏳ Сравниваю графики...", result, reply_markup=compare_kb())
+
+@dp.message(F.text == "🧹 Очистить выбранных")
+async def clear_compare(message: Message):
+    user_id = message.from_user.id
+
+    colleague_name = viewing_colleague.get(user_id)
+
+    if colleague_name:
+        compare_selected[user_id] = {colleague_name}
+    else:
+        compare_selected[user_id] = set()
+
+    await message.answer(
+        "Выбранные сотрудники очищены.\n\n" + selected_compare_text(user_id),
+        reply_markup=compare_kb()
+    )
 
 @dp.message(F.text == "📅 Сегодня")
 async def today(message: Message):
     name = active_name(message.from_user.id)
 
     if not name:
-        return await message.answer(
-            "Сначала выбери имя."
-        )
+        selecting_own_name.add(message.from_user.id)
+        return await message.answer("Сначала выбери своё имя.", reply_markup=dep_kb())
 
-    result = await get_day_schedule(
-        name,
-        now_local().day
-    )
-
-    await message.answer(result)
-
+    result = await get_day_schedule(name, now_local().day)
+    await loading_answer(message, "⏳ Смотрю график на сегодня...", result)
 
 @dp.message(F.text == "📆 Завтра")
 async def tomorrow(message: Message):
     name = active_name(message.from_user.id)
 
     if not name:
-        return await message.answer(
-            "Сначала выбери имя."
-        )
+        selecting_own_name.add(message.from_user.id)
+        return await message.answer("Сначала выбери своё имя.", reply_markup=dep_kb())
 
-    tomorrow_day = (
-        now_local() + timedelta(days=1)
-    ).day
-
-    result = await get_day_schedule(
-        name,
-        tomorrow_day
-    )
-
-    await message.answer(result)
-
+    day = (now_local() + timedelta(days=1)).day
+    result = await get_day_schedule(name, day)
+    await loading_answer(message, "⏳ Смотрю график на завтра...", result)
 
 @dp.message(F.text == "🗓 Неделя")
 async def week(message: Message):
     name = active_name(message.from_user.id)
 
     if not name:
-        return await message.answer(
-            "Сначала выбери имя."
-        )
+        selecting_own_name.add(message.from_user.id)
+        return await message.answer("Сначала выбери своё имя.", reply_markup=dep_kb())
 
     start_day = now_local().day
-
-    result = await get_range_schedule(
-        name,
-        start_day,
-        start_day + 6
-    )
-
-    await message.answer(result)
-
+    result = await get_range_schedule(name, start_day, start_day + 6)
+    await loading_answer(message, "⏳ Собираю график на неделю...", result)
 
 @dp.message(F.text == "📋 Весь график")
 async def full_schedule(message: Message):
     name = active_name(message.from_user.id)
 
     if not name:
-        return await message.answer(
-            "Сначала выбери имя."
-        )
+        selecting_own_name.add(message.from_user.id)
+        return await message.answer("Сначала выбери своё имя.", reply_markup=dep_kb())
 
-    result = await get_range_schedule(
-        name,
-        1,
-        31
-    )
-
-    await message.answer(result)
-
+    result = await get_range_schedule(name, 1, days_in_current_month())
+    await loading_answer(message, "⏳ Собираю полный график...", result)
 
 @dp.message(F.text == "👥 Кто сегодня")
 async def who_today(message: Message):
-    result = await get_people(
-        now_local().day
-    )
-
-    await message.answer(result)
-
+    result = await get_people(now_local().day, message.from_user.id)
+    await loading_answer(message, "⏳ Проверяю, кто работает сегодня...", result)
 
 @dp.message(F.text == "👥 Кто завтра")
 async def who_tomorrow(message: Message):
-    tomorrow_day = (
-        now_local() + timedelta(days=1)
-    ).day
+    day = (now_local() + timedelta(days=1)).day
+    result = await get_people(day, message.from_user.id)
+    await loading_answer(message, "⏳ Проверяю, кто работает завтра...", result)
 
-    result = await get_people(
-        tomorrow_day
+@dp.message(F.text == "🔔 Уведомления")
+async def notifications_menu(message: Message):
+    user_id = message.from_user.id
+
+    if user_id in viewing_colleague:
+        return await message.answer(
+            "Уведомления можно настраивать только для своего имени.\nНажми «⬅️ Вернуться к себе».",
+            reply_markup=colleague_kb()
+        )
+
+    user = get_user(user_id)
+
+    if not user or not user[1]:
+        selecting_own_name.add(user_id)
+        return await message.answer("Сначала выбери своё имя.", reply_markup=dep_kb())
+
+    status = "включены 🔔" if user[2] else "выключены 🔕"
+    notify_time = user[3] or "не задано"
+
+    await message.answer(
+        f"🔔 Настройки уведомлений\n\nИмя: {user[1]}\nСтатус: {status}\nВремя: {notify_time}",
+        reply_markup=notifications_kb()
     )
 
-    await message.answer(result)
+@dp.message(F.text == "🔔 Включить")
+async def notifications_on(message: Message):
+    user_id = message.from_user.id
+    user = get_user(user_id)
 
+    if not user or not user[1]:
+        selecting_own_name.add(user_id)
+        return await message.answer("Сначала выбери своё имя.", reply_markup=dep_kb())
+
+    if not user[3]:
+        waiting_for_time.add(user_id)
+        return await message.answer("Сначала задай время уведомления. Например: 09:30")
+
+    save_user(user_id, notify=1)
+
+    await message.answer(
+        f"Уведомления включены 🔔\nВремя: {user[3]}",
+        reply_markup=main_kb(user_id)
+    )
+
+@dp.message(F.text == "🔕 Выключить")
+async def notifications_off(message: Message):
+    save_user(message.from_user.id, notify=0)
+    waiting_for_time.discard(message.from_user.id)
+
+    await message.answer("Уведомления выключены 🔕", reply_markup=main_kb(message.from_user.id))
+
+@dp.message(F.text == "✍️ Задать время")
+async def ask_notification_time(message: Message):
+    user_id = message.from_user.id
+    user = get_user(user_id)
+
+    if not user or not user[1]:
+        selecting_own_name.add(user_id)
+        return await message.answer("Сначала выбери своё имя.", reply_markup=dep_kb())
+
+    waiting_for_time.add(user_id)
+
+    await message.answer("Напиши время уведомления в формате ЧЧ:ММ\n\nНапример: 09:30")
+
+@dp.message()
+async def text_handler(message: Message):
+    user_id = message.from_user.id
+    text = message.text.strip()
+
+    if user_id in waiting_for_time:
+        if not is_valid_time(text):
+            return await message.answer("Неверный формат. Напиши так: 09:30")
+
+        save_user(user_id, notify_time=text, notify=1)
+        waiting_for_time.discard(user_id)
+
+        return await message.answer(
+            f"Время уведомлений сохранено: {text}\nУведомления включены 🔔",
+            reply_markup=main_kb(user_id)
+        )
+
+    await message.answer("Используй кнопки ниже.", reply_markup=main_kb(user_id))
 
 async def main():
-    logging.basicConfig(level=logging.INFO)
-
     if not BOT_TOKEN:
-        print("BOT_TOKEN not found")
+        print("Ошибка: BOT_TOKEN не найден в .env")
         return
 
     bot = Bot(token=BOT_TOKEN)
 
-    await load_sheet(now_local().day)
+    await load_full_sheet()
+
+    asyncio.create_task(notification_loop(bot))
 
     await dp.start_polling(bot)
-
 
 if __name__ == "__main__":
     asyncio.run(main())
