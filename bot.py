@@ -304,11 +304,24 @@ def my_schedule_kb():
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="📅 Сегодня"), KeyboardButton(text="📆 Завтра")],
-            [KeyboardButton(text="🗓 Неделя"), KeyboardButton(text="📋 Весь график")],
+            [KeyboardButton(text="🗓 Неделя"), KeyboardButton(text="📋 Выбрать месяц")],
             [KeyboardButton(text="🏠 Главное меню")],
         ],
         resize_keyboard=True
     )
+
+def months_kb():
+    """Динамически строит кнопки из SHEET_GID_MAP"""
+    seen = set()
+    buttons = []
+    for (year, month, period) in sorted(SHEET_GID_MAP.keys()):
+        key = (year, month)
+        if key not in seen:
+            seen.add(key)
+            month_name = MONTHS[month]
+            buttons.append([KeyboardButton(text=f"📋 {month_name} {year}")])
+    buttons.append([KeyboardButton(text="🏠 Главное меню")])
+    return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
 def today_tomorrow_kb():
     return ReplyKeyboardMarkup(
@@ -1187,6 +1200,7 @@ async def tomorrow(message: Message):
     await loading_answer(message, "⏳ Смотрю график на завтра...", result)
 
 @dp.message(F.text == "🗓 Неделя")
+@dp.message(F.text == "🗓 Неделя")
 async def week(message: Message):
     name = active_name(message.from_user.id)
 
@@ -1195,10 +1209,26 @@ async def week(message: Message):
         return await message.answer("Сначала выбери своё имя.", reply_markup=dep_kb())
 
     now = now_local()
-    result = await get_range_schedule(name, now.day, now.day + 6, now.month, now.year)
-    await loading_answer(message, "⏳ Собираю график на неделю...", result)
+    # Неделя пн-вс: находим ближайший понедельник
+    weekday = now.weekday()  # 0=пн, 6=вс
+    week_start = now - timedelta(days=weekday)
+    week_end = week_start + timedelta(days=6)
+
+    results = []
+    current = week_start
+    while current <= week_end:
+        day_result = await get_day_schedule(name, current.day, current.month, current.year)
+        results.append(day_result)
+        current += timedelta(days=1)
+
+    await loading_answer(message, "⏳ Собираю график на неделю...", "\n\n".join(results))
 
 @dp.message(F.text == "📋 Весь график")
+@dp.message(F.text == "📋 Выбрать месяц")
+async def choose_month(message: Message):
+    await message.answer("Выбери месяц:", reply_markup=months_kb())
+
+@dp.message(F.text.regexp(r"^📋 \w+ \d{4}$"))
 async def full_schedule(message: Message):
     name = active_name(message.from_user.id)
 
@@ -1206,9 +1236,18 @@ async def full_schedule(message: Message):
         selecting_own_name.add(message.from_user.id)
         return await message.answer("Сначала выбери своё имя.", reply_markup=dep_kb())
 
-    now = now_local()
-    result = await get_range_schedule(name, 1, days_in_current_month(), now.month, now.year)
-    await loading_answer(message, "⏳ Собираю полный график...", result)
+    # Парсим "📋 Май 2026" → month=5, year=2026
+    parts = message.text.replace("📋 ", "").strip().split()
+    month_name = parts[0]
+    year = int(parts[1])
+    month = MONTHS.index(month_name)
+
+    if month == 0:
+        return await message.answer("Не могу определить месяц.", reply_markup=my_schedule_kb())
+
+    max_day = calendar.monthrange(year, month)[1]
+    result = await get_range_schedule(name, 1, max_day, month, year)
+    await loading_answer(message, "⏳ Собираю полный график...", result, reply_markup=my_schedule_kb())
 
 @dp.message(F.text == "👥 Кто сегодня")
 async def who_today(message: Message):
