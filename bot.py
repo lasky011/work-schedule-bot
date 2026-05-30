@@ -487,8 +487,17 @@ def weekday_label(day):
 
     return label
 
-def format_date(day):
-    return f"{day} {MONTHS[now_local().month]} ({weekday_label(day)})"
+def format_date(day, month=None, year=None):
+    now = now_local()
+    if month is None:
+        month = now.month
+    if year is None:
+        year = now.year
+    weekday_index = datetime(year, month, day).weekday()
+    label = WEEKDAYS[weekday_index]
+    is_red = weekday_index >= 4 or (month, day) in RU_HOLIDAYS
+    label = f"❗ {label}" if is_red else label
+    return f"{day} {MONTHS[month]} ({label})"
 
 def clean_value(value):
     text = str(value).strip()
@@ -549,41 +558,50 @@ def get_day_column(df, day):
 
     return None
 
-async def find_row(name, day):
-    """Ищет строку сотрудника в правильной вкладке конкретного дня."""
-    df = await load_sheet(day)
+async def find_row(name, day, month=None, year=None):
+    now = now_local()
+    if month is None:
+        month = now.month
+    if year is None:
+        year = now.year
+    df = await load_sheet(day, month, year)
     role = None
     needle = str(name).strip().lower()
 
     for i in range(len(df)):
         first = str(df.iloc[i, 0]).strip()
-
         if first in ROLES:
             role = first
             continue
-
         row = df.iloc[i].fillna("").astype(str).tolist()
-        row_text = " ".join(row).lower()
-
-        if needle and needle in row_text:
+        if needle and needle in " ".join(row).lower():
             return row, role
 
     return None, None
 
-async def get_day_value(row, day):
-    df = await load_sheet(day)
+
+async def get_day_value(row, day, month=None, year=None):
+    now = now_local()
+    if month is None:
+        month = now.month
+    if year is None:
+        year = now.year
+    df = await load_sheet(day, month, year)
     col = get_day_column(df, day)
 
-    if col is None:
-        return ""
-
-    if col >= len(row):
+    if col is None or col >= len(row):
         return ""
 
     return row[col]
 
-async def get_people_for_day(day):
-    df = await load_sheet(day)
+
+async def get_people_for_day(day, month=None, year=None):
+    now = now_local()
+    if month is None:
+        month = now.month
+    if year is None:
+        year = now.year
+    df = await load_sheet(day, month, year)
     col = get_day_column(df, day)
 
     if col is None:
@@ -594,104 +612,100 @@ async def get_people_for_day(day):
 
     for i in range(len(df)):
         first = str(df.iloc[i, 0]).strip()
-
         if first in ROLES:
             role = first
             result[role] = []
             continue
-
         row = df.iloc[i].fillna("").astype(str).tolist()
-
         if role and len(row) > col:
             name = clean_value(row[0])
             value = row[col]
-
             if name and is_work_shift(value):
                 result[role].append(f"{name} — {detect_shift(value)}")
 
     return result
 
-async def get_common_day_off_people(name, day):
-    df = await load_sheet(day)
+
+async def get_common_day_off_people(name, day, month=None, year=None):
+    now = now_local()
+    if month is None:
+        month = now.month
+    if year is None:
+        year = now.year
+    df = await load_sheet(day, month, year)
     col = get_day_column(df, day)
 
     if col is None:
         return []
 
     result = []
-
     for i in range(len(df)):
         first = str(df.iloc[i, 0]).strip()
-
         if first in ROLES:
             continue
-
         row = df.iloc[i].fillna("").astype(str).tolist()
-
         if len(row) <= col:
             continue
-
         person_name = clean_value(row[0])
         value = row[col]
-
         if person_name and person_name != name and not is_work_shift(value):
             result.append(person_name)
 
     return result
 
-async def get_my_status_for_day(user_id, day):
+async def get_my_status_for_day(user_id, day, month=None, year=None):
+    now = now_local()
+    if month is None:
+        month = now.month
+    if year is None:
+        year = now.year
     my_name = get_user_name(user_id)
 
     if not my_name:
         return "👤 Твоё имя не выбрано."
 
-    if not is_day_published(day):
+    if not is_day_published(day, month, year):
         return "👤 Твой график: график пока не составлен."
 
-    row, _ = await find_row(my_name, day)
-
+    row, _ = await find_row(my_name, day, month, year)
     if not row:
         return f"👤 Твой график: не нашёл имя {my_name}."
 
-    value = await get_day_value(row, day)
-
+    value = await get_day_value(row, day, month, year)
     if is_work_shift(value):
         return f"✅ Ты работаешь: {detect_shift(value)}"
 
     return "🏖 Ты отдыхаешь."
 
-async def get_day_schedule(name, day):
-    max_day = days_in_current_month()
+async def get_day_schedule(name, day, month=None, year=None):
+    now = now_local()
+    if month is None:
+        month = now.month
+    if year is None:
+        year = now.year
+
+    max_day = calendar.monthrange(year, month)[1]
 
     if day > max_day:
         return "Такой даты в этом месяце нет."
 
-    row, role = await find_row(name, day)
+    if not is_day_published(day, month, year):
+        return f"{name}\n\n{format_date(day, month, year)} — график пока не составлен"
+
+    row, role = await find_row(name, day, month, year)
 
     if not row:
         return f"Не нашёл график для: {name}"
 
     role_text = f"\nДолжность: {role}" if role else ""
-
-    if not is_day_published(day):
-        start, end = current_period()
-
-        if day < start:
-            return f"{name}{role_text}\n\n{format_date(day)} — график уже не актуален"
-
-        value = await get_day_value(row, day)
-        return f"{name}{role_text}\n\n{format_date(day)} — {detect_shift(value)}"
-
-    value = await get_day_value(row, day)
+    value = await get_day_value(row, day, month, year)
     shift = detect_shift(value)
-
     status = "✅ ты работаешь" if is_work_shift(value) else "🏖 ты отдыхаешь"
 
-    text = f"{name}{role_text}\n\n{format_date(day)} — {shift}\n{status}"
+    text = f"{name}{role_text}\n\n{format_date(day, month, year)} — {shift}\n{status}"
 
-    people_by_role = await get_people_for_day(day)
+    people_by_role = await get_people_for_day(day, month, year)
     coworkers = []
-
     for role_name, people in people_by_role.items():
         for person in people:
             person_name = person.split(" — ")[0].strip()
@@ -699,14 +713,64 @@ async def get_day_schedule(name, day):
                 coworkers.append(person)
 
     if coworkers:
-        text += f"\n\n👥 {format_date(day)} работают:\n" + "\n".join(coworkers)
+        text += f"\n\n👥 {format_date(day, month, year)} работают:\n" + "\n".join(coworkers)
 
     if not is_work_shift(value):
-        common_off = await get_common_day_off_people(name, day)
+        common_off = await get_common_day_off_people(name, day, month, year)
         if common_off:
-            text += f"\n\n🏖 {format_date(day)} вместе отдыхают:\n" + "\n".join(common_off)
+            text += f"\n\n🏖 {format_date(day, month, year)} вместе отдыхают:\n" + "\n".join(common_off)
 
     return text
+
+
+async def get_range_schedule(name, start_day, end_day, month=None, year=None):
+    now = now_local()
+    if month is None:
+        month = now.month
+    if year is None:
+        year = now.year
+
+    max_day = calendar.monthrange(year, month)[1]
+    end_day = min(end_day, max_day)
+
+    result = [name]
+    saved_role = None
+    found_any = False
+    role_line_index = None
+
+    for day in range(start_day, end_day + 1):
+        if not is_day_published(day, month, year):
+            if role_line_index is None:
+                result.append("")
+                role_line_index = 1
+                result.append("")
+            result.append(f"{format_date(day, month, year)} — график пока не составлен")
+            continue
+
+        row, role = await find_row(name, day, month, year)
+
+        if row:
+            found_any = True
+            if role:
+                saved_role = role
+            value = await get_day_value(row, day, month, year)
+        else:
+            value = ""
+
+        if role_line_index is None:
+            result.append(f"Должность: {saved_role or role or ''}")
+            role_line_index = 1
+            result.append("")
+
+        result.append(f"{format_date(day, month, year)} — {detect_shift(value)}")
+
+    if not found_any:
+        return f"Не нашёл график для: {name}"
+
+    if saved_role and role_line_index is not None:
+        result[role_line_index] = f"Должность: {saved_role}"
+
+    return "\n".join(result)
 
 async def get_range_schedule(name, start_day, end_day):
     max_day = days_in_current_month()
@@ -768,25 +832,24 @@ async def get_range_schedule(name, start_day, end_day):
 
     return "\n".join(result)
 
-async def get_people(day, user_id):
-    max_day = days_in_current_month()
+async def get_people(day, user_id, month=None, year=None):
+    now = now_local()
+    if month is None:
+        month = now.month
+    if year is None:
+        year = now.year
+    max_day = calendar.monthrange(year, month)[1]
 
     if day > max_day:
         return "Такой даты в этом месяце нет."
 
-    my_status = await get_my_status_for_day(user_id, day)
+    my_status = await get_my_status_for_day(user_id, day, month, year)
 
-    if not is_day_published(day):
-        start, end = current_period()
+    if not is_day_published(day, month, year):
+        return f"👥 {format_date(day, month, year)}\n\n{my_status}\n\nГрафик на этот период пока не составлен."
 
-        if day < start:
-            return f"👥 {format_date(day)}\n\n{my_status}\n\nГрафик на эту дату уже не актуален."
-
-        return f"👥 {day}–{max_day} {MONTHS[now_local().month]}\n\n{my_status}\n\nГрафик на этот период пока не составлен."
-
-    result = await get_people_for_day(day)
-
-    text = f"👥 {format_date(day)} работают:\n\n"
+    result = await get_people_for_day(day, month, year)
+    text = f"👥 {format_date(day, month, year)} работают:\n\n"
     text += my_status + "\n\n"
 
     for role_name, people in result.items():
@@ -1181,8 +1244,8 @@ async def tomorrow(message: Message):
         selecting_own_name.add(message.from_user.id)
         return await message.answer("Сначала выбери своё имя.", reply_markup=dep_kb())
 
-    day = (now_local() + timedelta(days=1)).day
-    result = await get_day_schedule(name, day)
+    tomorrow_dt = now_local() + timedelta(days=1)
+    result = await get_day_schedule(name, tomorrow_dt.day, tomorrow_dt.month, tomorrow_dt.year)
     await loading_answer(message, "⏳ Смотрю график на завтра...", result)
 
 @dp.message(F.text == "🗓 Неделя")
@@ -1193,8 +1256,8 @@ async def week(message: Message):
         selecting_own_name.add(message.from_user.id)
         return await message.answer("Сначала выбери своё имя.", reply_markup=dep_kb())
 
-    start_day = now_local().day
-    result = await get_range_schedule(name, start_day, start_day + 6)
+    now = now_local()
+    result = await get_range_schedule(name, now.day, now.day + 6, now.month, now.year)
     await loading_answer(message, "⏳ Собираю график на неделю...", result)
 
 @dp.message(F.text == "📋 Весь график")
@@ -1205,7 +1268,8 @@ async def full_schedule(message: Message):
         selecting_own_name.add(message.from_user.id)
         return await message.answer("Сначала выбери своё имя.", reply_markup=dep_kb())
 
-    result = await get_range_schedule(name, 1, days_in_current_month())
+    now = now_local()
+    result = await get_range_schedule(name, 1, days_in_current_month(), now.month, now.year)
     await loading_answer(message, "⏳ Собираю полный график...", result)
 
 @dp.message(F.text == "👥 Кто сегодня")
@@ -1215,8 +1279,8 @@ async def who_today(message: Message):
 
 @dp.message(F.text == "👥 Кто завтра")
 async def who_tomorrow(message: Message):
-    day = (now_local() + timedelta(days=1)).day
-    result = await get_people(day, message.from_user.id)
+    tomorrow_dt = now_local() + timedelta(days=1)
+    result = await get_people(tomorrow_dt.day, message.from_user.id, tomorrow_dt.month, tomorrow_dt.year)
     await loading_answer(message, "⏳ Проверяю, кто работает завтра...", result)
 
 @dp.message(F.text == "🔔 Уведомления")
