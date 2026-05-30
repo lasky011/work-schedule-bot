@@ -471,9 +471,6 @@ def is_day_published(day, month=None, year=None):
     has_gid = get_gid_for_day_month(day, month, year) is not None
     return has_gid
 
-def is_day_published(day):
-    start, end = current_period()
-    return 1 <= int(day) <= days_in_current_month()
 
 def weekday_label(day):
     now = now_local()
@@ -772,65 +769,6 @@ async def get_range_schedule(name, start_day, end_day, month=None, year=None):
 
     return "\n".join(result)
 
-async def get_range_schedule(name, start_day, end_day):
-    max_day = days_in_current_month()
-    period_start, period_end = current_period()
-
-    result = [name]
-    saved_role = None
-    found_any = False
-    role_line_index = None
-
-    day = start_day
-
-    while day <= end_day and day <= max_day:
-        if day < period_start:
-            old_end = min(15, period_start - 1, end_day)
-            if role_line_index is None:
-                result.append("Должность: ")
-                role_line_index = 1
-                result.append("")
-            result.append(f"{day}–{old_end} {MONTHS[now_local().month]} — график уже не актуален")
-            day = old_end + 1
-            continue
-
-        if day > period_end:
-            if role_line_index is None:
-                result.append("Должность: ")
-                role_line_index = 1
-                result.append("")
-            row2, role2 = await find_row(name, day)
-
-            if row2:
-                value2 = await get_day_value(row2, day)
-                result.append(f"{format_date(day)} — {detect_shift(value2)}")
-            break
-
-        row, role = await find_row(name, day)
-
-        if row:
-            found_any = True
-            if role:
-                saved_role = role
-            value = await get_day_value(row, day)
-        else:
-            value = ""
-
-        if role_line_index is None:
-            result.append(f"Должность: {saved_role or role or ''}")
-            role_line_index = 1
-            result.append("")
-
-        result.append(f"{format_date(day)} — {detect_shift(value)}")
-        day += 1
-
-    if not found_any:
-        return f"Не нашёл график для: {name}"
-
-    if saved_role and role_line_index is not None:
-        result[role_line_index] = f"Должность: {saved_role}"
-
-    return "\n".join(result)
 
 async def get_people(day, user_id, month=None, year=None):
     now = now_local()
