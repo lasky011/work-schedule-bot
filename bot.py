@@ -30,8 +30,20 @@ def now_local():
     return datetime.now(APP_TIMEZONE)
 
 SHEET_ID = "1bRuO870pDBf6O-kXJ1O342SmxmjZgpsiacM2aPOJm9Y"
-GID_FIRST = "1690889478"   # вкладка 1-15
-GID_SECOND = "1467004546"  # вкладка 16-31
+SHEET_GID_MAP = {
+    (2026, 5, 1):  "1690889478",   # Май 1-15
+    (2026, 5, 16): "1467004546",   # Май 16-31
+    (2026, 6, 1):  "608196188",    # Июнь 1-15
+    # сюда добавляй новые листы: (год, месяц, день_начала): "gid"
+}
+
+def get_gid_for_day(day):
+    now = now_local()
+    return get_gid_for_day_month(day, now.month, now.year)
+
+def get_gid_for_day_month(day, month, year):
+    period_start = 1 if day <= 15 else 16
+    return SHEET_GID_MAP.get((year, month, period_start))
 
 def build_csv_url(gid):
     return f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid={gid}"
@@ -174,24 +186,30 @@ async def download_sheet(gid):
 
     return await asyncio.to_thread(sync)
 
-async def load_sheet(day):
-    """Для дней 1-15 читает первую вкладку, для 16-31 вторую."""
+async def load_sheet(day, month=None, year=None):
     global cached_df, cached_time
-
-    day = int(day)
-    gid = GID_FIRST if day <= 15 else GID_SECOND
-    key = str(gid)
+    now = now_local()
+    if month is None:
+        month = now.month
+    if year is None:
+        year = now.year
 
     async with cache_lock:
-        now = now_local()
+        gid = get_gid_for_day_month(day, month, year)
+        if gid is None:
+            raise ValueError(f"Нет GID для {year}-{month}, день {day}. Добавь в SHEET_GID_MAP.")
+
+        key = gid
+        now_time = now_local()
+
         if key in cached_df and key in cached_time:
-            if (now - cached_time[key]).total_seconds() < 60:
+            if (now_time - cached_time[key]).total_seconds() < 60:
                 return cached_df[key]
 
         df = await download_sheet(gid)
         cached_df[key] = df
-        cached_time[key] = now
-        return df
+        cached_time[key] = now_time
+        return cached_df[key]
 
 async def load_full_sheet():
     """Прогревает обе вкладки."""
@@ -416,14 +434,42 @@ def days_in_current_month():
     now = now_local()
     return calendar.monthrange(now.year, now.month)[1]
 
-def current_period():
+def current_period(month=None, year=None):
+    now = now_local()
+    if month is None:
+        month = now.month
+    if year is None:
+        year = now.year
+    max_day = calendar.monthrange(year, month)[1]
     today = now_local().day
-    max_day = days_in_current_month()
 
-    if today <= 15:
+    # если запрашиваем текущий месяц — период зависит от сегодняшнего дня
+    if month == now.month and year == now.year:
+        if today <= 15:
+            return 1, 15
+        return 16, max_day
+
+    # если запрашиваем будущий месяц — показываем доступный период
+    # проверяем какие GID есть для этого месяца
+    has_first = (year, month, 1) in SHEET_GID_MAP
+    has_second = (year, month, 16) in SHEET_GID_MAP
+
+    if has_first and has_second:
+        return 1, max_day
+    if has_first:
         return 1, 15
+    if has_second:
+        return 16, max_day
+    return 1, max_day
 
-    return 16, max_day
+def is_day_published(day, month=None, year=None):
+    now = now_local()
+    if month is None:
+        month = now.month
+    if year is None:
+        year = now.year
+    has_gid = get_gid_for_day_month(day, month, year) is not None
+    return has_gid
 
 def is_day_published(day):
     start, end = current_period()
