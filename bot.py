@@ -212,10 +212,17 @@ async def load_sheet(day, month=None, year=None):
         return cached_df[key]
 
 async def load_full_sheet():
-    """Прогревает обе вкладки."""
-    df1 = await load_sheet(1)
-    df2 = await load_sheet(16)
-    return pd.concat([df1, df2], ignore_index=True)
+    """Прогревает доступные вкладки текущего месяца."""
+    dfs = []
+    for day in [1, 16]:
+        try:
+            df = await load_sheet(day)
+            dfs.append(df)
+        except ValueError:
+            pass  # GID ещё не добавлен — пропускаем
+    if not dfs:
+        raise RuntimeError("Нет ни одного доступного листа в SHEET_GID_MAP.")
+    return pd.concat(dfs, ignore_index=True)
 
 DEPARTMENTS = {
     "👔 Менеджер": [
