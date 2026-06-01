@@ -856,9 +856,24 @@ async def get_people(day, user_id, month=None, year=None):
     text = f"👥 {format_date(day, month, year)} работают:\n\n"
     text += my_status + "\n\n"
 
-    for role_name, people in result.items():
+    # Группируем по подразделениям из DEPARTMENTS
+    dept_emojis = {
+        "Менеджер": "👔 Менеджер",
+        "Официант": "🍽 Официант",
+        "Бармен": "🍸 Бармен",
+        "Кальян": "💨 Кальян",
+        "Хостес": "🙋 Хостес",
+    }
+
+    has_any = False
+    for role_key, label in dept_emojis.items():
+        people = result.get(role_key, [])
         if people:
-            text += f"{role_name}\n" + "\n".join(people) + "\n\n"
+            has_any = True
+            text += f"{label}\n" + "\n".join(people) + "\n\n"
+
+    if not has_any:
+        text += "Никто не работает."
 
     return text.strip()
 
@@ -1328,7 +1343,9 @@ async def week_day_detail(message: Message):
         return await message.answer("Не нашёл этот день.", reply_markup=week_kb(week_days))
 
     result = await get_day_schedule(name, target.day, target.month, target.year)
-    await loading_answer(message, f"⏳ Смотрю {target.day}...", result, reply_markup=week_kb(week_days))
+    WEEKDAYS_SHORT = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+    day_label = f"{WEEKDAYS_SHORT[target.weekday()]} {target.day} {MONTHS[target.month]}"
+    await loading_answer(message, f"⏳ Смотрю {day_label}...", result, reply_markup=week_kb(week_days))
 
 @dp.message(F.text == "📋 Весь график")
 @dp.message(F.text == "📋 Выбрать месяц")
