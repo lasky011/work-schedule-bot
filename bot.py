@@ -221,11 +221,11 @@ async def load_full_sheet():
         try:
             df = await load_sheet(day)
             dfs.append(df)
-        except ValueError:
-            pass  # GID ещё не добавлен — пропускаем
+        except (ValueError, ConnectionError):
+            pass  # GID не добавлен или таблица недоступна — пропускаем
     if not dfs:
-        raise RuntimeError("Нет ни одного доступного листа в SHEET_GID_MAP.")
-    return pd.concat(dfs, ignore_index=True)
+        logging.warning("Нет доступных листов при старте — бот запустится без кэша.")
+    return None
 
 DEPARTMENTS = {
     "👔 Менеджер": [
