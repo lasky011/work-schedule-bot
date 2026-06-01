@@ -276,6 +276,22 @@ MONTHS = [
     "декабря",
 ]
 
+MONTHS_NOM = [
+    "",
+    "Январь",
+    "Февраль",
+    "Март",
+    "Апрель",
+    "Май",
+    "Июнь",
+    "Июль",
+    "Август",
+    "Сентябрь",
+    "Октябрь",
+    "Ноябрь",
+    "Декабрь",
+]
+
 WEEKDAYS = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]
 
 RU_HOLIDAYS = {
@@ -325,7 +341,7 @@ def months_kb():
         key = (year, month)
         if key not in seen:
             seen.add(key)
-            month_name = MONTHS[month]
+            month_name = MONTHS_NOM[month]
             buttons.append([KeyboardButton(text=f"📋 {month_name} {year}")])
     buttons.append([KeyboardButton(text="🏠 Главное меню")])
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
@@ -1266,7 +1282,7 @@ async def full_schedule(message: Message):
     parts = message.text.replace("📋 ", "").strip().split()
     month_name = parts[0]
     year = int(parts[1])
-    month = MONTHS.index(month_name)
+    month = MONTHS_NOM.index(month_name)
 
     if month == 0:
         return await message.answer("Не могу определить месяц.", reply_markup=my_schedule_kb())
