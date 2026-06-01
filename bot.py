@@ -23,7 +23,7 @@ APP_TIMEZONE = ZoneInfo("Europe/Moscow")
 def now_local():
     return datetime.now(APP_TIMEZONE)
 
-SHEET_ID = "1bRuO870pDBf6O-kXJ1O342SmxmjZgpsiacM2aPOJm9Y"
+SHEET_ID = "BROKEN_ID_TEST"
 SHEET_GID_MAP = {
     (2026, 5, 1):  "1690889478",   # Май 1-15
     (2026, 5, 16): "1467004546",   # Май 16-31
