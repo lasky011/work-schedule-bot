@@ -173,10 +173,19 @@ cache_lock = asyncio.Lock()
 async def download_sheet(gid):
     def sync():
         url = build_csv_url(gid)
-        r = requests.get(url, timeout=15)
-        r.raise_for_status()
-        r.encoding = "utf-8"
-        return pd.read_csv(StringIO(r.text), header=None)
+        try:
+            r = requests.get(url, timeout=15)
+            r.raise_for_status()
+            r.encoding = "utf-8"
+            return pd.read_csv(StringIO(r.text), header=None)
+        except requests.exceptions.Timeout:
+            raise ConnectionError("⏱ Google Sheets не отвечает (таймаут). Попробуй позже.")
+        except requests.exceptions.ConnectionError:
+            raise ConnectionError("📡 Нет соединения с Google Sheets. Проверь интернет.")
+        except requests.exceptions.HTTPError as e:
+            raise ConnectionError(f"❌ Ошибка доступа к таблице: {e}. Возможно таблица закрыта.")
+        except Exception as e:
+            raise ConnectionError(f"❌ Не удалось загрузить график: {e}")
 
     return await asyncio.to_thread(sync)
 
@@ -455,7 +464,19 @@ async def loading_answer(message: Message, loading_text: str, result_text: str, 
     except Exception:
         pass
 
-    await message.answer(result_text, reply_markup=reply_markup)
+    await message.answer(str(result_text), reply_markup=reply_markup)
+
+async def safe_schedule(coro):
+    """Оборачивает вызов в try/except и возвращает текст ошибки если что-то пошло не так."""
+    try:
+        return await coro
+    except ConnectionError as e:
+        return str(e)
+    except ValueError as e:
+        return f"📋 {e}"
+    except Exception as e:
+        logging.error(f"Unexpected error: {e}\n{traceback.format_exc()}")
+        return "❌ Что-то пошло не так. Попробуй позже."
 
 def reset_modes(user_id):
     waiting_for_time.discard(user_id)
@@ -1294,7 +1315,7 @@ async def today(message: Message):
         selecting_own_name.add(message.from_user.id)
         return await message.answer("Сначала выбери своё имя.", reply_markup=dep_kb())
 
-    result = await get_day_schedule(name, now_local().day)
+    result = await safe_schedule(get_day_schedule(name, now_local().day))
     await loading_answer(message, "⏳ Смотрю график на сегодня...", result)
 
 @dp.message(F.text == "📆 Завтра")
@@ -1306,7 +1327,7 @@ async def tomorrow(message: Message):
         return await message.answer("Сначала выбери своё имя.", reply_markup=dep_kb())
 
     tomorrow_dt = now_local() + timedelta(days=1)
-    result = await get_day_schedule(name, tomorrow_dt.day, tomorrow_dt.month, tomorrow_dt.year)
+    result = await safe_schedule(get_day_schedule(name, tomorrow_dt.day, tomorrow_dt.month, tomorrow_dt.year))
     await loading_answer(message, "⏳ Смотрю график на завтра...", result)
 
 @dp.message(F.text == "🗓 Неделя")
@@ -1414,18 +1435,18 @@ async def full_schedule(message: Message):
         return await message.answer("Не могу определить месяц.", reply_markup=my_schedule_kb())
 
     max_day = calendar.monthrange(year, month)[1]
-    result = await get_range_schedule(name, 1, max_day, month, year)
+    result = await safe_schedule(get_range_schedule(name, 1, max_day, month, year))
     await loading_answer(message, "⏳ Собираю полный график...", result, reply_markup=my_schedule_kb())
 
 @dp.message(F.text == "👥 Кто сегодня")
 async def who_today(message: Message):
-    result = await get_people(now_local().day, message.from_user.id)
+    result = await safe_schedule(get_people(now_local().day, message.from_user.id))
     await loading_answer(message, "⏳ Проверяю, кто работает сегодня...", result)
 
 @dp.message(F.text == "👥 Кто завтра")
 async def who_tomorrow(message: Message):
     tomorrow_dt = now_local() + timedelta(days=1)
-    result = await get_people(tomorrow_dt.day, message.from_user.id, tomorrow_dt.month, tomorrow_dt.year)
+    result = await safe_schedule(get_people(tomorrow_dt.day, message.from_user.id, tomorrow_dt.month, tomorrow_dt.year))
     await loading_answer(message, "⏳ Проверяю, кто работает завтра...", result)
 
 @dp.message(F.text == "🔔 Уведомления")
