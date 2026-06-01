@@ -23,7 +23,7 @@ APP_TIMEZONE = ZoneInfo("Europe/Moscow")
 def now_local():
     return datetime.now(APP_TIMEZONE)
 
-SHEET_ID = "BROKEN_ID_TEST"
+SHEET_ID = "1bRuO870pDBf6O-kXJ1O342SmxmjZgpsiacM2aPOJm9Y"
 SHEET_GID_MAP = {
     (2026, 5, 1):  "1690889478",   # Май 1-15
     (2026, 5, 16): "1467004546",   # Май 16-31
@@ -1376,8 +1376,8 @@ async def week(message: Message):
                     lines.append(f"{day_label} — выходной 🏖 (на смене: {total_on_shift})")
             else:
                 lines.append(f"{day_label} — нет данных")
-        except ValueError:
-            lines.append(f"{day_label} — график не составлен")
+        except (ValueError, ConnectionError):
+            lines.append(f"{day_label} — таблица недоступна")
 
     await loading_answer(message, "⏳ Собираю график на неделю...", "\n".join(lines), reply_markup=week_kb(week_days))
 
