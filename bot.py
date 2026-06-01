@@ -749,15 +749,23 @@ async def get_day_schedule(name, day, month=None, year=None):
     text = f"{name}{role_text}\n\n{format_date(day, month, year)} — {shift}\n{status}"
 
     people_by_role = await get_people_for_day(day, month, year)
-    coworkers = []
-    for role_name, people in people_by_role.items():
-        for person in people:
-            person_name = person.split(" — ")[0].strip()
-            if person_name != name:
-                coworkers.append(person)
+    dept_emojis = {
+        "Менеджер": "👔 Менеджер",
+        "Официант": "🍽 Официант",
+        "Бармен": "🍸 Бармен",
+        "Кальян": "💨 Кальян",
+        "Хостес": "🙋 Хостес",
+    }
 
-    if coworkers:
-        text += f"\n\n👥 {format_date(day, month, year)} работают:\n" + "\n".join(coworkers)
+    coworkers_text = ""
+    for role_key, label in dept_emojis.items():
+        people = people_by_role.get(role_key, [])
+        filtered = [p for p in people if p.split(" — ")[0].strip() != name]
+        if filtered:
+            coworkers_text += f"{label}\n" + "\n".join(filtered) + "\n\n"
+
+    if coworkers_text:
+        text += f"\n\n👥 {format_date(day, month, year)} работают:\n\n" + coworkers_text.strip()
 
     if not is_work_shift(value):
         common_off = await get_common_day_off_people(name, day, month, year)
