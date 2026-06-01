@@ -7,7 +7,6 @@ import traceback
 from io import StringIO
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
-from zoneinfo import ZoneInfo
 import pandas as pd
 import requests
 from aiogram import Bot, Dispatcher, F
@@ -18,11 +17,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-
-APP_TIMEZONE = ZoneInfo("Europe/Moscow")
-
-def now_local():
-    return datetime.now(APP_TIMEZONE)
 
 APP_TIMEZONE = ZoneInfo("Europe/Moscow")
 
@@ -1241,7 +1235,6 @@ async def tomorrow(message: Message):
     result = await get_day_schedule(name, tomorrow_dt.day, tomorrow_dt.month, tomorrow_dt.year)
     await loading_answer(message, "⏳ Смотрю график на завтра...", result)
 
-@dp.message(F.text == "🗓 Неделя")
 @dp.message(F.text == "🗓 Неделя")
 async def week(message: Message):
     name = active_name(message.from_user.id)
