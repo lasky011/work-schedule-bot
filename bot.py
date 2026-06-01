@@ -887,61 +887,93 @@ async def get_people(day, user_id, month=None, year=None):
 
     return text.strip()
 
-async def find_next_shift(name, from_day):
-    max_day = days_in_current_month()
-    period_start, period_end = current_period()
+async def find_next_shift(name, from_day, from_month=None, from_year=None):
+    """Ищет следующую смену начиная с from_day, переходит через месяц если нужно."""
+    now = now_local()
+    if from_month is None:
+        from_month = now.month
+    if from_year is None:
+        from_year = now.year
 
-    for day in range(from_day + 1, period_end + 1):
-        if day > max_day:
-            break
+    # Смотрим вперёд на 45 дней максимум
+    from datetime import date
+    start = date(from_year, from_month, from_day)
 
-        row, _ = await find_row(name, day)
-        if not row:
+    for offset in range(1, 46):
+        target = start + timedelta(days=offset)
+        d, m, y = target.day, target.month, target.year
+
+        if not is_day_published(d, m, y):
             continue
 
-        value = await get_day_value(row, day)
-
-        if is_work_shift(value):
-            return day, value
+        try:
+            row, _ = await find_row(name, d, m, y)
+            if not row:
+                continue
+            value = await get_day_value(row, d, m, y)
+            if is_work_shift(value):
+                return target, value
+        except ValueError:
+            continue
 
     return None, None
 
 async def get_notification_text(name):
-    today = now_local().day
+    now = now_local()
+    today = now.day
+    month = now.month
+    year = now.year
 
-    if not is_day_published(today):
+    if not is_day_published(today, month, year):
+        next_dt, next_value = await find_next_shift(name, today, month, year)
+        if next_dt:
+            from datetime import date
+            today_date = date(year, month, today)
+            off_days = (next_dt - today_date).days
+            return (
+                f"🔔 Ежедневное уведомление\n\n"
+                f"{name}\n"
+                f"{format_date(today, month, year)}\n"
+                f"📋 График пока не составлен\n\n"
+                f"Ближайшая смена: {format_date(next_dt.day, next_dt.month, next_dt.year)} — {detect_shift(next_value)}\n"
+                f"До неё: {off_days} дн."
+            )
         return None
 
-    row, _ = await find_row(name, today)
-
+    row, _ = await find_row(name, today, month, year)
     if not row:
         return None
 
-    value = await get_day_value(row, today)
+    value = await get_day_value(row, today, month, year)
 
     if is_work_shift(value):
+        people_by_role = await get_people_for_day(today, month, year)
+        total = sum(len(v) for v in people_by_role.values())
         return (
             f"🔔 Ежедневное уведомление\n\n"
             f"{name}\n"
-            f"{format_date(today)}\n"
-            f"✅ Сегодня ты работаешь: {detect_shift(value)}"
+            f"{format_date(today, month, year)}\n"
+            f"✅ Сегодня ты работаешь: {detect_shift(value)}\n"
+            f"👥 На смене: {total} чел."
         )
 
-    next_day, next_value = await find_next_shift(name, today)
-    common_off = await get_common_day_off_people(name, today)
+    next_dt, next_value = await find_next_shift(name, today, month, year)
+    common_off = await get_common_day_off_people(name, today, month, year)
 
     text = (
         f"🔔 Ежедневное уведомление\n\n"
         f"{name}\n"
-        f"{format_date(today)}\n"
+        f"{format_date(today, month, year)}\n"
         f"🏖 Сегодня ты отдыхаешь"
     )
 
-    if next_day:
-        off_days_count = next_day - today
+    if next_dt:
+        from datetime import date
+        today_date = date(year, month, today)
+        off_days = (next_dt - today_date).days
         text += (
-            f"\n\nДо ближайшей смены: {off_days_count} дн.\n"
-            f"Ближайшая смена: {format_date(next_day)} — {detect_shift(next_value)}"
+            f"\n\nДо ближайшей смены: {off_days} дн.\n"
+            f"Ближайшая смена: {format_date(next_dt.day, next_dt.month, next_dt.year)} — {detect_shift(next_value)}"
         )
     else:
         text += "\n\nБлижайшей смены в актуальном графике пока нет."
