@@ -764,12 +764,9 @@ async def get_day_schedule(name, day, month=None, year=None):
         if filtered:
             coworkers_text += f"{label}\n" + "\n".join(filtered) + "\n\n"
 
-    total_coworkers = sum(
-        len([p for p in people_by_role.get(r, []) if p.split(" — ")[0].strip() != name])
-        for r in dept_emojis
-    )
+    total_on_shift = sum(len(v) for v in people_by_role.values())
     if coworkers_text:
-        text += f"\n\n👥 {format_date(day, month, year)} работают: всего {total_coworkers}\n\n" + coworkers_text.strip()
+        text += f"\n\n👥 {format_date(day, month, year)} работают: всего {total_on_shift}\n\n" + coworkers_text.strip()
 
     if not is_work_shift(value):
         common_off = await get_common_day_off_people(name, day, month, year)
