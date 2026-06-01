@@ -260,6 +260,7 @@ DEPARTMENTS_FALLBACK = {
     ],
 }
 
+DEPARTMENTS = DEPARTMENTS_FALLBACK
 ALL_NAMES = [name for group in DEPARTMENTS.values() for name in group]
 ROLES = ["Менеджер", "Официант", "Бармен", "Кальян", "Хостес"]
 
