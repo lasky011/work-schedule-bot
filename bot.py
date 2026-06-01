@@ -227,7 +227,7 @@ async def load_full_sheet():
         logging.warning("Нет доступных листов при старте — бот запустится без кэша.")
     return None
 
-DEPARTMENTS = {
+DEPARTMENTS_FALLBACK = {
     "👔 Менеджер": [
         "Рина Евгеньевна",
         "Нодира Комилджоновна",
