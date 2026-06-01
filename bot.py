@@ -764,8 +764,12 @@ async def get_day_schedule(name, day, month=None, year=None):
         if filtered:
             coworkers_text += f"{label}\n" + "\n".join(filtered) + "\n\n"
 
+    total_coworkers = sum(
+        len([p for p in people_by_role.get(r, []) if p.split(" — ")[0].strip() != name])
+        for r in dept_emojis
+    )
     if coworkers_text:
-        text += f"\n\n👥 {format_date(day, month, year)} работают:\n\n" + coworkers_text.strip()
+        text += f"\n\n👥 {format_date(day, month, year)} работают: всего {total_coworkers}\n\n" + coworkers_text.strip()
 
     if not is_work_shift(value):
         common_off = await get_common_day_off_people(name, day, month, year)
@@ -861,10 +865,7 @@ async def get_people(day, user_id, month=None, year=None):
         return f"👥 {format_date(day, month, year)}\n\n{my_status}\n\nГрафик на этот период пока не составлен."
 
     result = await get_people_for_day(day, month, year)
-    text = f"👥 {format_date(day, month, year)} работают:\n\n"
-    text += my_status + "\n\n"
 
-    # Группируем по подразделениям из DEPARTMENTS
     dept_emojis = {
         "Менеджер": "👔 Менеджер",
         "Официант": "🍽 Официант",
@@ -873,12 +874,16 @@ async def get_people(day, user_id, month=None, year=None):
         "Хостес": "🙋 Хостес",
     }
 
+    total = sum(len(v) for v in result.values())
+    text = f"👥 {format_date(day, month, year)} работают: всего {total}\n\n"
+    text += my_status + "\n\n"
+
     has_any = False
     for role_key, label in dept_emojis.items():
         people = result.get(role_key, [])
         if people:
             has_any = True
-            text += f"{label}\n" + "\n".join(people) + "\n\n"
+            text += f"{label} ({len(people)})\n" + "\n".join(people) + "\n\n"
 
     if not has_any:
         text += "Никто не работает."
@@ -1311,12 +1316,14 @@ async def week(message: Message):
 
         try:
             row, _ = await find_row(name, dt.day, dt.month, dt.year)
+            people_by_role = await get_people_for_day(dt.day, dt.month, dt.year)
+            total_on_shift = sum(len(v) for v in people_by_role.values())
             if row:
                 value = await get_day_value(row, dt.day, dt.month, dt.year)
                 if is_work_shift(value):
-                    lines.append(f"{day_label} — {detect_shift(value)} ✅")
+                    lines.append(f"{day_label} — {detect_shift(value)} ✅ (на смене: {total_on_shift})")
                 else:
-                    lines.append(f"{day_label} — выходной 🏖")
+                    lines.append(f"{day_label} — выходной 🏖 (на смене: {total_on_shift})")
             else:
                 lines.append(f"{day_label} — нет данных")
         except ValueError:
