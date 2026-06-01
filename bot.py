@@ -304,6 +304,7 @@ viewing_colleague = {}
 
 comparing_users = set()
 compare_selected = {}
+user_week = {}  # хранит дни текущей недели для каждого пользователя
 
 def main_kb(user_id):
     name = get_user_name(user_id) or "Моё имя"
@@ -316,6 +317,22 @@ def main_kb(user_id):
         ],
         resize_keyboard=True
     )
+
+def week_kb(week_days):
+    """Кнопки с днями недели: [Пн 2] [Вт 3] ..."""
+    WEEKDAYS_SHORT = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+    buttons = []
+    row = []
+    for i, dt in enumerate(week_days):
+        label = f"{WEEKDAYS_SHORT[dt.weekday()]} {dt.day}"
+        row.append(KeyboardButton(text=f"📅 {label}"))
+        if len(row) == 3:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+    buttons.append([KeyboardButton(text="🏠 Главное меню")])
+    return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
 def my_schedule_kb():
     return ReplyKeyboardMarkup(
@@ -1244,19 +1261,74 @@ async def week(message: Message):
         return await message.answer("Сначала выбери своё имя.", reply_markup=dep_kb())
 
     now = now_local()
-    # Неделя пн-вс: находим ближайший понедельник
-    weekday = now.weekday()  # 0=пн, 6=вс
+    weekday = now.weekday()
     week_start = now - timedelta(days=weekday)
-    week_end = week_start + timedelta(days=6)
+    week_days = [week_start + timedelta(days=i) for i in range(7)]
 
-    results = []
-    current = week_start
-    while current <= week_end:
-        day_result = await get_day_schedule(name, current.day, current.month, current.year)
-        results.append(day_result)
-        current += timedelta(days=1)
+    # Сохраняем неделю пользователя
+    user_week[message.from_user.id] = week_days
 
-    await loading_answer(message, "⏳ Собираю график на неделю...", "\n\n".join(results))
+    WEEKDAYS_SHORT = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+    RU_MONTHS_SHORT = ["", "янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"]
+
+    # Краткий обзор недели
+    first = week_days[0]
+    last = week_days[-1]
+    if first.month == last.month:
+        header = f"🗓 Неделя: {first.day}–{last.day} {MONTHS[first.month]}"
+    else:
+        header = f"🗓 Неделя: {first.day} {RU_MONTHS_SHORT[first.month]} – {last.day} {RU_MONTHS_SHORT[last.month]}"
+
+    lines = [header, ""]
+    for dt in week_days:
+        is_weekend = dt.weekday() >= 5 or (dt.month, dt.day) in RU_HOLIDAYS
+        day_label = f"{WEEKDAYS_SHORT[dt.weekday()]} {dt.day}"
+        if is_weekend:
+            day_label += " ❗"
+
+        try:
+            row, _ = await find_row(name, dt.day, dt.month, dt.year)
+            if row:
+                value = await get_day_value(row, dt.day, dt.month, dt.year)
+                if is_work_shift(value):
+                    lines.append(f"{day_label} — {detect_shift(value)} ✅")
+                else:
+                    lines.append(f"{day_label} — выходной 🏖")
+            else:
+                lines.append(f"{day_label} — нет данных")
+        except ValueError:
+            lines.append(f"{day_label} — график не составлен")
+
+    await loading_answer(message, "⏳ Собираю график на неделю...", "\n".join(lines), reply_markup=week_kb(week_days))
+
+@dp.message(F.text.regexp(r"^📅 (Пн|Вт|Ср|Чт|Пт|Сб|Вс) \d+$"))
+async def week_day_detail(message: Message):
+    user_id = message.from_user.id
+    name = active_name(user_id)
+
+    if not name:
+        selecting_own_name.add(user_id)
+        return await message.answer("Сначала выбери своё имя.", reply_markup=dep_kb())
+
+    week_days = user_week.get(user_id)
+    if not week_days:
+        return await message.answer("Сначала открой неделю.", reply_markup=my_schedule_kb())
+
+    # Парсим "📅 Ср 4" → ищем совпадение в сохранённых днях
+    parts = message.text.replace("📅 ", "").strip().split()
+    day_num = int(parts[1])
+
+    target = None
+    for dt in week_days:
+        if dt.day == day_num:
+            target = dt
+            break
+
+    if not target:
+        return await message.answer("Не нашёл этот день.", reply_markup=week_kb(week_days))
+
+    result = await get_day_schedule(name, target.day, target.month, target.year)
+    await loading_answer(message, f"⏳ Смотрю {target.day}...", result, reply_markup=week_kb(week_days))
 
 @dp.message(F.text == "📋 Весь график")
 @dp.message(F.text == "📋 Выбрать месяц")
