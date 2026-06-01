@@ -747,15 +747,24 @@ async def get_range_schedule(name, start_day, end_day, month=None, year=None):
     saved_role = None
     found_any = False
     role_line_index = None
+    unpublished_start = None
 
     for day in range(start_day, end_day + 1):
         if not is_day_published(day, month, year):
+            if unpublished_start is None:
+                unpublished_start = day
+            continue
+
+        if unpublished_start is not None:
             if role_line_index is None:
                 result.append("")
                 role_line_index = 1
                 result.append("")
-            result.append(f"{format_date(day, month, year)} — график пока не составлен")
-            continue
+            if unpublished_start == day - 1:
+                result.append(f"{unpublished_start} {MONTHS[month]} — график пока не составлен")
+            else:
+                result.append(f"{unpublished_start}–{day - 1} {MONTHS[month]} — график пока не составлен")
+            unpublished_start = None
 
         row, role = await find_row(name, day, month, year)
 
@@ -773,6 +782,16 @@ async def get_range_schedule(name, start_day, end_day, month=None, year=None):
             result.append("")
 
         result.append(f"{format_date(day, month, year)} — {detect_shift(value)}")
+
+    if unpublished_start is not None:
+        if role_line_index is None:
+            result.append(f"Должность: {saved_role or ''}")
+            role_line_index = 1
+            result.append("")
+        if unpublished_start == end_day:
+            result.append(f"{unpublished_start} {MONTHS[month]} — график пока не составлен")
+        else:
+            result.append(f"{unpublished_start}–{end_day} {MONTHS[month]} — график пока не составлен")
 
     if not found_any:
         return f"Не нашёл график для: {name}"
