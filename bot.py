@@ -23,6 +23,42 @@ APP_TIMEZONE = ZoneInfo("Europe/Moscow")
 def now_local():
     return datetime.now(APP_TIMEZONE)
 
+
+RATES: dict[str, int] = {
+    "Официант":  int(os.getenv("RATE_WAITER", 0)),
+    "Хостес":    int(os.getenv("RATE_HOSTESS", 0)),
+    "Бармен":    int(os.getenv("RATE_BARTENDER", 0)),
+    "Кальянщик": int(os.getenv("RATE_HOOKAH", 0)),
+    "Менеджер":  int(os.getenv("RATE_MANAGER", 0)),
+}
+
+SHIFT_HOURS: dict[tuple, float] = {
+    ("morning", "weekday"): 12.5,
+    ("morning", "weekend"): 14.5,
+    ("evening", "weekday"): 10.0,
+    ("evening", "weekend"): 12.0,
+}
+
+
+def detect_shift_type(value: str) -> str | None:
+    if not value:
+        return None
+    try:
+        hour = int(str(value).strip().split(":")[0])
+        return "morning" if hour < 14 else "evening"
+    except (ValueError, IndexError):
+        return None
+
+
+def get_day_type(date) -> str:
+    return "weekend" if date.weekday() >= 5 else "weekday"
+
+
+def get_standard_hours(shift_type: str | None, date) -> float | None:
+    if not shift_type:
+        return None
+    return SHIFT_HOURS.get((shift_type, get_day_type(date)))
+
 SHEET_ID = "1bRuO870pDBf6O-kXJ1O342SmxmjZgpsiacM2aPOJm9Y"
 SHEET_GID_MAP = {
     (2026, 5, 1):  "1690889478",   # Май 1-15
