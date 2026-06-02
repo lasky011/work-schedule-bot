@@ -380,8 +380,7 @@ comparing_users = set()
 compare_selected = {}
 user_week = {}  # хранит дни текущей недели для каждого пользователя
 
-def main_kb(user_id):
-    name = await get_user_name(user_id) or "Моё имя"
+def main_kb(user_id, name: str = "Моё имя"):
 
     return ReplyKeyboardMarkup(
         keyboard=[
@@ -391,6 +390,10 @@ def main_kb(user_id):
         ],
         resize_keyboard=True
     )
+
+async def main_kb_async(user_id: int) -> ReplyKeyboardMarkup:
+    name = await get_user_name(user_id) or "Моё имя"
+    return main_kb(user_id, name)
 
 def week_kb(week_days):
     """Кнопки с днями недели: [Пн 2] [Вт 3] ..."""
@@ -1162,7 +1165,7 @@ async def start(message: Message):
     if user and user[1]:
         await message.answer(
             f"Привет 👋\nТвоё имя: {user[1]}\n\nВыбери раздел:",
-            reply_markup=main_kb(user_id)
+            reply_markup=await main_kb_async(user_id)
         )
     else:
         selecting_own_name.add(user_id)
@@ -1173,7 +1176,7 @@ async def home(message: Message):
     user_id = message.from_user.id
     reset_modes(user_id)
 
-    await message.answer("Главное меню:", reply_markup=main_kb(user_id))
+    await message.answer("Главное меню:", reply_markup=await main_kb_async(user_id))
 
 @dp.message(F.text == "📌 Мой график")
 async def my_schedule_menu(message: Message):
@@ -1197,7 +1200,7 @@ async def back_to_self(message: Message):
 
     await message.answer(
         f"Ты вернулся к своему графику.\nТвоё имя: {name}",
-        reply_markup=main_kb(user_id)
+        reply_markup=await main_kb_async(user_id)
     )
 
 @dp.message(F.text == "⬅️ Назад к коллеге")
@@ -1208,7 +1211,7 @@ async def back_to_colleague(message: Message):
     colleague_name = viewing_colleague.get(user_id)
 
     if not colleague_name:
-        return await message.answer("Коллега не выбран.", reply_markup=main_kb(user_id))
+        return await message.answer("Коллега не выбран.", reply_markup=await main_kb_async(user_id))
 
     await message.answer(
         f"👀 Ты смотришь график коллеги: {colleague_name}",
@@ -1276,7 +1279,7 @@ async def own_name_selected(message: Message):
 
     await message.answer(
         f"Имя сохранено: {message.text}",
-        reply_markup=main_kb(user_id)
+        reply_markup=await main_kb_async(user_id)
     )
 
 @dp.message(F.text.startswith("👀 "))
@@ -1333,7 +1336,7 @@ async def compare_menu(message: Message):
     if not colleague_name:
         return await message.answer(
             "Сначала выбери коллегу через раздел «👀 Коллеги».",
-            reply_markup=main_kb(user_id)
+            reply_markup=await main_kb_async(user_id)
         )
 
     comparing_users.add(user_id)
@@ -1555,7 +1558,7 @@ async def notifications_on(message: Message):
 
     await message.answer(
         f"Уведомления включены 🔔\nВремя: {user[3]}",
-        reply_markup=main_kb(user_id)
+        reply_markup=await main_kb_async(user_id)
     )
 
 @dp.message(F.text == "🔕 Выключить")
@@ -1563,7 +1566,7 @@ async def notifications_off(message: Message):
     await save_user(message.from_user.id, notify=0)
     waiting_for_time.discard(message.from_user.id)
 
-    await message.answer("Уведомления выключены 🔕", reply_markup=main_kb(message.from_user.id))
+    await message.answer("Уведомления выключены 🔕", reply_markup=await main_kb_async(message.from_user.id))
 
 @dp.message(F.text == "✍️ Задать время")
 async def ask_notification_time(message: Message):
@@ -1592,10 +1595,10 @@ async def text_handler(message: Message):
 
         return await message.answer(
             f"Время уведомлений сохранено: {text}\nУведомления включены 🔔",
-            reply_markup=main_kb(user_id)
+            reply_markup=await main_kb_async(user_id)
         )
 
-    await message.answer("Используй кнопки ниже.", reply_markup=main_kb(user_id))
+    await message.answer("Используй кнопки ниже.", reply_markup=await main_kb_async(user_id))
 
 async def main():
     if not BOT_TOKEN:
