@@ -86,12 +86,14 @@ def init_db():
 init_db()
 
 
-def _save_user_sync(user_id, name=None, notify=None, notify_time=None):
+def _save_user_sync(
+    user_id, name=None, notify=None, notify_time=None,
+    role=None, track_hours=None, notify_hours=None, notify_hours_time=None
+):
     conn = get_db_connection()
     cursor = conn.cursor()
 
     if USE_POSTGRES:
-        # Собираем только переданные поля для обновления
         updates: dict = {}
         if name is not None:
             updates["name"] = name
@@ -99,6 +101,14 @@ def _save_user_sync(user_id, name=None, notify=None, notify_time=None):
             updates["notify"] = notify
         if notify_time is not None:
             updates["notify_time"] = notify_time
+        if role is not None:
+            updates["role"] = role
+        if track_hours is not None:
+            updates["track_hours"] = track_hours
+        if notify_hours is not None:
+            updates["notify_hours"] = notify_hours
+        if notify_hours_time is not None:
+            updates["notify_hours_time"] = notify_hours_time
 
         if updates:
             set_clause = ", ".join(f"{k} = EXCLUDED.{k}" for k in updates)
@@ -111,18 +121,13 @@ def _save_user_sync(user_id, name=None, notify=None, notify_time=None):
                 values
             )
         else:
-            # Только регистрируем пользователя если его нет
             cursor.execute(
                 "INSERT INTO users (user_id, notify) VALUES (%s, 0) "
                 "ON CONFLICT (user_id) DO NOTHING",
                 (user_id,)
             )
     else:
-        # SQLite fallback: старая логика
-        cursor.execute(
-            "SELECT user_id FROM users WHERE user_id=?",
-            (user_id,)
-        )
+        cursor.execute("SELECT user_id FROM users WHERE user_id=?", (user_id,))
         exists = cursor.fetchone()
         if not exists:
             cursor.execute(
@@ -136,14 +141,28 @@ def _save_user_sync(user_id, name=None, notify=None, notify_time=None):
                 cursor.execute("UPDATE users SET notify=? WHERE user_id=?", (notify, user_id))
             if notify_time is not None:
                 cursor.execute("UPDATE users SET notify_time=? WHERE user_id=?", (notify_time, user_id))
+            if role is not None:
+                cursor.execute("UPDATE users SET role=? WHERE user_id=?", (role, user_id))
+            if track_hours is not None:
+                cursor.execute("UPDATE users SET track_hours=? WHERE user_id=?", (track_hours, user_id))
+            if notify_hours is not None:
+                cursor.execute("UPDATE users SET notify_hours=? WHERE user_id=?", (notify_hours, user_id))
+            if notify_hours_time is not None:
+                cursor.execute("UPDATE users SET notify_hours_time=? WHERE user_id=?", (notify_hours_time, user_id))
 
     conn.commit()
     cursor.close()
     conn.close()
 
 
-async def save_user(user_id, name=None, notify=None, notify_time=None):
-    await asyncio.to_thread(_save_user_sync, user_id, name, notify, notify_time)
+async def save_user(
+    user_id, name=None, notify=None, notify_time=None,
+    role=None, track_hours=None, notify_hours=None, notify_hours_time=None
+):
+    await asyncio.to_thread(
+        _save_user_sync, user_id, name, notify, notify_time,
+        role, track_hours, notify_hours, notify_hours_time
+    )
 
 
 def _get_user_sync(user_id):
@@ -153,7 +172,7 @@ def _get_user_sync(user_id):
     ph = db_placeholder()
 
     cursor.execute(
-        f"SELECT user_id, name, notify, notify_time FROM users WHERE user_id={ph}",
+        f"SELECT user_id, name, notify, notify_time, role, track_hours, notify_hours, notify_hours_time FROM users WHERE user_id={ph}",
         (user_id,)
     )
 
@@ -1595,6 +1614,245 @@ async def ask_notification_time(message: Message):
 
     await message.answer("Напиши время уведомления в формате ЧЧ:ММ\n\nНапример: 09:30")
 
+# ── Зарплата ───────────────────────────────────────────────────────────────
+
+# Состояния для флоу внесения смены
+salary_mode: set[int] = set()
+shift_entering: dict[int, dict] = {}
+waiting_shift_hours: set[int] = set()
+waiting_hours_notify_time: set[int] = set()
+
+
+def get_role_key(role: str | None) -> str | None:
+    if not role:
+        return None
+    parts = role.split(" ", 1)
+    return parts[1] if len(parts) == 2 else role
+
+
+@dp.message(F.text == "💰 Зарплата")
+async def salary_menu(message: Message):
+    user_id = message.from_user.id
+    user = await get_user(user_id)
+    if not user or not user[1]:
+        return await message.answer("Сначала выбери своё имя.", reply_markup=dep_kb())
+    track_hours = user[5] if user and len(user) > 5 else 0
+    salary_mode.add(user_id)
+    await message.answer("💰 Зарплата", reply_markup=salary_kb(track_hours or 0))
+
+
+@dp.message(F.text == "📊 Примерная зарплата")
+async def salary_stats(message: Message):
+    user_id = message.from_user.id
+    user = await get_user(user_id)
+    if not user or not user[1]:
+        return await message.answer("Сначала выбери своё имя.", reply_markup=dep_kb())
+    name = user[1]
+    role = user[4] if len(user) > 4 else None
+    track_hours = user[5] if len(user) > 5 else 0
+    now = now_local()
+    month, year = now.month, now.year
+    month_name = now.strftime("%B %Y")
+    days_in_month = calendar.monthrange(year, month)[1]
+    schedule_shifts = 0
+    schedule_hours = 0.0
+    for day in range(1, days_in_month + 1):
+        try:
+            row, _ = await find_row(name, day, month, year)
+            if row:
+                value = await get_day_value(row, day, month, year)
+                if is_work_shift(value):
+                    schedule_shifts += 1
+                    shift_type = detect_shift_type(value)
+                    dt = datetime(year, month, day)
+                    hours = get_standard_hours(shift_type, dt) or 12.0
+                    schedule_hours += hours
+        except (ValueError, ConnectionError):
+            pass
+    rate = RATES.get(get_role_key(role) or "", 0)
+    lines = ["📊 " + month_name, ""]
+    lines.append("По графику смен: " + str(schedule_shifts))
+    lines.append("Часов по графику (прим.): " + str(schedule_hours))
+    if rate:
+        approx_salary = round(schedule_hours * rate)
+        lines.append("")
+        lines.append("💰 Примерная зарплата: ~" + f"{approx_salary:,}".replace(",", " ") + " ₽")
+        lines.append("   (" + str(rate) + " ₽/ч × " + str(schedule_hours) + " ч)")
+    else:
+        lines.append("")
+        lines.append("⚠️ Ставка для твоей должности не указана")
+    if track_hours:
+        shifts = await get_shifts_for_month(user_id, year, month)
+        actual_hours = sum(float(r[1]) for r in shifts)
+        lines.append("")
+        lines.append("✅ Внесено смен: " + str(len(shifts)))
+        lines.append("⏱ Часов внесено: " + str(actual_hours))
+        if rate:
+            actual_salary = round(actual_hours * rate)
+            lines.append("💰 Зарплата по факту: ~" + f"{actual_salary:,}".replace(",", " ") + " ₽")
+    await message.answer("\n".join(lines), reply_markup=salary_kb(track_hours or 0))
+
+
+@dp.message(F.text == "⚙️ Настройки учёта")
+async def salary_settings(message: Message):
+    user_id = message.from_user.id
+    user = await get_user(user_id)
+    track_hours = user[5] if user and len(user) > 5 else 0
+    notify_hours = user[6] if user and len(user) > 6 else 0
+    await message.answer("⚙️ Настройки учёта часов:", reply_markup=salary_settings_kb(track_hours or 0, notify_hours or 0))
+
+
+@dp.message(F.text.in_({"⬜ Включить учёт часов", "✅ Учёт часов включён"}))
+async def toggle_track_hours(message: Message):
+    user_id = message.from_user.id
+    user = await get_user(user_id)
+    track_hours = user[5] if user and len(user) > 5 else 0
+    notify_hours = user[6] if user and len(user) > 6 else 0
+    new_val = 0 if track_hours else 1
+    await save_user(user_id, track_hours=new_val)
+    text = "✅ Учёт часов включён! Теперь можешь вносить смены." if new_val else "⬜ Учёт часов выключен."
+    await message.answer(text, reply_markup=salary_settings_kb(new_val, notify_hours or 0))
+
+
+@dp.message(F.text.in_({"🔔 Уведомление включено", "🔕 Уведомление выключено"}))
+async def toggle_notify_hours(message: Message):
+    user_id = message.from_user.id
+    user = await get_user(user_id)
+    track_hours = user[5] if user and len(user) > 5 else 0
+    notify_hours = user[6] if user and len(user) > 6 else 0
+    new_val = 0 if notify_hours else 1
+    await save_user(user_id, notify_hours=new_val)
+    await message.answer(
+        "🔔 Уведомление включено." if new_val else "🔕 Уведомление выключено.",
+        reply_markup=salary_settings_kb(track_hours or 0, new_val)
+    )
+
+
+@dp.message(F.text == "🕐 Время уведомления")
+async def ask_hours_notify_time(message: Message):
+    user_id = message.from_user.id
+    waiting_hours_notify_time.add(user_id)
+    await message.answer("Напиши время уведомления после смены в формате ЧЧ:ММ\nНапример: 23:30")
+
+
+@dp.message(F.text == "🗑 Удалить мои данные о сменах")
+async def delete_shifts_data(message: Message):
+    user_id = message.from_user.id
+    user = await get_user(user_id)
+    track_hours = user[5] if user and len(user) > 5 else 0
+    notify_hours = user[6] if user and len(user) > 6 else 0
+    now = now_local()
+    shifts = await get_shifts_for_month(user_id, now.year, now.month)
+    for row in shifts:
+        await delete_shift(user_id, str(row[0]))
+    await message.answer("🗑 Все данные о сменах удалены.", reply_markup=salary_settings_kb(track_hours or 0, notify_hours or 0))
+
+
+@dp.message(F.text == "⬅️ Назад к зарплате")
+async def back_to_salary(message: Message):
+    user_id = message.from_user.id
+    user = await get_user(user_id)
+    track_hours = user[5] if user and len(user) > 5 else 0
+    await message.answer("💰 Зарплата", reply_markup=salary_kb(track_hours or 0))
+
+
+@dp.message(F.text == "⏱ Внести смену")
+async def enter_shift_start(message: Message):
+    user_id = message.from_user.id
+    await message.answer("Выбери дату смены:", reply_markup=shift_date_kb())
+
+
+@dp.message(F.text.in_({"📅 Сегодня", "📅 Вчера"}))
+async def shift_date_selected(message: Message):
+    user_id = message.from_user.id
+    user = await get_user(user_id)
+    if not user or not user[1]:
+        return await message.answer("Сначала выбери своё имя.", reply_markup=dep_kb())
+    name = user[1]
+    now = now_local()
+    dt = now if message.text == "📅 Сегодня" else now - timedelta(days=1)
+    date_str = dt.strftime("%Y-%m-%d")
+    existing = await get_shift_for_date(user_id, date_str)
+    shift_type = None
+    standard_hours = None
+    try:
+        row, _ = await find_row(name, dt.day, dt.month, dt.year)
+        if row:
+            value = await get_day_value(row, dt.day, dt.month, dt.year)
+            if is_work_shift(value):
+                shift_type = detect_shift_type(value)
+                standard_hours = get_standard_hours(shift_type, dt)
+    except (ValueError, ConnectionError):
+        pass
+    shift_entering[user_id] = {
+        "date": date_str,
+        "shift_type": shift_type,
+        "standard_hours": standard_hours,
+    }
+    date_label = dt.strftime("%d.%m.%Y")
+    day_type = "выходной" if dt.weekday() >= 5 else "будний день"
+    shift_label = {"morning": "утро", "evening": "вечер"}.get(shift_type or "", "")
+    lines = [date_label + " (" + day_type + ")"]
+    if shift_type:
+        lines.append("По графику: " + shift_label + ", стандартная смена — " + str(standard_hours) + " ч")
+    else:
+        lines.append("Смены нет в графике или данные недоступны.")
+    if existing:
+        lines.append("")
+        lines.append("✏️ Уже внесено: " + str(existing[1]) + " ч — можешь обновить.")
+    await message.answer("\n".join(lines), reply_markup=shift_hours_kb(standard_hours))
+
+
+@dp.message(F.text.startswith("✅ Стандартная ("))
+async def shift_standard_selected(message: Message):
+    user_id = message.from_user.id
+    state = shift_entering.get(user_id)
+    if not state:
+        return await message.answer("Сначала выбери дату.", reply_markup=shift_date_kb())
+    await save_shift(
+        user_id=user_id,
+        date=state["date"],
+        hours=state["standard_hours"],
+        shift_type=state.get("shift_type"),
+        is_standard=True,
+    )
+    shift_entering.pop(user_id, None)
+    user = await get_user(user_id)
+    track_hours = user[5] if user and len(user) > 5 else 0
+    await message.answer(
+        "✅ Смена внесена: " + str(state["standard_hours"]) + " ч за " + state["date"],
+        reply_markup=salary_kb(track_hours or 0)
+    )
+
+
+@dp.message(F.text == "✍️ Указать своё время")
+async def shift_custom_hours(message: Message):
+    user_id = message.from_user.id
+    if user_id not in shift_entering:
+        return await message.answer("Сначала выбери дату.", reply_markup=shift_date_kb())
+    waiting_shift_hours.add(user_id)
+    await message.answer("Напиши количество часов, например: 11.5")
+
+
+@dp.message(F.text == "📋 История смен")
+async def shift_history(message: Message):
+    user_id = message.from_user.id
+    now = now_local()
+    shifts = await get_shifts_for_month(user_id, now.year, now.month)
+    user = await get_user(user_id)
+    track_hours = user[5] if user and len(user) > 5 else 0
+    if not shifts:
+        return await message.answer("Нет внесённых смен за этот месяц.", reply_markup=salary_kb(track_hours or 0))
+    lines = ["📋 История смен за " + now.strftime("%B %Y"), ""]
+    for row in shifts:
+        date, hours, shift_type, is_standard, note = row
+        shift_label = {"morning": "утро", "evening": "вечер"}.get(shift_type or "", "")
+        std_label = "" if is_standard else " (своё)"
+        lines.append("📅 " + str(date) + " — " + str(hours) + " ч " + shift_label + std_label)
+    await message.answer("\n".join(lines), reply_markup=salary_kb(track_hours or 0))
+
+
+
 @dp.message()
 async def text_handler(message: Message):
     user_id = message.from_user.id
@@ -1608,8 +1866,47 @@ async def text_handler(message: Message):
         waiting_for_time.discard(user_id)
 
         return await message.answer(
-            f"Время уведомлений сохранено: {text}\nУведомления включены 🔔",
+            "Время уведомлений сохранено: " + text + "\nУведомления включены 🔔",
             reply_markup=await main_kb_async(user_id)
+        )
+
+    if user_id in waiting_hours_notify_time:
+        if not is_valid_time(text):
+            return await message.answer("Неверный формат. Напиши так: 23:30")
+        await save_user(user_id, notify_hours_time=text, notify_hours=1)
+        waiting_hours_notify_time.discard(user_id)
+        user = await get_user(user_id)
+        track_hours = user[5] if user and len(user) > 5 else 0
+        return await message.answer(
+            "🕐 Время уведомления после смены сохранено: " + text,
+            reply_markup=salary_settings_kb(track_hours or 0, 1)
+        )
+
+    if user_id in waiting_shift_hours:
+        try:
+            hours = float(text.replace(",", "."))
+            if hours <= 0 or hours > 24:
+                raise ValueError
+        except ValueError:
+            return await message.answer("Напиши число, например: 11.5")
+        state = shift_entering.get(user_id)
+        if not state:
+            waiting_shift_hours.discard(user_id)
+            return await message.answer("Что-то пошло не так. Начни заново.", reply_markup=shift_date_kb())
+        await save_shift(
+            user_id=user_id,
+            date=state["date"],
+            hours=hours,
+            shift_type=state.get("shift_type"),
+            is_standard=False,
+        )
+        waiting_shift_hours.discard(user_id)
+        shift_entering.pop(user_id, None)
+        user = await get_user(user_id)
+        track_hours = user[5] if user and len(user) > 5 else 0
+        return await message.answer(
+            "✅ Смена внесена: " + str(hours) + " ч за " + state["date"],
+            reply_markup=salary_kb(track_hours or 0)
         )
 
     await message.answer("Используй кнопки ниже.", reply_markup=await main_kb_async(user_id))
