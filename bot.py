@@ -428,6 +428,54 @@ async def main_kb_async(user_id: int) -> ReplyKeyboardMarkup:
     name = await get_user_name(user_id) or "Моё имя"
     return main_kb(user_id, name)
 
+
+def salary_kb(track_hours: int = 0) -> ReplyKeyboardMarkup:
+    keyboard = [[KeyboardButton(text="📊 Примерная зарплата")]]
+    if track_hours:
+        keyboard += [
+            [KeyboardButton(text="⏱ Внести смену"), KeyboardButton(text="📋 История смен")],
+        ]
+    keyboard += [
+        [KeyboardButton(text="⚙️ Настройки учёта")],
+        [KeyboardButton(text="🏠 Главное меню")],
+    ]
+    return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
+
+
+def salary_settings_kb(track_hours: int = 0, notify_hours: int = 0) -> ReplyKeyboardMarkup:
+    track_label = "✅ Учёт часов включён" if track_hours else "⬜ Включить учёт часов"
+    notify_label = "🔔 Уведомление включено" if notify_hours else "🔕 Уведомление выключено"
+    keyboard = [[KeyboardButton(text=track_label)]]
+    if track_hours:
+        keyboard += [
+            [KeyboardButton(text=notify_label)],
+            [KeyboardButton(text="🕐 Время уведомления")],
+            [KeyboardButton(text="🗑 Удалить мои данные о сменах")],
+        ]
+    keyboard.append([KeyboardButton(text="⬅️ Назад к зарплате")])
+    return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
+
+
+def shift_date_kb() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="📅 Сегодня"), KeyboardButton(text="📅 Вчера")],
+            [KeyboardButton(text="🏠 Главное меню")],
+        ],
+        resize_keyboard=True
+    )
+
+
+def shift_hours_kb(standard_hours) -> ReplyKeyboardMarkup:
+    keyboard = []
+    if standard_hours:
+        keyboard.append([KeyboardButton(text="✅ Стандартная (" + str(standard_hours) + " ч)")])
+    keyboard += [
+        [KeyboardButton(text="✍️ Указать своё время")],
+        [KeyboardButton(text="🏠 Главное меню")],
+    ]
+    return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
+
 def week_kb(week_days):
     """Кнопки с днями недели: [Пн 2] [Вт 3] ..."""
     WEEKDAYS_SHORT = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
