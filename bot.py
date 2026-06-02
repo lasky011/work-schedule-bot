@@ -419,7 +419,7 @@ def main_kb(user_id, name: str = "Моё имя"):
         keyboard=[
             [KeyboardButton(text="📌 Мой график"), KeyboardButton(text="📆 График сегодня/завтра")],
             [KeyboardButton(text="👀 Коллеги"), KeyboardButton(text="🔔 Уведомления")],
-            [KeyboardButton(text=f"👤 {name}")],
+            [KeyboardButton(text="💰 Зарплата"), KeyboardButton(text=f"👤 {name}")],
         ],
         resize_keyboard=True
     )
