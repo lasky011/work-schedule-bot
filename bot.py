@@ -225,6 +225,8 @@ async def load_full_sheet():
             pass  # GID не добавлен или таблица недоступна — пропускаем
     if not dfs:
         logging.warning("Нет доступных листов при старте — бот запустится без кэша.")
+        return None
+    await refresh_departments(force=True)
     return None
 
 DEPARTMENTS_FALLBACK = {
@@ -260,8 +262,58 @@ DEPARTMENTS_FALLBACK = {
     ],
 }
 
-DEPARTMENTS = DEPARTMENTS_FALLBACK
-ALL_NAMES = [name for group in DEPARTMENTS.values() for name in group]
+DEPARTMENTS: dict[str, list[str]] = DEPARTMENTS_FALLBACK.copy()
+ALL_NAMES: list[str] = [n for names in DEPARTMENTS.values() for n in names]
+
+_departments_updated_at: "datetime | None" = None
+_DEPARTMENTS_TTL_SEC = 300
+
+
+def parse_departments(df) -> dict:
+    result: dict[str, list[str]] = {}
+    current_role = None
+    for i in range(len(df)):
+        first = str(df.iloc[i, 0]).strip()
+        if first in ROLES:
+            current_role = first
+            result[current_role] = []
+            continue
+        if current_role is None:
+            continue
+        name = clean_value(first)
+        if name:
+            result[current_role].append(name)
+    return result
+
+
+async def refresh_departments(force: bool = False) -> None:
+    global DEPARTMENTS, ALL_NAMES, _departments_updated_at
+    now = now_local()
+    if (
+        not force
+        and _departments_updated_at is not None
+        and (now - _departments_updated_at).total_seconds() < _DEPARTMENTS_TTL_SEC
+    ):
+        return
+    try:
+        df = await load_sheet(now.day)
+        parsed = parse_departments(df)
+        if not parsed:
+            logging.warning("refresh_departments: пустой результат, оставляю fallback")
+            return
+        emoji_map = {label.split(" ", 1)[1]: label for label in DEPARTMENTS_FALLBACK}
+        DEPARTMENTS = {
+            emoji_map.get(role, role): names
+            for role, names in parsed.items()
+            if names
+        }
+        ALL_NAMES = [n for names in DEPARTMENTS.values() for n in names]
+        _departments_updated_at = now
+        logging.info("refresh_departments: %d ролей, %d сотрудников", len(DEPARTMENTS), len(ALL_NAMES))
+    except (ValueError, ConnectionError) as e:
+        logging.warning("refresh_departments: ошибка (%s), fallback активен", e)
+    except Exception as e:
+        logging.error("refresh_departments: неожиданная ошибка: %s", e)
 ROLES = ["Менеджер", "Официант", "Бармен", "Кальян", "Хостес"]
 
 MONTHS = [
