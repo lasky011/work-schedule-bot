@@ -86,7 +86,7 @@ def init_db():
 init_db()
 
 
-def save_user(user_id, name=None, notify=None, notify_time=None):
+def _save_user_sync(user_id, name=None, notify=None, notify_time=None):
     conn = get_db_connection()
     cursor = conn.cursor()
 
@@ -128,7 +128,11 @@ def save_user(user_id, name=None, notify=None, notify_time=None):
     conn.close()
 
 
-def get_user(user_id):
+async def save_user(user_id, name=None, notify=None, notify_time=None):
+    await asyncio.to_thread(_save_user_sync, user_id, name, notify, notify_time)
+
+
+def _get_user_sync(user_id):
     conn = get_db_connection()
     cursor = conn.cursor()
 
@@ -147,12 +151,16 @@ def get_user(user_id):
     return user
 
 
-def get_user_name(user_id):
-    user = get_user(user_id)
+async def get_user(user_id):
+    return await asyncio.to_thread(_get_user_sync, user_id)
+
+
+async def get_user_name(user_id):
+    user = await get_user(user_id)
     return user[1] if user and user[1] else None
 
 
-def get_notify_users():
+def _get_notify_users_sync():
     conn = get_db_connection()
     cursor = conn.cursor()
 
@@ -166,6 +174,10 @@ def get_notify_users():
     conn.close()
 
     return users
+
+
+async def get_notify_users():
+    return await asyncio.to_thread(_get_notify_users_sync)
 cached_df = {}
 cached_time = {}
 cache_lock = asyncio.Lock()
@@ -369,7 +381,7 @@ compare_selected = {}
 user_week = {}  # хранит дни текущей недели для каждого пользователя
 
 def main_kb(user_id):
-    name = get_user_name(user_id) or "Моё имя"
+    name = await get_user_name(user_id) or "Моё имя"
 
     return ReplyKeyboardMarkup(
         keyboard=[
@@ -469,7 +481,7 @@ def own_names_kb(department):
     )
 
 def colleague_names_kb(department, user_id):
-    my_name = get_user_name(user_id)
+    my_name = await get_user_name(user_id)
     buttons = []
 
     for name in DEPARTMENTS[department]:
@@ -481,7 +493,7 @@ def colleague_names_kb(department, user_id):
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
 def compare_names_kb(department, user_id):
-    my_name = get_user_name(user_id)
+    my_name = await get_user_name(user_id)
     selected = compare_selected.get(user_id, set())
     buttons = []
 
@@ -777,7 +789,7 @@ async def get_my_status_for_day(user_id, day, month=None, year=None):
         month = now.month
     if year is None:
         year = now.year
-    my_name = get_user_name(user_id)
+    my_name = await get_user_name(user_id)
 
     if not my_name:
         return "👤 Твоё имя не выбрано."
@@ -1058,7 +1070,7 @@ async def get_notification_text(name):
     return text
 
 async def compare_multiple(user_id):
-    user = get_user(user_id)
+    user = await get_user(user_id)
 
     if not user or not user[1]:
         return "Сначала выбери своё имя."
@@ -1112,7 +1124,7 @@ def active_name(user_id):
     if user_id in viewing_colleague:
         return viewing_colleague[user_id]
 
-    return get_user_name(user_id)
+    return await get_user_name(user_id)
 
 async def notification_loop(bot):
     sent = {}
@@ -1122,7 +1134,7 @@ async def notification_loop(bot):
         current_time = now.strftime("%H:%M")
         today_key = now.strftime("%Y-%m-%d")
 
-        for user_id, name, notify_time in get_notify_users():
+        for user_id, name, notify_time in await get_notify_users():
             if notify_time != current_time:
                 continue
 
@@ -1145,7 +1157,7 @@ async def start(message: Message):
     user_id = message.from_user.id
     reset_modes(user_id)
 
-    user = get_user(user_id)
+    user = await get_user(user_id)
 
     if user and user[1]:
         await message.answer(
@@ -1181,7 +1193,7 @@ async def back_to_self(message: Message):
     viewing_colleague.pop(user_id, None)
     reset_compare_mode(user_id)
 
-    name = get_user_name(user_id) or "не выбрано"
+    name = await get_user_name(user_id) or "не выбрано"
 
     await message.answer(
         f"Ты вернулся к своему графику.\nТвоё имя: {name}",
@@ -1259,7 +1271,7 @@ async def department_selected(message: Message):
 async def own_name_selected(message: Message):
     user_id = message.from_user.id
 
-    save_user(user_id, name=message.text, notify=0, notify_time='')
+    await save_user(user_id, name=message.text, notify=0, notify_time='')
     reset_modes(user_id)
 
     await message.answer(
@@ -1287,7 +1299,7 @@ async def compare_person_selected(message: Message):
     user_id = message.from_user.id
     name = message.text.replace("➕ ", "").strip()
 
-    my_name = get_user_name(user_id)
+    my_name = await get_user_name(user_id)
 
     if name == my_name:
         return await message.answer("Себя добавлять не нужно — ты уже участвуешь в сравнении.")
@@ -1512,7 +1524,7 @@ async def notifications_menu(message: Message):
             reply_markup=colleague_kb()
         )
 
-    user = get_user(user_id)
+    user = await get_user(user_id)
 
     if not user or not user[1]:
         selecting_own_name.add(user_id)
@@ -1529,7 +1541,7 @@ async def notifications_menu(message: Message):
 @dp.message(F.text == "🔔 Включить")
 async def notifications_on(message: Message):
     user_id = message.from_user.id
-    user = get_user(user_id)
+    user = await get_user(user_id)
 
     if not user or not user[1]:
         selecting_own_name.add(user_id)
@@ -1539,7 +1551,7 @@ async def notifications_on(message: Message):
         waiting_for_time.add(user_id)
         return await message.answer("Сначала задай время уведомления. Например: 09:30")
 
-    save_user(user_id, notify=1)
+    await save_user(user_id, notify=1)
 
     await message.answer(
         f"Уведомления включены 🔔\nВремя: {user[3]}",
@@ -1548,7 +1560,7 @@ async def notifications_on(message: Message):
 
 @dp.message(F.text == "🔕 Выключить")
 async def notifications_off(message: Message):
-    save_user(message.from_user.id, notify=0)
+    await save_user(message.from_user.id, notify=0)
     waiting_for_time.discard(message.from_user.id)
 
     await message.answer("Уведомления выключены 🔕", reply_markup=main_kb(message.from_user.id))
@@ -1556,7 +1568,7 @@ async def notifications_off(message: Message):
 @dp.message(F.text == "✍️ Задать время")
 async def ask_notification_time(message: Message):
     user_id = message.from_user.id
-    user = get_user(user_id)
+    user = await get_user(user_id)
 
     if not user or not user[1]:
         selecting_own_name.add(user_id)
@@ -1575,7 +1587,7 @@ async def text_handler(message: Message):
         if not is_valid_time(text):
             return await message.answer("Неверный формат. Напиши так: 09:30")
 
-        save_user(user_id, notify_time=text, notify=1)
+        await save_user(user_id, notify_time=text, notify=1)
         waiting_for_time.discard(user_id)
 
         return await message.answer(
