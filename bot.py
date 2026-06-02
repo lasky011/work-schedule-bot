@@ -483,7 +483,7 @@ def own_names_kb(department):
         resize_keyboard=True
     )
 
-def colleague_names_kb(department, user_id):
+async def colleague_names_kb(department, user_id):
     my_name = await get_user_name(user_id)
     buttons = []
 
@@ -495,7 +495,7 @@ def colleague_names_kb(department, user_id):
 
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
-def compare_names_kb(department, user_id):
+async def compare_names_kb(department, user_id):
     my_name = await get_user_name(user_id)
     selected = compare_selected.get(user_id, set())
     buttons = []
@@ -1123,7 +1123,7 @@ async def compare_multiple(user_id):
 
     return text
 
-def active_name(user_id):
+async def active_name(user_id):
     if user_id in viewing_colleague:
         return viewing_colleague[user_id]
 
@@ -1263,9 +1263,9 @@ async def department_selected(message: Message):
     department = message.text
 
     if user_id in comparing_users:
-        await message.answer("Выбери сотрудника для сравнения:", reply_markup=compare_names_kb(department, user_id))
+        await message.answer("Выбери сотрудника для сравнения:", reply_markup=await compare_names_kb(department, user_id))
     elif user_id in selecting_colleague:
-        await message.answer("Выбери коллегу:", reply_markup=colleague_names_kb(department, user_id))
+        await message.answer("Выбери коллегу:", reply_markup=await colleague_names_kb(department, user_id))
     else:
         selecting_own_name.add(user_id)
         await message.answer("Выбери своё имя:", reply_markup=own_names_kb(department))
@@ -1377,7 +1377,7 @@ async def clear_compare(message: Message):
 
 @dp.message(F.text == "📅 Сегодня")
 async def today(message: Message):
-    name = active_name(message.from_user.id)
+    name = await active_name(message.from_user.id)
 
     if not name:
         selecting_own_name.add(message.from_user.id)
@@ -1388,7 +1388,7 @@ async def today(message: Message):
 
 @dp.message(F.text == "📆 Завтра")
 async def tomorrow(message: Message):
-    name = active_name(message.from_user.id)
+    name = await active_name(message.from_user.id)
 
     if not name:
         selecting_own_name.add(message.from_user.id)
@@ -1400,7 +1400,7 @@ async def tomorrow(message: Message):
 
 @dp.message(F.text == "🗓 Неделя")
 async def week(message: Message):
-    name = active_name(message.from_user.id)
+    name = await active_name(message.from_user.id)
 
     if not name:
         selecting_own_name.add(message.from_user.id)
@@ -1452,7 +1452,7 @@ async def week(message: Message):
 @dp.message(F.text.regexp(r"^📅 (Пн|Вт|Ср|Чт|Пт|Сб|Вс) \d+$"))
 async def week_day_detail(message: Message):
     user_id = message.from_user.id
-    name = active_name(user_id)
+    name = await active_name(user_id)
 
     if not name:
         selecting_own_name.add(user_id)
@@ -1487,7 +1487,7 @@ async def choose_month(message: Message):
 
 @dp.message(F.text.regexp(r"^📋 \w+ \d{4}$"))
 async def full_schedule(message: Message):
-    name = active_name(message.from_user.id)
+    name = await active_name(message.from_user.id)
 
     if not name:
         selecting_own_name.add(message.from_user.id)
