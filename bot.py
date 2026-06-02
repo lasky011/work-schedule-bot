@@ -90,38 +90,52 @@ def _save_user_sync(user_id, name=None, notify=None, notify_time=None):
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    ph = db_placeholder()
-
-    cursor.execute(
-        f"SELECT user_id FROM users WHERE user_id={ph}",
-        (user_id,)
-    )
-
-    exists = cursor.fetchone()
-
-    if not exists:
-        cursor.execute(
-            f"INSERT INTO users (user_id, name, notify, notify_time) VALUES ({ph}, {ph}, {ph}, {ph})",
-            (user_id, name, notify or 0, notify_time)
-        )
-    else:
+    if USE_POSTGRES:
+        # Собираем только переданные поля для обновления
+        updates: dict = {}
         if name is not None:
-            cursor.execute(
-                f"UPDATE users SET name={ph} WHERE user_id={ph}",
-                (name, user_id)
-            )
-
+            updates["name"] = name
         if notify is not None:
-            cursor.execute(
-                f"UPDATE users SET notify={ph} WHERE user_id={ph}",
-                (notify, user_id)
-            )
-
+            updates["notify"] = notify
         if notify_time is not None:
+            updates["notify_time"] = notify_time
+
+        if updates:
+            set_clause = ", ".join(f"{k} = EXCLUDED.{k}" for k in updates)
+            cols = ", ".join(["user_id"] + list(updates.keys()))
+            placeholders = ", ".join(["%s"] * (1 + len(updates)))
+            values = [user_id] + list(updates.values())
             cursor.execute(
-                f"UPDATE users SET notify_time={ph} WHERE user_id={ph}",
-                (notify_time, user_id)
+                f"INSERT INTO users ({cols}) VALUES ({placeholders}) "
+                f"ON CONFLICT (user_id) DO UPDATE SET {set_clause}",
+                values
             )
+        else:
+            # Только регистрируем пользователя если его нет
+            cursor.execute(
+                "INSERT INTO users (user_id, notify) VALUES (%s, 0) "
+                "ON CONFLICT (user_id) DO NOTHING",
+                (user_id,)
+            )
+    else:
+        # SQLite fallback: старая логика
+        cursor.execute(
+            "SELECT user_id FROM users WHERE user_id=?",
+            (user_id,)
+        )
+        exists = cursor.fetchone()
+        if not exists:
+            cursor.execute(
+                "INSERT INTO users (user_id, name, notify, notify_time) VALUES (?, ?, ?, ?)",
+                (user_id, name, notify or 0, notify_time)
+            )
+        else:
+            if name is not None:
+                cursor.execute("UPDATE users SET name=? WHERE user_id=?", (name, user_id))
+            if notify is not None:
+                cursor.execute("UPDATE users SET notify=? WHERE user_id=?", (notify, user_id))
+            if notify_time is not None:
+                cursor.execute("UPDATE users SET notify_time=? WHERE user_id=?", (notify_time, user_id))
 
     conn.commit()
     cursor.close()
