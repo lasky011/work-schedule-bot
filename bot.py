@@ -1481,11 +1481,19 @@ async def department_selected(message: Message):
 async def own_name_selected(message: Message):
     user_id = message.from_user.id
 
-    await save_user(user_id, name=message.text, notify=0, notify_time='')
+    # Определяем роль по имени из DEPARTMENTS
+    user_role = None
+    for dept_label, names in DEPARTMENTS.items():
+        if message.text in names:
+            parts = dept_label.split(" ", 1)
+            user_role = parts[1] if len(parts) == 2 else dept_label
+            break
+
+    await save_user(user_id, name=message.text, notify=0, notify_time='', role=user_role)
     reset_modes(user_id)
 
     await message.answer(
-        f"Имя сохранено: {message.text}",
+        "Имя сохранено: " + message.text,
         reply_markup=await main_kb_async(user_id)
     )
 
