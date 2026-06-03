@@ -2191,7 +2191,7 @@ async def delete_shift_choose(message: Message):
         user = await get_user(user_id)
         track_hours = user[5] if user and len(user) > 5 else 0
         notify_hours = user[6] if user and len(user) > 6 else 0
-            return await message.answer(
+        return await message.answer(
             "Нет внесённых смен за этот месяц.",
             reply_markup=salary_settings_kb(track_hours or 0, notify_hours or 0)
         )
