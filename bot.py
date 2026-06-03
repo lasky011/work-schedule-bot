@@ -1636,7 +1636,7 @@ async def add_compare_person(message: Message):
 
     await message.answer("Выбери подразделение сотрудника:", reply_markup=dep_kb())
 
-@dp.message(F.text.in_(list(DEPARTMENTS.keys())))
+@dp.message(F.text.func(lambda t: t is not None and t in DEPARTMENTS))
 async def department_selected(message: Message):
     user_id = message.from_user.id
     department = message.text
@@ -1649,7 +1649,7 @@ async def department_selected(message: Message):
         selecting_own_name.add(user_id)
         await message.answer("Выбери своё имя:", reply_markup=own_names_kb(department))
 
-@dp.message(F.text.in_(ALL_NAMES))
+@dp.message(F.text.func(lambda t: t is not None and t in ALL_NAMES))
 async def own_name_selected(message: Message):
     user_id = message.from_user.id
 
