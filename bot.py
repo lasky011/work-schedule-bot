@@ -581,6 +581,8 @@ MONTHS = [
     "декабря",
 ]
 
+MONTHS_RU = {i: MONTHS_NOM[i] for i in range(1, 13)}  # алиас от MONTHS_NOM
+
 MONTHS_NOM = [
     "",
     "Январь",
