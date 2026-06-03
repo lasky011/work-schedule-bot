@@ -40,6 +40,13 @@ SHIFT_HOURS: dict[tuple, float] = {
 }
 
 
+MONTHS_RU = {
+    1: "Январь", 2: "Февраль", 3: "Март", 4: "Апрель",
+    5: "Май", 6: "Июнь", 7: "Июль", 8: "Август",
+    9: "Сентябрь", 10: "Октябрь", 11: "Ноябрь", 12: "Декабрь"
+}
+
+
 def detect_shift_type(value: str) -> str | None:
     if not value:
         return None
@@ -1834,11 +1841,18 @@ async def salary_stats(message: Message):
     track_hours = user[5] if len(user) > 5 else 0
     now = now_local()
     month, year = now.month, now.year
-    month_name = now.strftime("%B %Y")
-    days_in_month = calendar.monthrange(year, month)[1]
+    # Определяем текущий период
+    if now.day <= 15:
+        period_start, period_end = 1, 15
+        period_name = "1-15"
+    else:
+        period_start = 16
+        period_end = calendar.monthrange(year, month)[1]
+        period_name = "16-" + str(period_end)
+    month_name = MONTHS_RU.get(month, str(month)) + " " + str(year) + " (" + period_name + ")"
     schedule_shifts = 0
     schedule_hours = 0.0
-    for day in range(1, days_in_month + 1):
+    for day in range(period_start, period_end + 1):
         try:
             row, _ = await find_row(name, day, month, year)
             if row:
@@ -1865,6 +1879,7 @@ async def salary_stats(message: Message):
         lines.append("⚠️ Ставка для твоей должности не указана")
     if track_hours:
         shifts = await get_shifts_for_month(user_id, year, month)
+        shifts = [r for r in shifts if period_start <= int(str(r[0]).split("-")[2]) <= period_end]
         actual_hours = sum(float(r[1]) for r in shifts)
         lines.append("")
         lines.append("✅ Внесено смен: " + str(len(shifts)))
