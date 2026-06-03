@@ -13,7 +13,7 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, CallbackQuery
 from aiogram_calendar import SimpleCalendar, SimpleCalendarCallback
-from aiogram_calendar.schemas import SimpleCalendarLabels
+from aiogram_calendar.schemas import CalendarLabels as SimpleCalendarLabels
 
 RU_CALENDAR = SimpleCalendarLabels(
     days_of_week=["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"],
