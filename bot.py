@@ -11,7 +11,17 @@ import pandas as pd
 import requests
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart
-from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, CallbackQuery
+from aiogram_calendar import SimpleCalendar, SimpleCalendarCallback
+from aiogram_calendar.schemas import SimpleCalendarLabels
+
+RU_CALENDAR = SimpleCalendarLabels(
+    days_of_week=["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"],
+    months=["Янв", "Фев", "Мар", "Апр", "Май", "Июн",
+            "Июл", "Авг", "Сен", "Окт", "Ноя", "Дек"],
+    cancel_caption="Отмена",
+    today_caption="Сегодня",
+)
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -2096,7 +2106,62 @@ async def back_to_salary(message: Message):
 @dp.message(F.text == "⏱ Внести смену")
 async def enter_shift_start(message: Message):
     user_id = message.from_user.id
-    await message.answer("Выбери дату смены:", reply_markup=shift_date_kb())
+    now = now_local()
+    await message.answer(
+        "Выбери дату смены:",
+        reply_markup=await SimpleCalendar(locale=RU_CALENDAR).start_calendar(year=now.year, month=now.month)
+    )
+
+
+@dp.callback_query(SimpleCalendarCallback.filter())
+async def process_calendar(callback: CallbackQuery, callback_data: SimpleCalendarCallback):
+    user_id = callback.from_user.id
+    user = await get_user(user_id)
+
+    selected, dt = await SimpleCalendar(locale=RU_CALENDAR).process_selection(callback, callback_data)
+    if not selected:
+        return
+
+    if not user or not user[1]:
+        await callback.message.answer("Сначала выбери своё имя.", reply_markup=dep_kb())
+        return
+
+    name = user[1]
+    date_str = dt.strftime("%Y-%m-%d")
+    existing = await get_shift_for_date(user_id, date_str)
+    shift_type = None
+    standard_hours = None
+
+    try:
+        row, _ = await find_row(name, dt.day, dt.month, dt.year)
+        if row:
+            value = await get_day_value(row, dt.day, dt.month, dt.year)
+            if is_work_shift(value):
+                shift_type = detect_shift_type(value)
+                standard_hours = get_standard_hours(shift_type, dt)
+    except (ValueError, ConnectionError):
+        pass
+
+    shift_entering[user_id] = {
+        "date": date_str,
+        "shift_type": shift_type,
+        "standard_hours": standard_hours,
+    }
+
+    date_label = dt.strftime("%d.%m.%Y")
+    day_type = "выходной" if dt.weekday() >= 5 else "будний день"
+    shift_label = {"morning": "утро", "evening": "вечер"}.get(shift_type or "", "")
+
+    lines = [date_label + " (" + day_type + ")"]
+    if shift_type:
+        lines.append("По графику: " + shift_label + ", стандартная смена — " + str(standard_hours) + " ч")
+    else:
+        lines.append("Смены нет в графике или данные недоступны.")
+    if existing:
+        lines.append("")
+        lines.append("✏️ Уже внесено: " + str(existing[1]) + " ч — можешь обновить.")
+
+    await callback.message.answer("\n".join(lines), reply_markup=shift_hours_kb(standard_hours))
 
 
 @dp.message(F.text.in_({"📥 Сегодня", "📥 Вчера"}))

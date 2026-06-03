@@ -4,3 +4,4 @@ pandas
 requests
 psycopg2-binary
 psycopg2-binary
+aiogram-calendar
