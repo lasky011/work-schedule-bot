@@ -38,8 +38,19 @@ RATES: dict[str, int] = {
 SHIFT_HOURS: dict[tuple, float] = {
     ("morning", "weekday"): 12.5,
     ("morning", "weekend"): 14.5,
+    ("morning", "sunday"):  12.5,
     ("evening", "weekday"): 10.0,
     ("evening", "weekend"): 12.0,
+    ("evening", "sunday"):  10.0,
+}
+
+SHIFT_END_NOTIFY: dict[tuple, str] = {
+    ("morning", "weekday"): "23:05",
+    ("morning", "weekend"): "01:05",
+    ("morning", "sunday"):  "23:05",
+    ("evening", "weekday"): "02:05",
+    ("evening", "weekend"): "04:05",
+    ("evening", "sunday"):  "02:05",
 }
 
 
@@ -61,7 +72,12 @@ def detect_shift_type(value: str) -> str | None:
 
 
 def get_day_type(date) -> str:
-    return "weekend" if date.weekday() >= 5 else "weekday"
+    if date.weekday() == 6:
+        return "sunday"
+    elif date.weekday() == 5:
+        return "weekend"
+    else:
+        return "weekday"
 
 
 def get_standard_hours(shift_type: str | None, date) -> float | None:
@@ -615,7 +631,6 @@ def salary_settings_kb(track_hours: int = 0, notify_hours: int = 0, notify_hours
     if track_hours:
         keyboard += [
             [KeyboardButton(text=notify_label)],
-            [KeyboardButton(text=time_label)],
             [KeyboardButton(text="🗑 Удалить смену из истории")],
         ]
     keyboard.append([KeyboardButton(text="⬅️ Назад к зарплате")])
@@ -1375,6 +1390,69 @@ async def active_name(user_id):
         return viewing_colleague[user_id]
 
     return await get_user_name(user_id)
+
+async def hours_notification_loop(bot) -> None:
+    sent = {}
+
+    while True:
+        now = now_local()
+        current_time = now.strftime("%H:%M")
+        today_key = now.strftime("%Y-%m-%d")
+
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT user_id, name, notify_hours_time FROM users "
+                "WHERE notify_hours=1 AND name IS NOT NULL AND notify_hours_time IS NOT NULL"
+            )
+            users = cursor.fetchall()
+            cursor.close()
+            conn.close()
+        except Exception as e:
+            logging.error("hours_notification_loop DB error: %s", e)
+            await asyncio.sleep(60)
+            continue
+
+        for user_id, name, _ in users:
+            key = str(user_id) + "-hours-" + today_key
+            if sent.get(key):
+                continue
+            try:
+                row, _ = await find_row(name, now.day, now.month, now.year)
+                if not row:
+                    continue
+                value = await get_day_value(row, now.day, now.month, now.year)
+                if not is_work_shift(value):
+                    continue
+                shift_type = detect_shift_type(value)
+                if not shift_type:
+                    continue
+                day_type = get_day_type(now)
+                notify_time = SHIFT_END_NOTIFY.get((shift_type, day_type))
+                if not notify_time or notify_time != current_time:
+                    continue
+                if sent.get(key):
+                    continue
+                existing = await get_shift_for_date(user_id, today_key)
+                if existing:
+                    sent[key] = True
+                    continue
+                shift_label = {"morning": "утро", "evening": "вечер"}.get(shift_type, "")
+                std_hours = get_standard_hours(shift_type, now)
+                lines = ["\u23f1 \u041d\u0435 \u0437\u0430\u0431\u0443\u0434\u044c \u0432\u043d\u0435\u0441\u0442\u0438 \u0447\u0430\u0441\u044b \u0437\u0430 \u0441\u0435\u0433\u043e\u0434\u043d\u044f!"]
+                if shift_label:
+                    line = "\u041f\u043e \u0433\u0440\u0430\u0444\u0438\u043a\u0443 \u0441\u0435\u0433\u043e\u0434\u043d\u044f: " + shift_label
+                    if std_hours:
+                        line += ", \u0441\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f \u0441\u043c\u0435\u043d\u0430 \u2014 " + str(std_hours) + " \u0447"
+                    lines.append(line)
+                await bot.send_message(user_id, "\n".join(lines))
+                sent[key] = True
+            except Exception as e:
+                logging.warning("hours_notification_loop error for %s: %s", user_id, e)
+
+        await asyncio.sleep(30)
+
 
 async def notification_loop(bot):
     sent = {}
@@ -2332,6 +2410,7 @@ async def main():
     await load_full_sheet()
 
     asyncio.create_task(notification_loop(bot))
+    asyncio.create_task(hours_notification_loop(bot))
 
     await dp.start_polling(bot)
 
