@@ -622,7 +622,7 @@ def salary_settings_kb(track_hours: int = 0, notify_hours: int = 0, notify_hours
 def shift_date_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="📅 Сегодня"), KeyboardButton(text="📅 Вчера")],
+            [KeyboardButton(text="📥 Сегодня"), KeyboardButton(text="📥 Вчера")],
             [KeyboardButton(text="🏠 Главное меню")],
         ],
         resize_keyboard=True
@@ -2099,7 +2099,7 @@ async def enter_shift_start(message: Message):
     await message.answer("Выбери дату смены:", reply_markup=shift_date_kb())
 
 
-@dp.message(F.text.in_({"📅 Сегодня", "📅 Вчера"}))
+@dp.message(F.text.in_({"📥 Сегодня", "📥 Вчера"}))
 async def shift_date_selected(message: Message):
     user_id = message.from_user.id
     user = await get_user(user_id)
@@ -2107,7 +2107,7 @@ async def shift_date_selected(message: Message):
         return await message.answer("Сначала выбери своё имя.", reply_markup=dep_kb())
     name = user[1]
     now = now_local()
-    dt = now if message.text == "📅 Сегодня" else now - timedelta(days=1)
+    dt = now if message.text == "📥 Сегодня" else now - timedelta(days=1)
     date_str = dt.strftime("%Y-%m-%d")
     existing = await get_shift_for_date(user_id, date_str)
     shift_type = None
