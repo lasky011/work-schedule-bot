@@ -1572,7 +1572,7 @@ async def compare_person_selected(message: Message):
         reply_markup=compare_kb()
     )
 
-@dp.message((F.text.startswith("✅ ")) & (F.text != "✅ Посчитать совпадения"))
+@dp.message((F.text.startswith("✅ ")) & (F.text != "✅ Посчитать совпадения") & (~F.text.startswith("✅ Стандартная (")) & (F.text != "✅ Учёт часов включён"))
 async def compare_person_already_selected(message: Message):
     user_id = message.from_user.id
     name = message.text.replace("✅ ", "").strip()
