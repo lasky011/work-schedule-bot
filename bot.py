@@ -131,14 +131,68 @@ def init_db():
     conn = get_db_connection()
     cursor = conn.cursor()
 
+    # ── users ──────────────────────────────────────────────────────────
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS users (
-        user_id BIGINT PRIMARY KEY,
-        name TEXT,
-        notify INTEGER DEFAULT 0,
-        notify_time TEXT
+        user_id     BIGINT PRIMARY KEY,
+        name        TEXT,
+        notify      INTEGER DEFAULT 0,
+        notify_time TEXT,
+        role        TEXT,
+        track_hours INTEGER DEFAULT 0,
+        notify_hours INTEGER DEFAULT 0,
+        notify_hours_time TEXT
     )
     """)
+
+    # Добавляем колонки если таблица существует со старой схемой
+    extra_user_cols = [
+        ("role",               "TEXT"),
+        ("track_hours",        "INTEGER DEFAULT 0"),
+        ("notify_hours",       "INTEGER DEFAULT 0"),
+        ("notify_hours_time",  "TEXT"),
+    ]
+    for col, col_type in extra_user_cols:
+        try:
+            if USE_POSTGRES:
+                cursor.execute(
+                    f"ALTER TABLE users ADD COLUMN IF NOT EXISTS {col} {col_type}"
+                )
+            else:
+                # SQLite не поддерживает IF NOT EXISTS в ALTER TABLE
+                cursor.execute(f"ALTER TABLE users ADD COLUMN {col} {col_type}")
+        except Exception:
+            pass  # колонка уже есть
+
+    # ── shifts ─────────────────────────────────────────────────────────
+    if USE_POSTGRES:
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS shifts (
+            id          SERIAL PRIMARY KEY,
+            user_id     BIGINT NOT NULL,
+            date        DATE NOT NULL,
+            hours       NUMERIC(5,2) NOT NULL,
+            shift_type  TEXT,
+            is_standard BOOLEAN DEFAULT TRUE,
+            note        TEXT,
+            created_at  TIMESTAMP DEFAULT NOW(),
+            UNIQUE (user_id, date)
+        )
+        """)
+    else:
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS shifts (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id     INTEGER NOT NULL,
+            date        TEXT NOT NULL,
+            hours       REAL NOT NULL,
+            shift_type  TEXT,
+            is_standard INTEGER DEFAULT 1,
+            note        TEXT,
+            created_at  TEXT DEFAULT (datetime('now')),
+            UNIQUE (user_id, date)
+        )
+        """)
 
     conn.commit()
     cursor.close()
