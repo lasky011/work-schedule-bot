@@ -50,13 +50,6 @@ SHIFT_END_NOTIFY: dict[tuple, str] = {
 }
 
 
-MONTHS_RU = {
-    1: "Январь", 2: "Февраль", 3: "Март", 4: "Апрель",
-    5: "Май", 6: "Июнь", 7: "Июль", 8: "Август",
-    9: "Сентябрь", 10: "Октябрь", 11: "Ноябрь", 12: "Декабрь"
-}
-
-
 def detect_shift_type(value: str) -> str | None:
     if not value:
         return None
@@ -560,6 +553,16 @@ async def refresh_departments(force: bool = False) -> None:
         logging.warning("refresh_departments: ошибка (%s), fallback активен", e)
     except Exception as e:
         logging.error("refresh_departments: неожиданная ошибка: %s", e)
+
+# Словарь отделов с эмодзи — используется при отображении расписания
+DEPT_EMOJIS: dict[str, str] = {
+    "Менеджер": "👔 Менеджер",
+    "Официант": "🍽 Официант",
+    "Бармен":   "🍸 Бармен",
+    "Кальян":   "💨 Кальян",
+    "Хостес":   "🙋 Хостес",
+}
+
 ROLES = ["Менеджер", "Официант", "Бармен", "Кальян", "Хостес"]
 
 MONTHS = [
@@ -646,14 +649,14 @@ def salary_kb(track_hours: int = 0) -> ReplyKeyboardMarkup:
 def salary_period_kb() -> ReplyKeyboardMarkup:
     now = now_local()
     month, year = now.month, now.year
-    month_name = MONTHS_RU.get(month, str(month))
+    month_name = MONTHS_NOM[month]
 
     # Прошлый месяц
     if month == 1:
         prev_month, prev_year = 12, year - 1
     else:
         prev_month, prev_year = month - 1, year
-    prev_month_name = MONTHS_RU.get(prev_month, str(prev_month))
+    prev_month_name = MONTHS_NOM[prev_month]
     prev_end = calendar.monthrange(prev_year, prev_month)[1]
     cur_end = calendar.monthrange(year, month)[1]
 
@@ -1148,16 +1151,8 @@ async def get_day_schedule(name, day, month=None, year=None):
     text = f"{name}{role_text}\n\n{format_date(day, month, year)} — {shift}\n{status}"
 
     people_by_role = await get_people_for_day(day, month, year)
-    dept_emojis = {
-        "Менеджер": "👔 Менеджер",
-        "Официант": "🍽 Официант",
-        "Бармен": "🍸 Бармен",
-        "Кальян": "💨 Кальян",
-        "Хостес": "🙋 Хостес",
-    }
-
     coworkers_text = ""
-    for role_key, label in dept_emojis.items():
+    for role_key, label in DEPT_EMOJIS.items():
         people = people_by_role.get(role_key, [])
         filtered = [p for p in people if p.split(" — ")[0].strip() != name]
         if filtered:
@@ -1262,20 +1257,12 @@ async def get_people(day, user_id, month=None, year=None):
 
     result = await get_people_for_day(day, month, year)
 
-    dept_emojis = {
-        "Менеджер": "👔 Менеджер",
-        "Официант": "🍽 Официант",
-        "Бармен": "🍸 Бармен",
-        "Кальян": "💨 Кальян",
-        "Хостес": "🙋 Хостес",
-    }
-
     total = sum(len(v) for v in result.values())
     text = f"👥 {format_date(day, month, year)} работают: всего {total}\n\n"
     text += my_status + "\n\n"
 
     has_any = False
-    for role_key, label in dept_emojis.items():
+    for role_key, label in DEPT_EMOJIS.items():
         people = result.get(role_key, [])
         if people:
             has_any = True
@@ -1525,11 +1512,20 @@ async def hours_notification_loop(bot) -> None:
 
 async def notification_loop(bot):
     sent = {}
+    last_cleanup = now_local().date()
 
     while True:
         now = now_local()
         current_time = now.strftime("%H:%M")
         today_key = now.strftime("%Y-%m-%d")
+
+        # Чистим sent раз в день — удаляем ключи старше 2 дней
+        today_date = now.date()
+        if today_date != last_cleanup:
+            cutoff = (today_date - timedelta(days=2)).strftime("%Y-%m-%d")
+            sent = {k: v for k, v in sent.items()
+                    if k.split("-")[1] >= cutoff}
+            last_cleanup = today_date
 
         for user_id, name, notify_time in await get_notify_users():
             if notify_time != current_time:
@@ -1989,7 +1985,6 @@ async def ask_notification_time(message: Message):
 salary_mode: set[int] = set()
 shift_entering: dict[int, dict] = {}
 waiting_shift_hours: set[int] = set()
-waiting_hours_notify_time: set[int] = set()
 salary_period_selected: dict[int, tuple] = {}  # {user_id: (year, month, start, end)}
 
 
@@ -2028,7 +2023,7 @@ async def show_salary_stats(message: Message, year: int, month: int, period_star
     track_hours = user[5] if len(user) > 5 else 0
 
     period_name = str(period_start) + "-" + str(period_end)
-    month_name = MONTHS_RU.get(month, str(month)) + " " + str(year) + " (" + period_name + ")"
+    month_name = MONTHS_NOM[month] + " " + str(year) + " (" + period_name + ")"
 
     schedule_shifts = 0
     schedule_hours = 0.0
@@ -2135,7 +2130,6 @@ async def salary_settings(message: Message):
     user = await get_user(user_id)
     track_hours = user[5] if user and len(user) > 5 else 0
     notify_hours = user[6] if user and len(user) > 6 else 0
-    notify_hours_time = user[7] if user and len(user) > 7 else ""
     notify_info = ""
     if notify_hours:
         notify_info = (
@@ -2197,8 +2191,7 @@ async def delete_shift_choose(message: Message):
         user = await get_user(user_id)
         track_hours = user[5] if user and len(user) > 5 else 0
         notify_hours = user[6] if user and len(user) > 6 else 0
-        notify_hours_time = user[7] if user and len(user) > 7 else ""
-        return await message.answer(
+            return await message.answer(
             "Нет внесённых смен за этот месяц.",
             reply_markup=salary_settings_kb(track_hours or 0, notify_hours or 0)
         )
@@ -2222,7 +2215,6 @@ async def delete_shift_confirm(message: Message):
     user = await get_user(user_id)
     track_hours = user[5] if user and len(user) > 5 else 0
     notify_hours = user[6] if user and len(user) > 6 else 0
-    notify_hours_time = user[7] if user and len(user) > 7 else ""
     if deleted:
         await message.answer(
             "✅ Смена за " + date_str + " удалена.",
@@ -2241,7 +2233,6 @@ async def back_to_settings(message: Message):
     user = await get_user(user_id)
     track_hours = user[5] if user and len(user) > 5 else 0
     notify_hours = user[6] if user and len(user) > 6 else 0
-    notify_hours_time = user[7] if user and len(user) > 7 else ""
     await message.answer(
         "⚙️ Настройки учёта часов:",
         reply_markup=salary_settings_kb(track_hours or 0, notify_hours or 0)
