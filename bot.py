@@ -604,15 +604,16 @@ def salary_period_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
 
-def salary_settings_kb(track_hours: int = 0, notify_hours: int = 0) -> ReplyKeyboardMarkup:
+def salary_settings_kb(track_hours: int = 0, notify_hours: int = 0, notify_hours_time: str = "") -> ReplyKeyboardMarkup:
     track_label = "✅ Учёт часов включён" if track_hours else "⬜ Включить учёт часов"
     notify_label = "🔔 Уведомление включено" if notify_hours else "🔕 Уведомление выключено"
+    time_label = "🕐 Время: " + notify_hours_time if notify_hours_time else "🕐 Задать время уведомления"
     keyboard = [[KeyboardButton(text=track_label)]]
     if track_hours:
         keyboard += [
             [KeyboardButton(text=notify_label)],
-            [KeyboardButton(text="🕐 Время уведомления")],
-            [KeyboardButton(text="🗑 Удалить мои данные о сменах")],
+            [KeyboardButton(text=time_label)],
+            [KeyboardButton(text="🗑 Удалить смену из истории")],
         ]
     keyboard.append([KeyboardButton(text="⬅️ Назад к зарплате")])
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
@@ -1984,7 +1985,11 @@ async def salary_settings(message: Message):
     user = await get_user(user_id)
     track_hours = user[5] if user and len(user) > 5 else 0
     notify_hours = user[6] if user and len(user) > 6 else 0
-    await message.answer("⚙️ Настройки учёта часов:", reply_markup=salary_settings_kb(track_hours or 0, notify_hours or 0))
+    notify_hours_time = user[7] if user and len(user) > 7 else ""
+    await message.answer(
+        "⚙️ Настройки учёта часов:",
+        reply_markup=salary_settings_kb(track_hours or 0, notify_hours or 0, notify_hours_time or "")
+    )
 
 
 @dp.message(F.text.in_({"⬜ Включить учёт часов", "✅ Учёт часов включён"}))
@@ -2020,17 +2025,64 @@ async def ask_hours_notify_time(message: Message):
     await message.answer("Напиши время уведомления после смены в формате ЧЧ:ММ\nНапример: 23:30")
 
 
-@dp.message(F.text == "🗑 Удалить мои данные о сменах")
-async def delete_shifts_data(message: Message):
+@dp.message(F.text == "🗑 Удалить смену из истории")
+async def delete_shift_choose(message: Message):
+    user_id = message.from_user.id
+    now = now_local()
+    shifts = await get_shifts_for_month(user_id, now.year, now.month)
+    if not shifts:
+        user = await get_user(user_id)
+        track_hours = user[5] if user and len(user) > 5 else 0
+        notify_hours = user[6] if user and len(user) > 6 else 0
+        notify_hours_time = user[7] if user and len(user) > 7 else ""
+        return await message.answer(
+            "Нет внесённых смен за этот месяц.",
+            reply_markup=salary_settings_kb(track_hours or 0, notify_hours or 0, notify_hours_time or "")
+        )
+    keyboard = []
+    for row in shifts:
+        date, hours, shift_type, is_standard, note = row
+        shift_label = {"morning": "утро", "evening": "вечер"}.get(shift_type or "", "")
+        keyboard.append([KeyboardButton(text="🗑 " + str(date) + " — " + str(hours) + " ч " + shift_label)])
+    keyboard.append([KeyboardButton(text="⬅️ Назад к настройкам")])
+    await message.answer(
+        "Выбери смену для удаления:",
+        reply_markup=ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
+    )
+
+
+@dp.message(F.text.regexp(r"^🗑 \d{4}-\d{2}-\d{2}"))
+async def delete_shift_confirm(message: Message):
+    user_id = message.from_user.id
+    date_str = message.text.replace("🗑 ", "").split(" — ")[0].strip()
+    deleted = await delete_shift(user_id, date_str)
+    user = await get_user(user_id)
+    track_hours = user[5] if user and len(user) > 5 else 0
+    notify_hours = user[6] if user and len(user) > 6 else 0
+    notify_hours_time = user[7] if user and len(user) > 7 else ""
+    if deleted:
+        await message.answer(
+            "✅ Смена за " + date_str + " удалена.",
+            reply_markup=salary_settings_kb(track_hours or 0, notify_hours or 0, notify_hours_time or "")
+        )
+    else:
+        await message.answer(
+            "Смена не найдена.",
+            reply_markup=salary_settings_kb(track_hours or 0, notify_hours or 0, notify_hours_time or "")
+        )
+
+
+@dp.message(F.text == "⬅️ Назад к настройкам")
+async def back_to_settings(message: Message):
     user_id = message.from_user.id
     user = await get_user(user_id)
     track_hours = user[5] if user and len(user) > 5 else 0
     notify_hours = user[6] if user and len(user) > 6 else 0
-    now = now_local()
-    shifts = await get_shifts_for_month(user_id, now.year, now.month)
-    for row in shifts:
-        await delete_shift(user_id, str(row[0]))
-    await message.answer("🗑 Все данные о сменах удалены.", reply_markup=salary_settings_kb(track_hours or 0, notify_hours or 0))
+    notify_hours_time = user[7] if user and len(user) > 7 else ""
+    await message.answer(
+        "⚙️ Настройки учёта часов:",
+        reply_markup=salary_settings_kb(track_hours or 0, notify_hours or 0, notify_hours_time or "")
+    )
 
 
 @dp.message(F.text == "⬅️ Назад к зарплате")
