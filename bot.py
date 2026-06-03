@@ -2102,7 +2102,7 @@ async def enter_shift_start(message: Message):
     now = now_local()
     await message.answer(
         "Выбери дату смены:",
-        reply_markup=await SimpleCalendar().start_calendar(year=now.year, month=now.month)
+        reply_markup=await SimpleCalendar(cancel_btn="Отмена", today_btn="Сегодня").start_calendar(year=now.year, month=now.month)
     )
 
 
@@ -2111,7 +2111,7 @@ async def process_calendar(callback: CallbackQuery, callback_data: SimpleCalenda
     user_id = callback.from_user.id
     user = await get_user(user_id)
 
-    selected, dt = await SimpleCalendar().process_selection(callback, callback_data)
+    selected, dt = await SimpleCalendar(cancel_btn="Отмена", today_btn="Сегодня").process_selection(callback, callback_data)
     if not selected:
         return
 
