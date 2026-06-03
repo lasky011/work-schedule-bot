@@ -608,7 +608,7 @@ def salary_period_kb() -> ReplyKeyboardMarkup:
 
 
 def salary_settings_kb(track_hours: int = 0, notify_hours: int = 0, notify_hours_time: str = "") -> ReplyKeyboardMarkup:
-    track_label = "✅ Учёт часов включён" if track_hours else "⬜ Включить учёт часов"
+    track_label = "🔴 Выключить учёт часов" if track_hours else "⬜ Включить учёт часов"
     notify_label = "🔔 Уведомление включено" if notify_hours else "🔕 Уведомление выключено"
     time_label = "🕐 Время: " + notify_hours_time if notify_hours_time else "🕐 Задать время уведомления"
     keyboard = [[KeyboardButton(text=track_label)]]
@@ -1572,7 +1572,7 @@ async def compare_person_selected(message: Message):
         reply_markup=compare_kb()
     )
 
-@dp.message((F.text.startswith("✅ ")) & (F.text != "✅ Посчитать совпадения") & (~F.text.startswith("✅ Стандартная (")) & (F.text != "✅ Учёт часов включён"))
+@dp.message((F.text.startswith("✅ ")) & (F.text != "✅ Посчитать совпадения") & (~F.text.startswith("✅ Стандартная (")) )
 async def compare_person_already_selected(message: Message):
     user_id = message.from_user.id
     name = message.text.replace("✅ ", "").strip()
@@ -1995,7 +1995,7 @@ async def salary_settings(message: Message):
     )
 
 
-@dp.message(F.text.in_({"⬜ Включить учёт часов", "✅ Учёт часов включён"}))
+@dp.message(F.text.in_({"⬜ Включить учёт часов", "🔴 Выключить учёт часов"}))
 async def toggle_track_hours(message: Message):
     user_id = message.from_user.id
     user = await get_user(user_id)
