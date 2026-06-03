@@ -2238,13 +2238,29 @@ async def shift_history(message: Message):
     track_hours = user[5] if user and len(user) > 5 else 0
     if not shifts:
         return await message.answer("Нет внесённых смен за этот месяц.", reply_markup=salary_kb(track_hours or 0))
-    lines = ["📋 История смен за " + now.strftime("%B %Y"), ""]
+    month_name = MONTHS_RU.get(now.month, str(now.month))
+    lines = ["📋 История смен за " + month_name + " " + str(now.year), ""]
+    total_hours = 0.0
     for row in shifts:
         date, hours, shift_type, is_standard, note = row
         shift_label = {"morning": "утро", "evening": "вечер"}.get(shift_type or "", "")
         std_label = "" if is_standard else " (своё)"
+        total_hours += float(hours)
         lines.append("📅 " + str(date) + " — " + str(hours) + " ч " + shift_label + std_label)
-    await message.answer("\n".join(lines), reply_markup=salary_kb(track_hours or 0))
+    lines.append("")
+    lines.append("Итого: " + str(total_hours) + " ч")
+    lines.append("")
+    lines.append("Нажми на смену ниже чтобы удалить её:")
+    keyboard = []
+    for row in shifts:
+        date, hours, shift_type, is_standard, note = row
+        shift_label = {"morning": "утро", "evening": "вечер"}.get(shift_type or "", "")
+        keyboard.append([KeyboardButton(text="🗑 " + str(date) + " — " + str(hours) + " ч " + shift_label)])
+    keyboard.append([KeyboardButton(text="⬅️ Назад к зарплате")])
+    await message.answer(
+        "\n".join(lines),
+        reply_markup=ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
+    )
 
 
 
