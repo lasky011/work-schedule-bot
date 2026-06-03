@@ -575,6 +575,35 @@ def salary_kb(track_hours: int = 0) -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
 
+def salary_period_kb() -> ReplyKeyboardMarkup:
+    now = now_local()
+    month, year = now.month, now.year
+    month_name = MONTHS_RU.get(month, str(month))
+
+    # Прошлый месяц
+    if month == 1:
+        prev_month, prev_year = 12, year - 1
+    else:
+        prev_month, prev_year = month - 1, year
+    prev_month_name = MONTHS_RU.get(prev_month, str(prev_month))
+    prev_end = calendar.monthrange(prev_year, prev_month)[1]
+    cur_end = calendar.monthrange(year, month)[1]
+
+    keyboard = [
+        [KeyboardButton(text="📅 Текущий период")],
+        [
+            KeyboardButton(text="1-15 " + month_name),
+            KeyboardButton(text="16-" + str(cur_end) + " " + month_name),
+        ],
+        [
+            KeyboardButton(text="1-15 " + prev_month_name),
+            KeyboardButton(text="16-" + str(prev_end) + " " + prev_month_name),
+        ],
+        [KeyboardButton(text="⬅️ Назад к зарплате")],
+    ]
+    return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
+
+
 def salary_settings_kb(track_hours: int = 0, notify_hours: int = 0) -> ReplyKeyboardMarkup:
     track_label = "✅ Учёт часов включён" if track_hours else "⬜ Включить учёт часов"
     notify_label = "🔔 Уведомление включено" if notify_hours else "🔕 Уведомление выключено"
@@ -1810,6 +1839,7 @@ salary_mode: set[int] = set()
 shift_entering: dict[int, dict] = {}
 waiting_shift_hours: set[int] = set()
 waiting_hours_notify_time: set[int] = set()
+salary_period_selected: dict[int, tuple] = {}  # {user_id: (year, month, start, end)}
 
 
 def get_role_key(role: str | None) -> str | None:
@@ -1831,31 +1861,33 @@ async def salary_menu(message: Message):
 
 
 @dp.message(F.text == "📊 Примерная зарплата")
-async def salary_stats(message: Message):
+async def salary_stats_choose_period(message: Message):
     user_id = message.from_user.id
     user = await get_user(user_id)
     if not user or not user[1]:
         return await message.answer("Сначала выбери своё имя.", reply_markup=dep_kb())
+    await message.answer("Выбери период:", reply_markup=salary_period_kb())
+
+
+async def show_salary_stats(message: Message, year: int, month: int, period_start: int, period_end: int):
+    user_id = message.from_user.id
+    user = await get_user(user_id)
     name = user[1]
     role = user[4] if len(user) > 4 else None
     track_hours = user[5] if len(user) > 5 else 0
-    now = now_local()
-    month, year = now.month, now.year
-    # Определяем текущий период
-    if now.day <= 15:
-        period_start, period_end = 1, 15
-        period_name = "1-15"
-    else:
-        period_start = 16
-        period_end = calendar.monthrange(year, month)[1]
-        period_name = "16-" + str(period_end)
+
+    period_name = str(period_start) + "-" + str(period_end)
     month_name = MONTHS_RU.get(month, str(month)) + " " + str(year) + " (" + period_name + ")"
+
     schedule_shifts = 0
     schedule_hours = 0.0
+    no_data = True
+
     for day in range(period_start, period_end + 1):
         try:
             row, _ = await find_row(name, day, month, year)
             if row:
+                no_data = False
                 value = await get_day_value(row, day, month, year)
                 if is_work_shift(value):
                     schedule_shifts += 1
@@ -1865,18 +1897,25 @@ async def salary_stats(message: Message):
                     schedule_hours += hours
         except (ValueError, ConnectionError):
             pass
+
     rate = RATES.get(get_role_key(role) or "", 0)
     lines = ["📊 " + month_name, ""]
-    lines.append("По графику смен: " + str(schedule_shifts))
-    lines.append("Часов по графику (прим.): " + str(schedule_hours))
-    if rate:
-        approx_salary = round(schedule_hours * rate)
-        lines.append("")
-        lines.append("💰 Примерная зарплата: ~" + f"{approx_salary:,}".replace(",", " ") + " ₽")
-        lines.append("   (" + str(rate) + " ₽/ч × " + str(schedule_hours) + " ч)")
+
+    if no_data:
+        lines.append("📭 График за этот период ещё не составлен.")
+        lines.append("Примерная зарплата недоступна.")
     else:
-        lines.append("")
-        lines.append("⚠️ Ставка для твоей должности не указана")
+        lines.append("По графику смен: " + str(schedule_shifts))
+        lines.append("Часов по графику (прим.): " + str(schedule_hours))
+        if rate:
+            approx_salary = round(schedule_hours * rate)
+            lines.append("")
+            lines.append("💰 Примерная зарплата: ~" + f"{approx_salary:,}".replace(",", " ") + " ₽")
+            lines.append("   (" + str(rate) + " ₽/ч × " + str(schedule_hours) + " ч)")
+        else:
+            lines.append("")
+            lines.append("⚠️ Ставка для твоей должности не указана")
+
     if track_hours:
         shifts = await get_shifts_for_month(user_id, year, month)
         shifts = [r for r in shifts if period_start <= int(str(r[0]).split("-")[2]) <= period_end]
@@ -1884,10 +1923,59 @@ async def salary_stats(message: Message):
         lines.append("")
         lines.append("✅ Внесено смен: " + str(len(shifts)))
         lines.append("⏱ Часов внесено: " + str(actual_hours))
-        if rate:
+        if rate and actual_hours > 0:
             actual_salary = round(actual_hours * rate)
             lines.append("💰 Зарплата по факту: ~" + f"{actual_salary:,}".replace(",", " ") + " ₽")
+
     await message.answer("\n".join(lines), reply_markup=salary_kb(track_hours or 0))
+
+
+@dp.message(F.text == "📅 Текущий период")
+async def salary_current_period(message: Message):
+    now = now_local()
+    month, year = now.month, now.year
+    if now.day <= 15:
+        period_start, period_end = 1, 15
+    else:
+        period_end = calendar.monthrange(year, month)[1]
+        period_start = 16
+    await show_salary_stats(message, year, month, period_start, period_end)
+
+
+@dp.message(F.text.regexp(r"^(1-15|16-\d+) [А-Яа-я]+$"))
+async def salary_period_selected(message: Message):
+    text = message.text.strip()
+    now = now_local()
+
+    # Парсим период и месяц из текста кнопки
+    parts = text.split(" ", 1)
+    period_part = parts[0]
+    month_word = parts[1] if len(parts) > 1 else ""
+
+    # Находим месяц
+    month_num = None
+    for num, name in MONTHS_RU.items():
+        if name == month_word:
+            month_num = num
+            break
+
+    if not month_num:
+        return await message.answer("Не удалось определить период.", reply_markup=salary_period_kb())
+
+    # Определяем год
+    if month_num > now.month:
+        year = now.year - 1
+    else:
+        year = now.year
+
+    # Определяем start/end
+    if period_part == "1-15":
+        period_start, period_end = 1, 15
+    else:
+        period_start = 16
+        period_end = calendar.monthrange(year, month_num)[1]
+
+    await show_salary_stats(message, year, month_num, period_start, period_end)
 
 
 @dp.message(F.text == "⚙️ Настройки учёта")
