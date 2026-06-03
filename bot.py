@@ -36,21 +36,17 @@ RATES: dict[str, int] = {
 }
 
 SHIFT_HOURS: dict[tuple, float] = {
-    ("morning", "weekday"): 12.5,
-    ("morning", "weekend"): 14.5,
-    ("morning", "sunday"):  12.5,
-    ("evening", "weekday"): 10.0,
-    ("evening", "weekend"): 12.0,
-    ("evening", "sunday"):  10.0,
+    ("morning", "weekday"): 12.5,   # Пн–Чт, Вс
+    ("morning", "weekend"): 14.5,   # Пт, Сб
+    ("evening", "weekday"): 10.0,   # Пн–Чт, Вс
+    ("evening", "weekend"): 12.0,   # Пт, Сб
 }
 
 SHIFT_END_NOTIFY: dict[tuple, str] = {
-    ("morning", "weekday"): "23:05",
-    ("morning", "weekend"): "01:05",
-    ("morning", "sunday"):  "23:05",
-    ("evening", "weekday"): "02:05",
-    ("evening", "weekend"): "04:05",
-    ("evening", "sunday"):  "02:05",
+    ("morning", "weekday"): "23:05",  # Пн–Чт, Вс
+    ("morning", "weekend"): "01:05",  # Пт, Сб — уведомление на след. день
+    ("evening", "weekday"): "02:05",  # Пн–Чт, Вс — уведомление на след. день
+    ("evening", "weekend"): "04:05",  # Пт, Сб — уведомление на след. день
 }
 
 
@@ -72,12 +68,11 @@ def detect_shift_type(value: str) -> str | None:
 
 
 def get_day_type(date) -> str:
-    if date.weekday() == 6:
-        return "sunday"
-    elif date.weekday() == 5:
+    # Пт (4) и Сб (5) — выходные дни ресторана
+    # Пн–Чт (0–3) и Вс (6) — будние дни ресторана
+    if date.weekday() in (4, 5):
         return "weekend"
-    else:
-        return "weekday"
+    return "weekday"
 
 
 def get_standard_hours(shift_type: str | None, date) -> float | None:
@@ -677,10 +672,9 @@ def salary_period_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
 
-def salary_settings_kb(track_hours: int = 0, notify_hours: int = 0, notify_hours_time: str = "") -> ReplyKeyboardMarkup:
+def salary_settings_kb(track_hours: int = 0, notify_hours: int = 0) -> ReplyKeyboardMarkup:
     track_label = "🔴 Выключить учёт часов" if track_hours else "⬜ Включить учёт часов"
     notify_label = "🔔 Уведомление включено" if notify_hours else "🔕 Уведомление выключено"
-    time_label = "🕐 Время: " + notify_hours_time if notify_hours_time else "🕐 Задать время уведомления"
     keyboard = [[KeyboardButton(text=track_label)]]
     if track_hours:
         keyboard += [
@@ -929,7 +923,7 @@ def weekday_label(day):
     weekday_index = datetime(now.year, now.month, day).weekday()
     label = WEEKDAYS[weekday_index]
 
-    is_red = weekday_index >= 4 or (now.month, day) in RU_HOLIDAYS
+    is_red = weekday_index in (4, 5) or (now.month, day) in RU_HOLIDAYS
 
     if is_red:
         return f"❗ {label}"
@@ -944,7 +938,7 @@ def format_date(day, month=None, year=None):
         year = now.year
     weekday_index = datetime(year, month, day).weekday()
     label = WEEKDAYS[weekday_index]
-    is_red = weekday_index >= 4 or (month, day) in RU_HOLIDAYS
+    is_red = weekday_index in (4, 5) or (month, day) in RU_HOLIDAYS
     label = f"❗ {label}" if is_red else label
     return f"{day} {MONTHS[month]} ({label})"
 
@@ -1835,7 +1829,7 @@ async def week(message: Message):
 
     lines = [header, ""]
     for dt in week_days:
-        is_weekend = dt.weekday() >= 5 or (dt.month, dt.day) in RU_HOLIDAYS
+        is_weekend = dt.weekday() in (4, 5) or (dt.month, dt.day) in RU_HOLIDAYS
         day_label = f"{WEEKDAYS_SHORT[dt.weekday()]} {dt.day}"
         if is_weekend:
             day_label += " ❗"
@@ -2142,9 +2136,18 @@ async def salary_settings(message: Message):
     track_hours = user[5] if user and len(user) > 5 else 0
     notify_hours = user[6] if user and len(user) > 6 else 0
     notify_hours_time = user[7] if user and len(user) > 7 else ""
+    notify_info = ""
+    if notify_hours:
+        notify_info = (
+            "\n\n🕐 Расписание уведомлений:\n"
+            "  Утро (Пн–Чт, Вс) → 23:05\n"
+            "  Утро (Пт, Сб) → 01:05 (след. день)\n"
+            "  Вечер (Пн–Чт, Вс) → 02:05 (след. день)\n"
+            "  Вечер (Пт, Сб) → 04:05 (след. день)"
+        )
     await message.answer(
-        "⚙️ Настройки учёта часов:",
-        reply_markup=salary_settings_kb(track_hours or 0, notify_hours or 0, notify_hours_time or "")
+        "⚙️ Настройки учёта часов:" + notify_info,
+        reply_markup=salary_settings_kb(track_hours or 0, notify_hours or 0)
     )
 
 
@@ -2168,17 +2171,21 @@ async def toggle_notify_hours(message: Message):
     notify_hours = user[6] if user and len(user) > 6 else 0
     new_val = 0 if notify_hours else 1
     await save_user(user_id, notify_hours=new_val)
-    await message.answer(
-        "🔔 Уведомление включено." if new_val else "🔕 Уведомление выключено.",
-        reply_markup=salary_settings_kb(track_hours or 0, new_val)
-    )
+    if new_val:
+        schedule_text = (
+            "🔔 Уведомление включено.\n\n"
+            "Буду напоминать внести часы автоматически:\n"
+            "• Утро (Пн–Чт, Вс) — в 23:05\n"
+            "• Утро (Пт, Сб) — в 01:05 (след. день)\n"
+            "• Вечер (Пн–Чт, Вс) — в 02:05 (след. день)\n"
+            "• Вечер (Пт, Сб) — в 04:05 (след. день)"
+        )
+        await message.answer(schedule_text, reply_markup=salary_settings_kb(track_hours or 0, new_val))
+    else:
+        await message.answer("🔕 Уведомление выключено.", reply_markup=salary_settings_kb(track_hours or 0, new_val))
 
 
-@dp.message(F.text.startswith("🕐"))
-async def ask_hours_notify_time(message: Message):
-    user_id = message.from_user.id
-    waiting_hours_notify_time.add(user_id)
-    await message.answer("Напиши время уведомления после смены в формате ЧЧ:ММ\nНапример: 23:30")
+# ask_hours_notify_time удалён — кнопка 🕐 не показывалась пользователю
 
 
 @dp.message(F.text == "🗑 Удалить смену из истории")
@@ -2193,7 +2200,7 @@ async def delete_shift_choose(message: Message):
         notify_hours_time = user[7] if user and len(user) > 7 else ""
         return await message.answer(
             "Нет внесённых смен за этот месяц.",
-            reply_markup=salary_settings_kb(track_hours or 0, notify_hours or 0, notify_hours_time or "")
+            reply_markup=salary_settings_kb(track_hours or 0, notify_hours or 0)
         )
     keyboard = []
     for row in shifts:
@@ -2219,12 +2226,12 @@ async def delete_shift_confirm(message: Message):
     if deleted:
         await message.answer(
             "✅ Смена за " + date_str + " удалена.",
-            reply_markup=salary_settings_kb(track_hours or 0, notify_hours or 0, notify_hours_time or "")
+            reply_markup=salary_settings_kb(track_hours or 0, notify_hours or 0)
         )
     else:
         await message.answer(
             "Смена не найдена.",
-            reply_markup=salary_settings_kb(track_hours or 0, notify_hours or 0, notify_hours_time or "")
+            reply_markup=salary_settings_kb(track_hours or 0, notify_hours or 0)
         )
 
 
@@ -2237,7 +2244,7 @@ async def back_to_settings(message: Message):
     notify_hours_time = user[7] if user and len(user) > 7 else ""
     await message.answer(
         "⚙️ Настройки учёта часов:",
-        reply_markup=salary_settings_kb(track_hours or 0, notify_hours or 0, notify_hours_time or "")
+        reply_markup=salary_settings_kb(track_hours or 0, notify_hours or 0)
     )
 
 
@@ -2295,7 +2302,7 @@ async def process_calendar(callback: CallbackQuery, callback_data: SimpleCalenda
     }
 
     date_label = dt.strftime("%d.%m.%Y")
-    day_type = "выходной" if dt.weekday() >= 5 else "будний день"
+    day_type = "выходной" if dt.weekday() in (4, 5) else "будний день"
     shift_label = {"morning": "утро", "evening": "вечер"}.get(shift_type or "", "")
 
     lines = [date_label + " (" + day_type + ")"]
@@ -2338,7 +2345,7 @@ async def shift_date_selected(message: Message):
         "standard_hours": standard_hours,
     }
     date_label = dt.strftime("%d.%m.%Y")
-    day_type = "выходной" if dt.weekday() >= 5 else "будний день"
+    day_type = "выходной" if dt.weekday() in (4, 5) else "будний день"
     shift_label = {"morning": "утро", "evening": "вечер"}.get(shift_type or "", "")
     lines = [date_label + " (" + day_type + ")"]
     if shift_type:
@@ -2432,18 +2439,6 @@ async def text_handler(message: Message):
         return await message.answer(
             "Время уведомлений сохранено: " + text + "\nУведомления включены 🔔",
             reply_markup=await main_kb_async(user_id)
-        )
-
-    if user_id in waiting_hours_notify_time:
-        if not is_valid_time(text):
-            return await message.answer("Неверный формат. Напиши так: 23:30")
-        await save_user(user_id, notify_hours_time=text, notify_hours=1)
-        waiting_hours_notify_time.discard(user_id)
-        user = await get_user(user_id)
-        track_hours = user[5] if user and len(user) > 5 else 0
-        return await message.answer(
-            "🕐 Время уведомления после смены сохранено: " + text,
-            reply_markup=salary_settings_kb(track_hours or 0, 1)
         )
 
     if user_id in waiting_shift_hours:
