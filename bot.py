@@ -1447,18 +1447,39 @@ async def active_name(user_id):
 
 async def hours_notification_loop(bot) -> None:
     sent = {}
+    last_cleanup = now_local().date()
 
     while True:
         now = now_local()
         current_time = now.strftime("%H:%M")
-        today_key = now.strftime("%Y-%m-%d")
+
+        # Чистим sent раз в день — удаляем ключи старше 2 дней
+        today_date = now.date()
+        if today_date != last_cleanup:
+            cutoff = (today_date - timedelta(days=2)).strftime("%Y-%m-%d")
+            sent = {k: v for k, v in sent.items()
+                    if k.split("-hours-")[-1] >= cutoff}
+            last_cleanup = today_date
+
+        # Ночные уведомления (до 12:00) — смена была ВЧЕРА
+        if now.hour < 12:
+            shift_dt = now - timedelta(days=1)
+        else:
+            shift_dt = now
+
+        shift_day   = shift_dt.day
+        shift_month = shift_dt.month
+        shift_year  = shift_dt.year
+        shift_key   = shift_dt.strftime("%Y-%m-%d")
+        day_type    = get_day_type(shift_dt)
 
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
+            # notify_hours_time не используется — убираем из условия
             cursor.execute(
-                "SELECT user_id, name, notify_hours_time FROM users "
-                "WHERE notify_hours=1 AND name IS NOT NULL AND notify_hours_time IS NOT NULL"
+                "SELECT user_id, name FROM users "
+                "WHERE notify_hours=1 AND name IS NOT NULL"
             )
             users = cursor.fetchall()
             cursor.close()
@@ -1468,37 +1489,37 @@ async def hours_notification_loop(bot) -> None:
             await asyncio.sleep(60)
             continue
 
-        for user_id, name, _ in users:
-            key = str(user_id) + "-hours-" + today_key
+        for user_id, name in users:
+            key = f"{user_id}-hours-{shift_key}"
             if sent.get(key):
                 continue
             try:
-                row, _ = await find_row(name, now.day, now.month, now.year)
+                if not is_day_published(shift_day, shift_month, shift_year):
+                    continue
+                row, _ = await find_row(name, shift_day, shift_month, shift_year)
                 if not row:
                     continue
-                value = await get_day_value(row, now.day, now.month, now.year)
+                value = await get_day_value(row, shift_day, shift_month, shift_year)
                 if not is_work_shift(value):
                     continue
                 shift_type = detect_shift_type(value)
                 if not shift_type:
                     continue
-                day_type = get_day_type(now)
                 notify_time = SHIFT_END_NOTIFY.get((shift_type, day_type))
                 if not notify_time or notify_time != current_time:
                     continue
-                if sent.get(key):
-                    continue
-                existing = await get_shift_for_date(user_id, today_key)
+                # Часы уже внесены — пропускаем
+                existing = await get_shift_for_date(user_id, shift_key)
                 if existing:
                     sent[key] = True
                     continue
                 shift_label = {"morning": "утро", "evening": "вечер"}.get(shift_type, "")
-                std_hours = get_standard_hours(shift_type, now)
-                lines = ["\u23f1 \u041d\u0435 \u0437\u0430\u0431\u0443\u0434\u044c \u0432\u043d\u0435\u0441\u0442\u0438 \u0447\u0430\u0441\u044b \u0437\u0430 \u0441\u0435\u0433\u043e\u0434\u043d\u044f!"]
+                std_hours = get_standard_hours(shift_type, shift_dt)
+                lines = ["⏱ Не забудь внести часы за смену!"]
                 if shift_label:
-                    line = "\u041f\u043e \u0433\u0440\u0430\u0444\u0438\u043a\u0443 \u0441\u0435\u0433\u043e\u0434\u043d\u044f: " + shift_label
+                    line = f"По графику {shift_day} {MONTHS[shift_month]}: {shift_label}"
                     if std_hours:
-                        line += ", \u0441\u0442\u0430\u043d\u0434\u0430\u0440\u0442\u043d\u0430\u044f \u0441\u043c\u0435\u043d\u0430 \u2014 " + str(std_hours) + " \u0447"
+                        line += f", стандартная смена — {std_hours} ч"
                     lines.append(line)
                 await bot.send_message(user_id, "\n".join(lines))
                 sent[key] = True
