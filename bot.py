@@ -13,15 +13,8 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, CallbackQuery
 from aiogram_calendar import SimpleCalendar, SimpleCalendarCallback
-from aiogram_calendar.schemas import CalendarLabels as SimpleCalendarLabels
 
-RU_CALENDAR = SimpleCalendarLabels(
-    days_of_week=["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"],
-    months=["Янв", "Фев", "Мар", "Апр", "Май", "Июн",
-            "Июл", "Авг", "Сен", "Окт", "Ноя", "Дек"],
-    cancel_caption="Отмена",
-    today_caption="Сегодня",
-)
+
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -2109,7 +2102,7 @@ async def enter_shift_start(message: Message):
     now = now_local()
     await message.answer(
         "Выбери дату смены:",
-        reply_markup=await SimpleCalendar(locale=RU_CALENDAR).start_calendar(year=now.year, month=now.month)
+        reply_markup=await SimpleCalendar().start_calendar(year=now.year, month=now.month)
     )
 
 
@@ -2118,7 +2111,7 @@ async def process_calendar(callback: CallbackQuery, callback_data: SimpleCalenda
     user_id = callback.from_user.id
     user = await get_user(user_id)
 
-    selected, dt = await SimpleCalendar(locale=RU_CALENDAR).process_selection(callback, callback_data)
+    selected, dt = await SimpleCalendar().process_selection(callback, callback_data)
     if not selected:
         return
 
