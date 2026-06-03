@@ -2018,7 +2018,7 @@ async def toggle_notify_hours(message: Message):
     )
 
 
-@dp.message(F.text == "🕐 Время уведомления")
+@dp.message(F.text.startswith("🕐"))
 async def ask_hours_notify_time(message: Message):
     user_id = message.from_user.id
     waiting_hours_notify_time.add(user_id)
