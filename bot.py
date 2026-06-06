@@ -1645,7 +1645,30 @@ async def my_schedule_menu(message: Message):
     viewing_colleague.pop(user_id, None)
     reset_compare_mode(user_id)
 
-    await message.answer("📌 Мой график:", reply_markup=my_schedule_kb())
+    name = await active_name(user_id)
+    loading = await message.answer("⏳ Загружаю твой график...")
+
+    today_line = ""
+    if name:
+        now = now_local()
+        try:
+            row, _ = await find_row(name, now.day, now.month, now.year)
+            if row:
+                value = await get_day_value(row, now.day, now.month, now.year)
+                if is_work_shift(value):
+                    today_line = f"\n\n📅 Сегодня работаешь — {detect_shift(value)}"
+                else:
+                    today_line = "\n\n🏖 Сегодня выходной"
+            else:
+                today_line = "\n\n📋 График на сегодня ещё не составлен"
+        except Exception:
+            pass
+
+    try:
+        await loading.delete()
+    except Exception:
+        pass
+    await message.answer(f"📌 Мой график{today_line}", reply_markup=my_schedule_kb())
 
 @dp.message(F.text == "📆 График сегодня/завтра")
 async def today_tomorrow_menu(message: Message):
