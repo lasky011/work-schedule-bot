@@ -841,8 +841,8 @@ def notifications_kb():
     )
 
 async def loading_answer(message: Message, loading_text: str, coro_or_text, reply_markup=None):
-    """Показывает loading_text пока вычисляется результат.
-    Принимает корутину (asyncio.iscoroutine) или готовую строку."""
+    """Показывает loading_text, затем редактирует сообщение с результатом (без мерцания).
+    Принимает корутину или готовую строку."""
     loading = await message.answer(loading_text)
     if asyncio.iscoroutine(coro_or_text):
         try:
@@ -856,11 +856,20 @@ async def loading_answer(message: Message, loading_text: str, coro_or_text, repl
             result = "❌ Что-то пошло не так. Попробуй позже."
     else:
         result = coro_or_text
+
+    # Редактируем сообщение на месте — плавно, без мерцания
     try:
-        await loading.delete()
+        await loading.edit_text(str(result))
+        if reply_markup:
+            # Клавиатура требует отдельного сообщения
+            await message.answer("⬆️", reply_markup=reply_markup)
     except Exception:
-        pass
-    await message.answer(str(result), reply_markup=reply_markup)
+        # Fallback: старый способ
+        try:
+            await loading.delete()
+        except Exception:
+            pass
+        await message.answer(str(result), reply_markup=reply_markup)
 
 async def safe_schedule(coro):
     """Оборачивает вызов в try/except и возвращает текст ошибки если что-то пошло не так."""
@@ -1167,11 +1176,18 @@ async def get_day_schedule(name, day, month=None, year=None):
     role_text = f"\n{DEPT_EMOJIS.get(role, role)}" if role else ""
     value = await get_day_value(row, day, month, year)
     if is_work_shift(value):
-        day_line = f"✅ {detect_shift(value)}"
+        header = f"{format_date(day, month, year)} — {name} работает ✅"
+        shift_line = f"Смена: {detect_shift(value)}"
     else:
-        day_line = "🏖 выходной"
+        header = f"{format_date(day, month, year)} — {name} отдыхает 🏖"
+        shift_line = ""
 
-    text = f"{name}{role_text}\n\n{format_date(day, month, year)} — {day_line}"
+    role_suffix = role_text.strip() if role_text else ""
+    text = header
+    if role_suffix:
+        text += f"  ({role_suffix})"
+    if shift_line:
+        text += f"\n{shift_line}"
 
     people_by_role = await get_people_for_day(day, month, year)
     coworkers_text = ""
