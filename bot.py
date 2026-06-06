@@ -584,6 +584,17 @@ MONTHS = [
 
 MONTHS_RU = {1: "Январь", 2: "Февраль", 3: "Март", 4: "Апрель", 5: "Май", 6: "Июнь", 7: "Июль", 8: "Август", 9: "Сентябрь", 10: "Октябрь", 11: "Ноябрь", 12: "Декабрь"}
 
+
+WELCOME_TEXT = (
+    "Привет{name_part} 👋\n\n"
+    "Я бот расписания — помогаю смотреть график и считать зарплату.\n\n"
+    "📌 Мой график — сегодня, завтра, неделя или весь месяц\n"
+    "👥 Коллеги — кто работает рядом, совпадение смен\n"
+    "💰 Зарплата — примерный расчёт по ставке и учёт фактических часов\n"
+    "🔔 Уведомления — о графике каждый день и напоминание внести часы\n\n"
+    "{action}"
+)
+
 MONTHS_NOM = [
     "",
     "Январь",
@@ -2553,17 +2564,19 @@ async def text_handler(message: Message):
 
 
 @dp.errors()
-async def global_error_handler(event, exception: Exception) -> bool:
+async def global_error_handler(event) -> bool:
+    # event — объект ErrorEvent в aiogram 3
+    exception = event.exception
     logging.error("Необработанная ошибка: %s\n%s", exception, traceback.format_exc())
     try:
-        if hasattr(event, "message") and event.message:
-            await event.message.answer(
-                "⚠️ Что-то пошло не так. Попробуй ещё раз или вернись в главное меню."
-            )
-        elif hasattr(event, "callback_query") and event.callback_query:
-            await event.callback_query.message.answer(
-                "⚠️ Что-то пошло не так. Попробуй ещё раз."
-            )
+        update = event.update
+        msg = None
+        if update.message:
+            msg = update.message
+        elif update.callback_query:
+            msg = update.callback_query.message
+        if msg:
+            await msg.answer("⚠️ Что-то пошло не так. Попробуй ещё раз или вернись в главное меню.")
     except Exception:
         pass
     return True
