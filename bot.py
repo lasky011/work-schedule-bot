@@ -78,6 +78,7 @@ SHEET_GID_MAP = {
     (2026, 5, 1):  "1690889478",   # Май 1-15
     (2026, 5, 16): "1467004546",   # Май 16-31
     (2026, 6, 1):  "608196188",    # Июнь 1-15
+    (2026, 6, 16): "496035797",   # Июнь 16-30
     # сюда добавляй новые листы: (год, месяц, день_начала): "gid"
 }
 
@@ -839,15 +840,27 @@ def notifications_kb():
         resize_keyboard=True
     )
 
-async def loading_answer(message: Message, loading_text: str, result_text: str, reply_markup=None):
+async def loading_answer(message: Message, loading_text: str, coro_or_text, reply_markup=None):
+    """Показывает loading_text пока вычисляется результат.
+    Принимает корутину (asyncio.iscoroutine) или готовую строку."""
     loading = await message.answer(loading_text)
-
+    if asyncio.iscoroutine(coro_or_text):
+        try:
+            result = await coro_or_text
+        except ConnectionError as e:
+            result = str(e)
+        except ValueError as e:
+            result = f"📋 {e}"
+        except Exception as e:
+            logging.error(f"loading_answer: {e}\n{traceback.format_exc()}")
+            result = "❌ Что-то пошло не так. Попробуй позже."
+    else:
+        result = coro_or_text
     try:
         await loading.delete()
     except Exception:
         pass
-
-    await message.answer(str(result_text), reply_markup=reply_markup)
+    await message.answer(str(result), reply_markup=reply_markup)
 
 async def safe_schedule(coro):
     """Оборачивает вызов в try/except и возвращает текст ошибки если что-то пошло не так."""
@@ -946,6 +959,12 @@ def format_date(day, month=None, year=None):
     is_red = weekday_index in (4, 5) or (month, day) in RU_HOLIDAYS
     label = f"❗ {label}" if is_red else label
     return f"{day} {MONTHS[month]} ({label})"
+
+
+def fmt_hours(h) -> str:
+    """12.0 → '12', 12.5 → '12.5'"""
+    h = float(h)
+    return str(int(h)) if h == int(h) else str(h)
 
 def clean_value(value):
     text = str(value).strip()
@@ -1145,12 +1164,14 @@ async def get_day_schedule(name, day, month=None, year=None):
     if not row:
         return f"Не нашёл график для: {name}"
 
-    role_text = f"\nДолжность: {role}" if role else ""
+    role_text = f"\n{DEPT_EMOJIS.get(role, role)}" if role else ""
     value = await get_day_value(row, day, month, year)
-    shift = detect_shift(value)
-    status = "✅ ты работаешь" if is_work_shift(value) else "🏖 ты отдыхаешь"
+    if is_work_shift(value):
+        day_line = f"✅ {detect_shift(value)}"
+    else:
+        day_line = "🏖 выходной"
 
-    text = f"{name}{role_text}\n\n{format_date(day, month, year)} — {shift}\n{status}"
+    text = f"{name}{role_text}\n\n{format_date(day, month, year)} — {day_line}"
 
     people_by_role = await get_people_for_day(day, month, year)
     coworkers_text = ""
@@ -1216,7 +1237,7 @@ async def get_range_schedule(name, start_day, end_day, month=None, year=None):
             value = ""
 
         if role_line_index is None:
-            result.append(f"Должность: {saved_role or role or ''}")
+            result.append(DEPT_EMOJIS.get(saved_role or role or '', saved_role or role or ''))
             role_line_index = 1
             result.append("")
 
@@ -1224,7 +1245,7 @@ async def get_range_schedule(name, start_day, end_day, month=None, year=None):
 
     if unpublished_start is not None:
         if role_line_index is None:
-            result.append(f"Должность: {saved_role or ''}")
+            result.append(DEPT_EMOJIS.get(saved_role or '', saved_role or ''))
             role_line_index = 1
             result.append("")
         if unpublished_start == end_day:
@@ -1236,7 +1257,7 @@ async def get_range_schedule(name, start_day, end_day, month=None, year=None):
         return f"Не нашёл график для: {name}"
 
     if saved_role and role_line_index is not None:
-        result[role_line_index] = f"Должность: {saved_role}"
+        result[role_line_index] = DEPT_EMOJIS.get(saved_role, saved_role)
 
     return "\n".join(result)
 
@@ -1578,7 +1599,9 @@ async def home(message: Message):
     user_id = message.from_user.id
     reset_modes(user_id)
 
-    await message.answer("Главное меню:", reply_markup=await main_kb_async(user_id))
+    name = await get_user_name(user_id)
+    greeting = f"Привет, {name} 👋" if name else "🏠 Главное меню"
+    await message.answer(greeting, reply_markup=await main_kb_async(user_id))
 
 @dp.message(F.text == "📌 Мой график")
 async def my_schedule_menu(message: Message):
@@ -1601,7 +1624,7 @@ async def back_to_self(message: Message):
     name = await get_user_name(user_id) or "не выбрано"
 
     await message.answer(
-        f"Ты вернулся к своему графику.\nТвоё имя: {name}",
+        f"👤 Твой график — {name}",
         reply_markup=await main_kb_async(user_id)
     )
 
@@ -1688,7 +1711,7 @@ async def own_name_selected(message: Message):
     reset_modes(user_id)
 
     await message.answer(
-        "Имя сохранено: " + message.text,
+        f"✅ Готово! Теперь ты — {message.text}",
         reply_markup=await main_kb_async(user_id)
     )
 
@@ -1765,9 +1788,11 @@ async def compare_menu(message: Message):
 async def calculate_compare(message: Message):
     user_id = message.from_user.id
 
-    result = await compare_multiple(user_id)
-
-    await loading_answer(message, "⏳ Сравниваю графики...", result, reply_markup=compare_kb())
+    await loading_answer(
+        message, "⏳ Сравниваю графики...",
+        compare_multiple(user_id),
+        reply_markup=compare_kb()
+    )
 
 @dp.message(F.text == "🧹 Очистить выбранных")
 async def clear_compare(message: Message):
@@ -1793,8 +1818,11 @@ async def today(message: Message):
         selecting_own_name.add(message.from_user.id)
         return await message.answer("Сначала выбери своё имя.", reply_markup=dep_kb())
 
-    result = await safe_schedule(get_day_schedule(name, now_local().day))
-    await loading_answer(message, "⏳ Смотрю график на сегодня...", result)
+    await loading_answer(
+        message, "⏳ Загружаю твой график...",
+        get_day_schedule(name, now_local().day),
+        reply_markup=my_schedule_kb()
+    )
 
 @dp.message(F.text == "📆 Завтра")
 async def tomorrow(message: Message):
@@ -1805,8 +1833,11 @@ async def tomorrow(message: Message):
         return await message.answer("Сначала выбери своё имя.", reply_markup=dep_kb())
 
     tomorrow_dt = now_local() + timedelta(days=1)
-    result = await safe_schedule(get_day_schedule(name, tomorrow_dt.day, tomorrow_dt.month, tomorrow_dt.year))
-    await loading_answer(message, "⏳ Смотрю график на завтра...", result)
+    await loading_answer(
+        message, "⏳ Загружаю график на завтра...",
+        get_day_schedule(name, tomorrow_dt.day, tomorrow_dt.month, tomorrow_dt.year),
+        reply_markup=my_schedule_kb()
+    )
 
 @dp.message(F.text == "🗓 Неделя")
 async def week(message: Message):
@@ -1823,6 +1854,8 @@ async def week(message: Message):
 
     # Сохраняем неделю пользователя
     user_week[message.from_user.id] = week_days
+
+    loading = await message.answer("⏳ Собираю твой график на неделю...")
 
     WEEKDAYS_SHORT = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
     RU_MONTHS_SHORT = ["", "янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"]
@@ -1857,7 +1890,11 @@ async def week(message: Message):
         except (ValueError, ConnectionError):
             lines.append(f"{day_label} — таблица недоступна")
 
-    await loading_answer(message, "⏳ Собираю график на неделю...", "\n".join(lines), reply_markup=week_kb(week_days))
+    try:
+        await loading.delete()
+    except Exception:
+        pass
+    await message.answer("\n".join(lines), reply_markup=week_kb(week_days))
 
 @dp.message(F.text.regexp(r"^📅 (Пн|Вт|Ср|Чт|Пт|Сб|Вс) \d+$"))
 async def week_day_detail(message: Message):
@@ -1885,10 +1922,13 @@ async def week_day_detail(message: Message):
     if not target:
         return await message.answer("Не нашёл этот день.", reply_markup=week_kb(week_days))
 
-    result = await get_day_schedule(name, target.day, target.month, target.year)
     WEEKDAYS_SHORT = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
     day_label = f"{WEEKDAYS_SHORT[target.weekday()]} {target.day} {MONTHS[target.month]}"
-    await loading_answer(message, f"⏳ Смотрю {day_label}...", result, reply_markup=week_kb(week_days))
+    await loading_answer(
+        message, f"⏳ Загружаю {day_label}...",
+        get_day_schedule(name, target.day, target.month, target.year),
+        reply_markup=week_kb(week_days)
+    )
 
 @dp.message(F.text == "📋 Весь график")
 @dp.message(F.text == "📋 Выбрать месяц")
@@ -1913,19 +1953,28 @@ async def full_schedule(message: Message):
         return await message.answer("Не могу определить месяц.", reply_markup=my_schedule_kb())
 
     max_day = calendar.monthrange(year, month)[1]
-    result = await safe_schedule(get_range_schedule(name, 1, max_day, month, year))
-    await loading_answer(message, "⏳ Собираю полный график...", result, reply_markup=my_schedule_kb())
+    await loading_answer(
+        message, "⏳ Загружаю полный график...",
+        get_range_schedule(name, 1, max_day, month, year),
+        reply_markup=my_schedule_kb()
+    )
 
 @dp.message(F.text == "👥 Кто сегодня")
 async def who_today(message: Message):
-    result = await safe_schedule(get_people(now_local().day, message.from_user.id))
-    await loading_answer(message, "⏳ Проверяю, кто работает сегодня...", result)
+    await loading_answer(
+        message, "⏳ Проверяю, кто работает сегодня...",
+        get_people(now_local().day, message.from_user.id),
+        reply_markup=today_tomorrow_kb()
+    )
 
 @dp.message(F.text == "👥 Кто завтра")
 async def who_tomorrow(message: Message):
     tomorrow_dt = now_local() + timedelta(days=1)
-    result = await safe_schedule(get_people(tomorrow_dt.day, message.from_user.id, tomorrow_dt.month, tomorrow_dt.year))
-    await loading_answer(message, "⏳ Проверяю, кто работает завтра...", result)
+    await loading_answer(
+        message, "⏳ Проверяю, кто работает завтра...",
+        get_people(tomorrow_dt.day, message.from_user.id, tomorrow_dt.month, tomorrow_dt.year),
+        reply_markup=today_tomorrow_kb()
+    )
 
 @dp.message(F.text == "🔔 Уведомления")
 async def notifications_menu(message: Message):
@@ -1947,7 +1996,7 @@ async def notifications_menu(message: Message):
     notify_time = user[3] or "не задано"
 
     await message.answer(
-        f"🔔 Настройки уведомлений\n\nИмя: {user[1]}\nСтатус: {status}\nВремя: {notify_time}",
+        f"🔔 Настройки уведомлений\n\nСтатус: {status}\nВремя: {notify_time}",
         reply_markup=notifications_kb()
     )
 
@@ -2015,7 +2064,9 @@ async def salary_menu(message: Message):
         return await message.answer("Сначала выбери своё имя.", reply_markup=dep_kb())
     track_hours = user[5] if user and len(user) > 5 else 0
     salary_mode.add(user_id)
-    await message.answer("💰 Зарплата", reply_markup=salary_kb(track_hours or 0))
+    role = user[4] if user and len(user) > 4 else None
+    role_line = f"\n{DEPT_EMOJIS.get(role, role)}" if role else ""
+    await message.answer(f"💰 Зарплата\n{user[1]}{role_line}", reply_markup=salary_kb(track_hours or 0))
 
 
 @dp.message(F.text == "📊 Примерная зарплата")
@@ -2080,7 +2131,7 @@ async def show_salary_stats(message: Message, year: int, month: int, period_star
         actual_hours = sum(float(r[1]) for r in shifts)
         lines.append("")
         lines.append("✅ Внесено смен: " + str(len(shifts)))
-        lines.append("⏱ Часов внесено: " + str(actual_hours))
+        lines.append("⏱ Часов внесено: " + fmt_hours(actual_hours))
         if rate and actual_hours > 0:
             actual_salary = round(actual_hours * rate)
             lines.append("💰 Зарплата по факту: ~" + f"{actual_salary:,}".replace(",", " ") + " ₽")
@@ -2382,7 +2433,7 @@ async def shift_standard_selected(message: Message):
     user = await get_user(user_id)
     track_hours = user[5] if user and len(user) > 5 else 0
     await message.answer(
-        "✅ Смена внесена: " + str(state["standard_hours"]) + " ч за " + state["date"],
+        "✅ Смена внесена: " + fmt_hours(state["standard_hours"]) + " ч за " + state["date"],
         reply_markup=salary_kb(track_hours or 0)
     )
 
@@ -2413,11 +2464,9 @@ async def shift_history(message: Message):
         shift_label = {"morning": "утро", "evening": "вечер"}.get(shift_type or "", "")
         std_label = "" if is_standard else " (своё)"
         total_hours += float(hours)
-        lines.append("📅 " + str(date) + " — " + str(hours) + " ч " + shift_label + std_label)
+        lines.append("📅 " + str(date) + " — " + fmt_hours(hours) + " ч " + shift_label + std_label)
     lines.append("")
     lines.append("Итого: " + str(total_hours) + " ч")
-    lines.append("")
-    lines.append("Нажми на смену ниже чтобы удалить её:")
     keyboard = []
     for row in shifts:
         date, hours, shift_type, is_standard, note = row
@@ -2471,7 +2520,7 @@ async def text_handler(message: Message):
         user = await get_user(user_id)
         track_hours = user[5] if user and len(user) > 5 else 0
         return await message.answer(
-            "✅ Смена внесена: " + str(hours) + " ч за " + state["date"],
+            "✅ Смена внесена: " + fmt_hours(hours) + " ч за " + state["date"],
             reply_markup=salary_kb(track_hours or 0)
         )
 
