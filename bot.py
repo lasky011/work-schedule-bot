@@ -1603,12 +1603,21 @@ async def start(message: Message):
 
     if user and user[1]:
         await message.answer(
-            f"Привет 👋\nТвоё имя: {user[1]}\n\nВыбери раздел:",
+            WELCOME_TEXT.format(
+            name_part=f", {user[1]}",
+            action="Выбери раздел 👇"
+        ),
             reply_markup=await main_kb_async(user_id)
         )
     else:
+        await message.answer(
+            WELCOME_TEXT.format(
+                name_part="",
+                action="Для начала выбери своё имя — нажми 📌 Мой график."
+            ),
+            reply_markup=await main_kb_async(user_id)
+        )
         selecting_own_name.add(user_id)
-        await message.answer("Сначала выбери своё подразделение:", reply_markup=dep_kb())
 
 @dp.message(F.text == "🏠 Главное меню")
 async def home(message: Message):
