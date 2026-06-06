@@ -1515,10 +1515,20 @@ async def hours_notification_loop(bot) -> None:
 async def notification_loop(bot):
     sent = {}
     last_cleanup = now_local().date()
+    last_dept_refresh = now_local()
 
     while True:
         now = now_local()
         current_time = now.strftime("%H:%M")
+
+        # Обновляем состав отделов раз в час
+        if (now - last_dept_refresh).total_seconds() > 3600:
+            try:
+                await refresh_departments(force=True)
+                last_dept_refresh = now
+                logging.info("refresh_departments: обновлено")
+            except Exception as e:
+                logging.warning("refresh_departments error: %s", e)
         today_key = now.strftime("%Y-%m-%d")
 
         # Чистим sent раз в день — удаляем ключи старше 2 дней
@@ -2232,6 +2242,8 @@ async def delete_shift_confirm(message: Message):
 @dp.message(F.text == "⬅️ Назад к настройкам")
 async def back_to_settings(message: Message):
     user_id = message.from_user.id
+    shift_entering.pop(user_id, None)
+    waiting_shift_hours.discard(user_id)
     user = await get_user(user_id)
     track_hours = user[5] if user and len(user) > 5 else 0
     notify_hours = user[6] if user and len(user) > 6 else 0
@@ -2244,6 +2256,8 @@ async def back_to_settings(message: Message):
 @dp.message(F.text == "⬅️ Назад к зарплате")
 async def back_to_salary(message: Message):
     user_id = message.from_user.id
+    shift_entering.pop(user_id, None)
+    waiting_shift_hours.discard(user_id)
     user = await get_user(user_id)
     track_hours = user[5] if user and len(user) > 5 else 0
     await message.answer("💰 Зарплата", reply_markup=salary_kb(track_hours or 0))
@@ -2462,6 +2476,24 @@ async def text_handler(message: Message):
         )
 
     await message.answer("Используй кнопки ниже.", reply_markup=await main_kb_async(user_id))
+
+
+@dp.errors()
+async def global_error_handler(event, exception: Exception) -> bool:
+    logging.error("Необработанная ошибка: %s\n%s", exception, traceback.format_exc())
+    try:
+        if hasattr(event, "message") and event.message:
+            await event.message.answer(
+                "⚠️ Что-то пошло не так. Попробуй ещё раз или вернись в главное меню."
+            )
+        elif hasattr(event, "callback_query") and event.callback_query:
+            await event.callback_query.message.answer(
+                "⚠️ Что-то пошло не так. Попробуй ещё раз."
+            )
+    except Exception:
+        pass
+    return True
+
 
 async def main():
     if not BOT_TOKEN:
