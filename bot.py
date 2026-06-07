@@ -105,10 +105,55 @@ except ImportError:
 USE_POSTGRES = bool(DATABASE_URL)
 
 
+# ── PostgreSQL Connection Pool ─────────────────────────────────────────────
+_pg_pool = None
+
+
+class _PooledConn:
+    """Прозрачная обёртка над psycopg2-соединением.
+    conn.close() возвращает соединение в пул, а не закрывает его."""
+    __slots__ = ("_conn", "_pool")
+
+    def __init__(self, conn, pool):
+        self._conn = conn
+        self._pool = pool
+
+    def cursor(self):   return self._conn.cursor()
+    def commit(self):   self._conn.commit()
+    def rollback(self): self._conn.rollback()
+
+    def close(self):
+        try:
+            self._conn.rollback()   # сбрасываем незафиксированную транзакцию
+        except Exception:
+            pass
+        self._pool.putconn(self._conn)
+
+    def __del__(self):
+        """Возврат в пул при сборке мусора (если close() не был вызван)."""
+        try:
+            self.close()
+        except Exception:
+            pass
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+
+def _ensure_pg_pool():
+    global _pg_pool
+    if _pg_pool is None and USE_POSTGRES:
+        from psycopg2 import pool as _p
+        _pg_pool = _p.ThreadedConnectionPool(
+            minconn=1, maxconn=5, dsn=DATABASE_URL
+        )
+        logging.info("PostgreSQL connection pool запущен (1–5 соединений)")
+
+
 def get_db_connection():
     if USE_POSTGRES:
-        return psycopg2.connect(DATABASE_URL)
-
+        _ensure_pg_pool()
+        return _PooledConn(_pg_pool.getconn(), _pg_pool)
     return sqlite3.connect("users.db")
 
 
@@ -351,12 +396,14 @@ async def save_shift(user_id, date, hours, shift_type=None, is_standard=True, no
 def _get_shifts_for_month_sync(user_id, year, month):
     conn = get_db_connection()
     cursor = conn.cursor()
-    ph = db_placeholder()
     if USE_POSTGRES:
+        # date range вместо EXTRACT — задействует индекс UNIQUE(user_id, date)
+        from datetime import date as _dt
+        _, last = calendar.monthrange(year, month)
         cursor.execute(
             "SELECT date, hours, shift_type, is_standard, note FROM shifts "
-            "WHERE user_id=%s AND EXTRACT(YEAR FROM date::date)=%s AND EXTRACT(MONTH FROM date::date)=%s ORDER BY date",
-            (user_id, year, month),
+            "WHERE user_id=%s AND date >= %s AND date <= %s ORDER BY date",
+            (user_id, _dt(year, month, 1), _dt(year, month, last)),
         )
     else:
         cursor.execute(
@@ -406,9 +453,9 @@ def _get_shift_for_date_sync(user_id, date):
 
 async def get_shift_for_date(user_id, date):
     return await asyncio.to_thread(_get_shift_for_date_sync, user_id, date)
-cached_df = {}
-cached_time = {}
-cache_lock = asyncio.Lock()
+cached_df: dict = {}
+cached_time: dict = {}
+cache_locks: dict = {}   # asyncio.Lock per GID — параллельные листы не блокируют друг друга
 
 async def download_sheet(gid):
     def sync():
@@ -437,22 +484,24 @@ async def load_sheet(day, month=None, year=None):
     if year is None:
         year = now.year
 
-    async with cache_lock:
-        gid = get_gid_for_day_month(day, month, year)
-        if gid is None:
-            raise ValueError(f"Нет GID для {year}-{month}, день {day}. Добавь в SHEET_GID_MAP.")
+    gid = get_gid_for_day_month(day, month, year)
+    if gid is None:
+        raise ValueError(f"Нет GID для {year}-{month}, день {day}. Добавь в SHEET_GID_MAP.")
 
-        key = gid
+    # Lock per GID: запросы разных листов идут параллельно
+    if gid not in cache_locks:
+        cache_locks[gid] = asyncio.Lock()
+
+    async with cache_locks[gid]:
         now_time = now_local()
-
-        if key in cached_df and key in cached_time:
-            if (now_time - cached_time[key]).total_seconds() < 60:
-                return cached_df[key]
+        if gid in cached_df and gid in cached_time:
+            if (now_time - cached_time[gid]).total_seconds() < 60:
+                return cached_df[gid]
 
         df = await download_sheet(gid)
-        cached_df[key] = df
-        cached_time[key] = now_time
-        return cached_df[key]
+        cached_df[gid] = df
+        cached_time[gid] = now_time
+        return cached_df[gid]
 
 async def load_full_sheet():
     """Прогревает доступные вкладки текущего месяца."""
