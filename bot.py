@@ -112,25 +112,29 @@ _pg_pool = None
 class _PooledConn:
     """Прозрачная обёртка над psycopg2-соединением.
     conn.close() возвращает соединение в пул, а не закрывает его."""
-    __slots__ = ("_conn", "_pool")
+    __slots__ = ("_conn", "_pool", "_closed")   # _closed предотвращает двойной putconn
 
     def __init__(self, conn, pool):
-        self._conn = conn
-        self._pool = pool
+        self._conn  = conn
+        self._pool  = pool
+        self._closed = False
 
     def cursor(self):   return self._conn.cursor()
     def commit(self):   self._conn.commit()
     def rollback(self): self._conn.rollback()
 
     def close(self):
+        if self._closed:
+            return                          # уже возвращено в пул — выходим
+        self._closed = True
         try:
-            self._conn.rollback()   # сбрасываем незафиксированную транзакцию
+            self._conn.rollback()           # сбрасываем незафиксированную транзакцию
         except Exception:
             pass
         self._pool.putconn(self._conn)
 
     def __del__(self):
-        """Возврат в пул при сборке мусора (если close() не был вызван)."""
+        """Возврат в пул при GC — безопасно благодаря _closed."""
         try:
             self.close()
         except Exception:
@@ -1632,8 +1636,9 @@ async def notification_loop(bot):
         today_date = now.date()
         if today_date != last_cleanup:
             cutoff = (today_date - timedelta(days=2)).strftime("%Y-%m-%d")
+            # Ключ вида "user_id-YYYY-MM-DD-HH:MM" — берём дату через split
             sent = {k: v for k, v in sent.items()
-                    if k.split("-")[1] >= cutoff}
+                    if k.split("-", 1)[1][:10] >= cutoff}
             last_cleanup = today_date
 
         for user_id, name, notify_time in await get_notify_users():
