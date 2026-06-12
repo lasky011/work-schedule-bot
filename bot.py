@@ -794,7 +794,7 @@ def shift_hours_kb(standard_hours) -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
 def week_kb(week_days):
-    """Кнопки с днями недели: [Пн 2] [Вт 3] ..."""
+    """Кнопки с днями недели + навигация ◀️ ▶️"""
     WEEKDAYS_SHORT = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
     buttons = []
     row = []
@@ -806,6 +806,10 @@ def week_kb(week_days):
             row = []
     if row:
         buttons.append(row)
+    buttons.append([
+        KeyboardButton(text="◀️ Пред. неделя"),
+        KeyboardButton(text="▶️ След. неделя"),
+    ])
     buttons.append([KeyboardButton(text="🏠 Главное меню")])
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
@@ -813,7 +817,7 @@ def my_schedule_kb():
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="📅 Сегодня"), KeyboardButton(text="📆 Завтра")],
-            [KeyboardButton(text="🗓 Неделя"), KeyboardButton(text="📋 Выбрать месяц")],
+            [KeyboardButton(text="🗓 Недели"), KeyboardButton(text="📋 Выбрать месяц")],
             [KeyboardButton(text="🏠 Главное меню")],
         ],
         resize_keyboard=True
@@ -845,7 +849,7 @@ def colleague_kb():
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="📅 Сегодня"), KeyboardButton(text="📆 Завтра")],
-            [KeyboardButton(text="🗓 Неделя"), KeyboardButton(text="📋 Весь график")],
+            [KeyboardButton(text="🗓 Недели"), KeyboardButton(text="📋 Весь график")],
             [KeyboardButton(text="🤝 Совпадения")],
             [KeyboardButton(text="⬅️ Вернуться к себе")],
         ],
@@ -1010,6 +1014,10 @@ def reset_modes(user_id):
     viewing_colleague.pop(user_id, None)
     comparing_users.discard(user_id)
     compare_selected.pop(user_id, None)
+    salary_mode.discard(user_id)
+    shift_entering.pop(user_id, None)
+    waiting_shift_hours.discard(user_id)
+    _salary_period_data.pop(user_id, None)
 
 def reset_compare_mode(user_id):
     comparing_users.discard(user_id)
@@ -2023,29 +2031,25 @@ async def tomorrow(message: Message):
         reply_markup=my_schedule_kb()
     )
 
-@dp.message(F.text == "🗓 Неделя")
-async def week(message: Message):
-    name = await active_name(message.from_user.id)
+async def _show_week_schedule(message: Message, week_start_dt):
+    """Показать недельный график начиная с week_start_dt."""
+    user_id = message.from_user.id
+    name = await active_name(user_id)
 
     if not name:
-        selecting_own_name.add(message.from_user.id)
+        selecting_own_name.add(user_id)
         return await message.answer("Сначала выбери своё имя.", reply_markup=dep_kb())
 
-    now = now_local()
-    weekday = now.weekday()
-    week_start = now - timedelta(days=weekday)
-    week_days = [week_start + timedelta(days=i) for i in range(7)]
+    week_days = [week_start_dt + timedelta(days=i) for i in range(7)]
+    user_week[user_id] = week_days
 
-    # Сохраняем неделю пользователя
-    user_week[message.from_user.id] = week_days
-
-    loading = await message.answer("⏳ Собираю твой график на неделю...")
+    loading = await message.answer("⏳ Собираю график на неделю...")
     t0 = asyncio.get_event_loop().time()
 
     WEEKDAYS_SHORT = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
-    RU_MONTHS_SHORT = ["", "янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"]
+    RU_MONTHS_SHORT = ["", "янв", "фев", "мар", "апр", "май", "июн",
+                       "июл", "авг", "сен", "окт", "ноя", "дек"]
 
-    # Краткий обзор недели
     first = week_days[0]
     last = week_days[-1]
     if first.month == last.month:
@@ -2083,6 +2087,30 @@ async def week(message: Message):
     except Exception:
         pass
     await message.answer("\n".join(lines), reply_markup=week_kb(week_days))
+
+
+@dp.message(F.text == "🗓 Недели")
+async def week(message: Message):
+    now = now_local()
+    week_start = now - timedelta(days=now.weekday())
+    await _show_week_schedule(message, week_start)
+
+
+@dp.message(F.text == "◀️ Пред. неделя")
+async def prev_week(message: Message):
+    week_days = user_week.get(message.from_user.id)
+    if not week_days:
+        return await message.answer("Сначала открой неделю.", reply_markup=my_schedule_kb())
+    await _show_week_schedule(message, week_days[0] - timedelta(days=7))
+
+
+@dp.message(F.text == "▶️ След. неделя")
+async def next_week(message: Message):
+    week_days = user_week.get(message.from_user.id)
+    if not week_days:
+        return await message.answer("Сначала открой неделю.", reply_markup=my_schedule_kb())
+    await _show_week_schedule(message, week_days[0] + timedelta(days=7))
+
 
 @dp.message(F.text.regexp(r"^📅 (Пн|Вт|Ср|Чт|Пт|Сб|Вс) \d+$"))
 async def week_day_detail(message: Message):
