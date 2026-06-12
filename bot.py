@@ -1,4 +1,5 @@
 import asyncio
+import functools
 import os
 import re
 import sqlite3
@@ -923,6 +924,32 @@ def notifications_kb():
 
 _MIN_LOADING_SEC = 0.8  # минимальное время показа «⏳ Загружаю...»
 
+def with_loading(text="⏳ Загружаю..."):
+    """Декоратор: показывает loading → хендлер → удаляет loading."""
+    def decorator(func):
+        @functools.wraps(func)
+        async def wrapper(*args, **kwargs):
+            event = args[0]
+            if isinstance(event, CallbackQuery):
+                msg_target = event.message
+            else:
+                msg_target = event
+            loading = await msg_target.answer(text)
+            t0 = asyncio.get_event_loop().time()
+            try:
+                return await func(*args, **kwargs)
+            finally:
+                elapsed = asyncio.get_event_loop().time() - t0
+                if elapsed < _MIN_LOADING_SEC:
+                    await asyncio.sleep(_MIN_LOADING_SEC - elapsed)
+                try:
+                    await loading.delete()
+                except Exception:
+                    pass
+        return wrapper
+    return decorator
+
+
 async def loading_answer(message: Message, loading_text: str, coro_or_text, reply_markup=None):
     """Показывает loading_text, затем плавно заменяет на результат.
     Принимает корутину или готовую строку."""
@@ -1695,6 +1722,7 @@ async def notification_loop(bot):
         await asyncio.sleep(10)
 
 @dp.message(CommandStart())
+@with_loading("⏳ Загружаю...")
 async def start(message: Message):
     user_id = message.from_user.id
     reset_modes(user_id)
@@ -1720,6 +1748,7 @@ async def start(message: Message):
         selecting_own_name.add(user_id)
 
 @dp.message(F.text == "🏠 Главное меню")
+@with_loading("⏳ Загружаю...")
 async def home(message: Message):
     user_id = message.from_user.id
     reset_modes(user_id)
@@ -1768,6 +1797,7 @@ async def today_tomorrow_menu(message: Message):
     await message.answer("📆 График сегодня/завтра:", reply_markup=today_tomorrow_kb())
 
 @dp.message(F.text == "⬅️ Вернуться к себе")
+@with_loading("⏳ Загружаю...")
 async def back_to_self(message: Message):
     user_id = message.from_user.id
     viewing_colleague.pop(user_id, None)
@@ -1848,6 +1878,7 @@ async def department_selected(message: Message):
         await message.answer("Выбери своё имя:", reply_markup=own_names_kb(department))
 
 @dp.message(F.text.func(lambda t: t is not None and t in ALL_NAMES))
+@with_loading("⏳ Сохраняю...")
 async def own_name_selected(message: Message):
     user_id = message.from_user.id
 
@@ -1883,6 +1914,7 @@ async def colleague_selected(message: Message):
     )
 
 @dp.message(F.text.startswith("➕ "))
+@with_loading("⏳ Загружаю...")
 async def compare_person_selected(message: Message):
     user_id = message.from_user.id
     name = message.text.replace("➕ ", "").strip()
@@ -2133,6 +2165,7 @@ async def who_tomorrow(message: Message):
     )
 
 @dp.message(F.text == "🔔 Уведомления")
+@with_loading("⏳ Загружаю...")
 async def notifications_menu(message: Message):
     user_id = message.from_user.id
 
@@ -2157,6 +2190,7 @@ async def notifications_menu(message: Message):
     )
 
 @dp.message(F.text == "🔔 Включить")
+@with_loading("⏳ Сохраняю...")
 async def notifications_on(message: Message):
     user_id = message.from_user.id
     user = await get_user(user_id)
@@ -2177,6 +2211,7 @@ async def notifications_on(message: Message):
     )
 
 @dp.message(F.text == "🔕 Выключить")
+@with_loading("⏳ Сохраняю...")
 async def notifications_off(message: Message):
     await save_user(message.from_user.id, notify=0)
     waiting_for_time.discard(message.from_user.id)
@@ -2184,6 +2219,7 @@ async def notifications_off(message: Message):
     await message.answer("Уведомления выключены 🔕", reply_markup=await main_kb_async(message.from_user.id))
 
 @dp.message(F.text == "✍️ Задать время")
+@with_loading("⏳ Загружаю...")
 async def ask_notification_time(message: Message):
     user_id = message.from_user.id
     user = await get_user(user_id)
@@ -2213,6 +2249,7 @@ def get_role_key(role: str | None) -> str | None:
 
 
 @dp.message(F.text == "💰 Зарплата")
+@with_loading("⏳ Загружаю...")
 async def salary_menu(message: Message):
     user_id = message.from_user.id
     user = await get_user(user_id)
@@ -2226,6 +2263,7 @@ async def salary_menu(message: Message):
 
 
 @dp.message(F.text == "📊 Примерная зарплата")
+@with_loading("⏳ Загружаю...")
 async def salary_stats_choose_period(message: Message):
     user_id = message.from_user.id
     user = await get_user(user_id)
@@ -2344,6 +2382,7 @@ async def salary_period_selected(message: Message):
 
 
 @dp.message(F.text == "⚙️ Настройки учёта")
+@with_loading("⏳ Загружаю...")
 async def salary_settings(message: Message):
     user_id = message.from_user.id
     user = await get_user(user_id)
@@ -2365,6 +2404,7 @@ async def salary_settings(message: Message):
 
 
 @dp.message(F.text.in_({"⬜ Включить учёт часов", "🔴 Выключить учёт часов"}))
+@with_loading("⏳ Сохраняю...")
 async def toggle_track_hours(message: Message):
     user_id = message.from_user.id
     user = await get_user(user_id)
@@ -2377,6 +2417,7 @@ async def toggle_track_hours(message: Message):
 
 
 @dp.message(F.text.in_({"🔔 Уведомление включено", "🔕 Уведомление выключено"}))
+@with_loading("⏳ Сохраняю...")
 async def toggle_notify_hours(message: Message):
     user_id = message.from_user.id
     user = await get_user(user_id)
@@ -2402,6 +2443,7 @@ async def toggle_notify_hours(message: Message):
 
 
 @dp.message(F.text == "🗑 Удалить смену из истории")
+@with_loading("⏳ Загружаю...")
 async def delete_shift_choose(message: Message):
     user_id = message.from_user.id
     now = now_local()
@@ -2427,6 +2469,7 @@ async def delete_shift_choose(message: Message):
 
 
 @dp.message(F.text.regexp(r"^🗑 \d{4}-\d{2}-\d{2}"))
+@with_loading("⏳ Удаляю...")
 async def delete_shift_confirm(message: Message):
     user_id = message.from_user.id
     date_str = message.text.replace("🗑 ", "").split(" — ")[0].strip()
@@ -2447,6 +2490,7 @@ async def delete_shift_confirm(message: Message):
 
 
 @dp.message(F.text == "⬅️ Назад к настройкам")
+@with_loading("⏳ Загружаю...")
 async def back_to_settings(message: Message):
     user_id = message.from_user.id
     shift_entering.pop(user_id, None)
@@ -2461,6 +2505,7 @@ async def back_to_settings(message: Message):
 
 
 @dp.message(F.text == "⬅️ Назад к зарплате")
+@with_loading("⏳ Загружаю...")
 async def back_to_salary(message: Message):
     user_id = message.from_user.id
     shift_entering.pop(user_id, None)
@@ -2480,6 +2525,7 @@ async def enter_shift_start(message: Message):
 
 
 @dp.callback_query(SimpleCalendarCallback.filter())
+@with_loading("⏳ Проверяю график...")
 async def process_calendar(callback: CallbackQuery, callback_data: SimpleCalendarCallback):
     user_id = callback.from_user.id
     user = await get_user(user_id)
@@ -2531,6 +2577,7 @@ async def process_calendar(callback: CallbackQuery, callback_data: SimpleCalenda
 
 
 @dp.message(F.text.in_({"📥 Сегодня", "📥 Вчера"}))
+@with_loading("⏳ Проверяю график...")
 async def shift_date_selected(message: Message):
     user_id = message.from_user.id
     user = await get_user(user_id)
@@ -2572,6 +2619,7 @@ async def shift_date_selected(message: Message):
 
 
 @dp.message(F.text.startswith("✅ Стандартная ("))
+@with_loading("⏳ Сохраняю...")
 async def shift_standard_selected(message: Message):
     user_id = message.from_user.id
     state = shift_entering.get(user_id)
@@ -2603,6 +2651,7 @@ async def shift_custom_hours(message: Message):
 
 
 @dp.message(F.text == "📋 История смен")
+@with_loading("⏳ Загружаю историю...")
 async def shift_history(message: Message):
     user_id = message.from_user.id
     now = now_local()
@@ -2636,6 +2685,7 @@ async def shift_history(message: Message):
 
 
 @dp.message()
+@with_loading("⏳ Обрабатываю...")
 async def text_handler(message: Message):
     user_id = message.from_user.id
     text = message.text.strip()
