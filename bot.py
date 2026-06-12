@@ -1,5 +1,6 @@
 import asyncio
 import os
+import re
 import sqlite3
 import calendar
 import logging
@@ -20,6 +21,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+
+# ── Валидация env ─────────────────────────────────────────────────────────────────
+_required_env = {"BOT_TOKEN": BOT_TOKEN, "DATABASE_URL": os.getenv("DATABASE_URL")}
+_missing = [k for k, v in _required_env.items() if not v]
+if _missing:
+    raise SystemExit(f"❌ Не заданы обязательные переменные: {', '.join(_missing)}")
 
 APP_TIMEZONE = ZoneInfo("Europe/Moscow")
 
@@ -51,13 +58,23 @@ SHIFT_END_NOTIFY: dict[tuple, str] = {
 
 
 def detect_shift_type(value: str) -> str | None:
+    """Определяет тип смены (morning/evening) по значению из таблицы.
+
+    Форматы: 11:00, 16:00, 9:00, 16-23, 16-01,
+    17:30-01, 19-04, 11-19, Оф.
+    """
     if not value:
         return None
-    try:
-        hour = int(str(value).strip().split(":")[0])
-        return "morning" if hour < 14 else "evening"
-    except (ValueError, IndexError):
+    text = str(value).strip()
+    # «До 04:00» и прочие заметки — не смена
+    if text.lower().startswith("до"):
         return None
+    # Извлекаем первое число — час начала смены
+    m = re.match(r"(\d{1,2})", text)
+    if not m:
+        return None
+    hour = int(m.group(1))
+    return "morning" if hour < 14 else "evening"
 
 
 def get_day_type(date) -> str:
@@ -73,7 +90,7 @@ def get_standard_hours(shift_type: str | None, date) -> float | None:
         return None
     return SHIFT_HOURS.get((shift_type, get_day_type(date)))
 
-SHEET_ID = "1bRuO870pDBf6O-kXJ1O342SmxmjZgpsiacM2aPOJm9Y"
+SHEET_ID = os.getenv("SHEET_ID", "1bRuO870pDBf6O-kXJ1O342SmxmjZgpsiacM2aPOJm9Y")
 SHEET_GID_MAP = {
     (2026, 5, 1):  "1690889478",   # Май 1-15
     (2026, 5, 16): "1467004546",   # Май 16-31
@@ -905,7 +922,7 @@ def notifications_kb():
     )
 
 async def loading_answer(message: Message, loading_text: str, coro_or_text, reply_markup=None):
-    """Показывает loading_text, затем редактирует сообщение с результатом (без мерцания).
+    """Показывает loading_text, затем плавно заменяет на результат.
     Принимает корутину или готовую строку."""
     loading = await message.answer(loading_text)
     if asyncio.iscoroutine(coro_or_text):
@@ -921,19 +938,24 @@ async def loading_answer(message: Message, loading_text: str, coro_or_text, repl
     else:
         result = coro_or_text
 
-    # Редактируем сообщение на месте — плавно, без мерцания
-    try:
-        await loading.edit_text(str(result))
-        if reply_markup:
-            # Клавиатура требует отдельного сообщения
-            await message.answer("⬆️", reply_markup=reply_markup)
-    except Exception:
-        # Fallback: старый способ
+    if reply_markup:
+        # ReplyKeyboardMarkup нельзя добавить через edit_text —
+        # удаляем loading и шлём один чистый ответ с клавиатурой
         try:
             await loading.delete()
         except Exception:
             pass
         await message.answer(str(result), reply_markup=reply_markup)
+    else:
+        # Без клавиатуры — редактируем на месте (плавно, без мерцания)
+        try:
+            await loading.edit_text(str(result))
+        except Exception:
+            try:
+                await loading.delete()
+            except Exception:
+                pass
+            await message.answer(str(result))
 
 async def safe_schedule(coro):
     """Оборачивает вызов в try/except и возвращает текст ошибки если что-то пошло не так."""
@@ -1050,16 +1072,21 @@ def clean_value(value):
 
     return text
 
+# Текстовые значения, которые считаются рабочей сменой (без цифр)
+_WORK_SHIFT_WORDS = {"оф"}
+
 def is_work_shift(value):
     text = clean_value(value)
 
     if not text:
         return False
 
-    if text.startswith(("9", "10", "11", "12", "13", "14", "15", "16")):
+    # Текстовые смены (Оф — менеджер за официанта)
+    if text.lower() in _WORK_SHIFT_WORDS:
         return True
 
-    if ":" in text or "-" in text:
+    # Начинается с цифры часа — рабочая смена
+    if re.match(r"^\d{1,2}[:\-\s]", text) or re.match(r"^\d{1,2}$", text):
         return True
 
     return False
@@ -1070,11 +1097,12 @@ def detect_shift(value):
     if not text:
         return "выходной"
 
-    if text.startswith(("9", "10", "11")):
-        return f"{text} — утро"
-
-    if text.startswith(("12", "13", "14", "15", "16")):
-        return f"{text} — вечер"
+    # Извлекаем час начала для определения утро/вечер
+    m = re.match(r"(\d{1,2})", text)
+    if m:
+        hour = int(m.group(1))
+        label = "утро" if hour < 14 else "вечер"
+        return f"{text} — {label}"
 
     return text
 
@@ -2159,7 +2187,7 @@ async def ask_notification_time(message: Message):
 salary_mode: set[int] = set()
 shift_entering: dict[int, dict] = {}
 waiting_shift_hours: set[int] = set()
-salary_period_selected: dict[int, tuple] = {}  # {user_id: (year, month, start, end)}
+_salary_period_data: dict[int, tuple] = {}  # {user_id: (year, month, start, end)}
 
 
 def get_role_key(role: str | None) -> str | None:
@@ -2429,7 +2457,6 @@ async def back_to_salary(message: Message):
 
 @dp.message(F.text == "⏱ Внести смену")
 async def enter_shift_start(message: Message):
-    user_id = message.from_user.id
     now = now_local()
     await message.answer(
         "Выбери дату смены:",
