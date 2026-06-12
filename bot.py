@@ -921,10 +921,13 @@ def notifications_kb():
         resize_keyboard=True
     )
 
+_MIN_LOADING_SEC = 0.8  # минимальное время показа «⏳ Загружаю...»
+
 async def loading_answer(message: Message, loading_text: str, coro_or_text, reply_markup=None):
     """Показывает loading_text, затем плавно заменяет на результат.
     Принимает корутину или готовую строку."""
     loading = await message.answer(loading_text)
+    t0 = asyncio.get_event_loop().time()
     if asyncio.iscoroutine(coro_or_text):
         try:
             result = await coro_or_text
@@ -937,6 +940,10 @@ async def loading_answer(message: Message, loading_text: str, coro_or_text, repl
             result = "❌ Что-то пошло не так. Попробуй позже."
     else:
         result = coro_or_text
+
+    elapsed = asyncio.get_event_loop().time() - t0
+    if elapsed < _MIN_LOADING_SEC:
+        await asyncio.sleep(_MIN_LOADING_SEC - elapsed)
 
     if reply_markup:
         # ReplyKeyboardMarkup нельзя добавить через edit_text —
