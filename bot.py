@@ -1729,6 +1729,7 @@ async def my_schedule_menu(message: Message):
 
     name = await active_name(user_id)
     loading = await message.answer("⏳ Загружаю твой график...")
+    t0 = asyncio.get_event_loop().time()
 
     today_line = ""
     if name:
@@ -1746,6 +1747,9 @@ async def my_schedule_menu(message: Message):
         except Exception:
             pass
 
+    elapsed = asyncio.get_event_loop().time() - t0
+    if elapsed < _MIN_LOADING_SEC:
+        await asyncio.sleep(_MIN_LOADING_SEC - elapsed)
     try:
         await loading.delete()
     except Exception:
@@ -1997,6 +2001,7 @@ async def week(message: Message):
     user_week[message.from_user.id] = week_days
 
     loading = await message.answer("⏳ Собираю твой график на неделю...")
+    t0 = asyncio.get_event_loop().time()
 
     WEEKDAYS_SHORT = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
     RU_MONTHS_SHORT = ["", "янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"]
@@ -2031,6 +2036,9 @@ async def week(message: Message):
         except (ValueError, ConnectionError):
             lines.append(f"{day_label} — таблица недоступна")
 
+    elapsed = asyncio.get_event_loop().time() - t0
+    if elapsed < _MIN_LOADING_SEC:
+        await asyncio.sleep(_MIN_LOADING_SEC - elapsed)
     try:
         await loading.delete()
     except Exception:
