@@ -1,0 +1,11 @@
+app = "work-schedule-bot"
+primary_region = "fra"
+
+[build]
+
+[processes]
+  app = "python3 bot.py"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

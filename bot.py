@@ -370,7 +370,7 @@ def _get_notify_users_sync():
     cursor = conn.cursor()
 
     cursor.execute(
-        "SELECT user_id, name, notify_time FROM users WHERE notify=1 AND name IS NOT NULL AND notify_time IS NOT NULL"
+        "SELECT user_id, name, notify_time, role FROM users WHERE notify=1 AND name IS NOT NULL AND notify_time IS NOT NULL"
     )
 
     users = cursor.fetchall()
@@ -570,6 +570,7 @@ DEPARTMENTS_FALLBACK = {
         "Татьяна",
         "Мария",
         "Екатерина",
+        "Дарья",
     ],
 }
 
@@ -697,6 +698,8 @@ waiting_for_time = set()
 selecting_own_name = set()
 selecting_colleague = set()
 viewing_colleague = {}
+viewing_colleague_role: dict[int, str | None] = {}
+_last_selected_dept: dict[int, str | None] = {}
 
 comparing_users = set()
 compare_selected = {}
@@ -1012,6 +1015,9 @@ def reset_modes(user_id):
     selecting_own_name.discard(user_id)
     selecting_colleague.discard(user_id)
     viewing_colleague.pop(user_id, None)
+    viewing_colleague_role.pop(user_id, None)
+    viewing_colleague_role.pop(user_id, None)
+    _last_selected_dept.pop(user_id, None)
     comparing_users.discard(user_id)
     compare_selected.pop(user_id, None)
     salary_mode.discard(user_id)
@@ -1168,7 +1174,7 @@ def get_day_column(df, day):
 
     return None
 
-async def find_row(name, day, month=None, year=None):
+async def find_row(name, day, month=None, year=None, target_role=None):
     now = now_local()
     if month is None:
         month = now.month
@@ -1185,7 +1191,8 @@ async def find_row(name, day, month=None, year=None):
             continue
         row = df.iloc[i].fillna("").astype(str).tolist()
         if needle and needle in " ".join(row).lower():
-            return row, role
+            if target_role is None or role == target_role:
+                return row, role
 
     return None, None
 
@@ -1269,7 +1276,9 @@ async def get_my_status_for_day(user_id, day, month=None, year=None):
         month = now.month
     if year is None:
         year = now.year
-    my_name = await get_user_name(user_id)
+    _user = await get_user(user_id)
+    my_name = _user[1] if _user else None
+    my_role = _user[4] if _user else None
 
     if not my_name:
         return "👤 Твоё имя не выбрано."
@@ -1277,7 +1286,7 @@ async def get_my_status_for_day(user_id, day, month=None, year=None):
     if not is_day_published(day, month, year):
         return "👤 Твой график: график пока не составлен."
 
-    row, _ = await find_row(my_name, day, month, year)
+    row, _ = await find_row(my_name, day, month, year, target_role=my_role)
     if not row:
         return f"👤 Твой график: не нашёл имя {my_name}."
 
@@ -1287,7 +1296,7 @@ async def get_my_status_for_day(user_id, day, month=None, year=None):
 
     return "🏖 Ты отдыхаешь."
 
-async def get_day_schedule(name, day, month=None, year=None):
+async def get_day_schedule(name, day, month=None, year=None, target_role=None):
     now = now_local()
     if month is None:
         month = now.month
@@ -1302,7 +1311,7 @@ async def get_day_schedule(name, day, month=None, year=None):
     if not is_day_published(day, month, year):
         return f"{name}\n\n{format_date(day, month, year)} — график пока не составлен"
 
-    row, role = await find_row(name, day, month, year)
+    row, role = await find_row(name, day, month, year, target_role=target_role)
 
     if not row:
         return f"Не нашёл график для: {name}"
@@ -1343,7 +1352,7 @@ async def get_day_schedule(name, day, month=None, year=None):
     return text
 
 
-async def get_range_schedule(name, start_day, end_day, month=None, year=None):
+async def get_range_schedule(name, start_day, end_day, month=None, year=None, target_role=None):
     now = now_local()
     if month is None:
         month = now.month
@@ -1376,7 +1385,7 @@ async def get_range_schedule(name, start_day, end_day, month=None, year=None):
                 result.append(f"{unpublished_start}–{day - 1} {MONTHS[month]} — график пока не составлен")
             unpublished_start = None
 
-        row, role = await find_row(name, day, month, year)
+        row, role = await find_row(name, day, month, year, target_role=target_role)
 
         if row:
             found_any = True
@@ -1446,7 +1455,7 @@ async def get_people(day, user_id, month=None, year=None):
 
     return text.strip()
 
-async def find_next_shift(name, from_day, from_month=None, from_year=None):
+async def find_next_shift(name, from_day, from_month=None, from_year=None, target_role=None):
     """Ищет следующую смену начиная с from_day, переходит через месяц если нужно."""
     now = now_local()
     if from_month is None:
@@ -1466,7 +1475,7 @@ async def find_next_shift(name, from_day, from_month=None, from_year=None):
             continue
 
         try:
-            row, _ = await find_row(name, d, m, y)
+            row, _ = await find_row(name, d, m, y, target_role=target_role)
             if not row:
                 continue
             value = await get_day_value(row, d, m, y)
@@ -1477,14 +1486,14 @@ async def find_next_shift(name, from_day, from_month=None, from_year=None):
 
     return None, None
 
-async def get_notification_text(name):
+async def get_notification_text(name, target_role=None):
     now = now_local()
     today = now.day
     month = now.month
     year = now.year
 
     if not is_day_published(today, month, year):
-        next_dt, next_value = await find_next_shift(name, today, month, year)
+        next_dt, next_value = await find_next_shift(name, today, month, year, target_role=target_role)
         if next_dt:
             from datetime import date
             today_date = date(year, month, today)
@@ -1499,7 +1508,7 @@ async def get_notification_text(name):
             )
         return None
 
-    row, _ = await find_row(name, today, month, year)
+    row, _ = await find_row(name, today, month, year, target_role=target_role)
     if not row:
         return None
 
@@ -1516,7 +1525,7 @@ async def get_notification_text(name):
             f"👥 На смене: {total} чел."
         )
 
-    next_dt, next_value = await find_next_shift(name, today, month, year)
+    next_dt, next_value = await find_next_shift(name, today, month, year, target_role=target_role)
     common_off = await get_common_day_off_people(name, today, month, year)
 
     text = (
@@ -1565,7 +1574,13 @@ async def compare_multiple(user_id):
         values = {}
 
         for name in all_people:
-            row, _ = await find_row(name, day)
+            _cr = None
+            for _dl, _ns in DEPARTMENTS.items():
+                if name in _ns:
+                    _p = _dl.split(" ", 1)
+                    _cr = _p[1] if len(_p) == 2 else _dl
+                    break
+            row, _ = await find_row(name, day, target_role=_cr)
             if not row:
                 return f"Не смог найти график для: {name}"
             values[name] = await get_day_value(row, day)
@@ -1598,6 +1613,14 @@ async def active_name(user_id):
         return viewing_colleague[user_id]
 
     return await get_user_name(user_id)
+
+
+async def active_role(user_id):
+    """Роль активного пользователя/коллеги для find_row."""
+    if user_id in viewing_colleague:
+        return viewing_colleague_role.get(user_id)
+    user = await get_user(user_id)
+    return user[4] if user else None
 
 async def hours_notification_loop(bot) -> None:
     sent = {}
@@ -1632,7 +1655,7 @@ async def hours_notification_loop(bot) -> None:
             cursor = conn.cursor()
             # notify_hours_time не используется — убираем из условия
             cursor.execute(
-                "SELECT user_id, name FROM users "
+                "SELECT user_id, name, role FROM users "
                 "WHERE notify_hours=1 AND name IS NOT NULL"
             )
             users = cursor.fetchall()
@@ -1643,14 +1666,16 @@ async def hours_notification_loop(bot) -> None:
             await asyncio.sleep(60)
             continue
 
-        for user_id, name in users:
+        for _hr in users:
+            user_id, name = _hr[0], _hr[1]
+            _hr_role = _hr[2] if len(_hr) > 2 else None
             key = f"{user_id}-hours-{shift_key}"
             if sent.get(key):
                 continue
             try:
                 if not is_day_published(shift_day, shift_month, shift_year):
                     continue
-                row, _ = await find_row(name, shift_day, shift_month, shift_year)
+                row, _ = await find_row(name, shift_day, shift_month, shift_year, target_role=_hr_role)
                 if not row:
                     continue
                 value = await get_day_value(row, shift_day, shift_month, shift_year)
@@ -1711,7 +1736,9 @@ async def notification_loop(bot):
                     if k.split("-", 1)[1][:10] >= cutoff}
             last_cleanup = today_date
 
-        for user_id, name, notify_time in await get_notify_users():
+        for _nr in await get_notify_users():
+            user_id, name, notify_time = _nr[0], _nr[1], _nr[2]
+            _nr_role = _nr[3] if len(_nr) > 3 else None
             if notify_time != current_time:
                 continue
 
@@ -1720,7 +1747,7 @@ async def notification_loop(bot):
             if sent.get(key):
                 continue
 
-            text = await get_notification_text(name)
+            text = await get_notification_text(name, target_role=_nr_role)
 
             if text:
                 await bot.send_message(user_id, text)
@@ -1769,17 +1796,19 @@ async def home(message: Message):
 async def my_schedule_menu(message: Message):
     user_id = message.from_user.id
     viewing_colleague.pop(user_id, None)
+    viewing_colleague_role.pop(user_id, None)
     reset_compare_mode(user_id)
 
     name = await active_name(user_id)
     loading = await message.answer("⏳ Загружаю твой график...")
     t0 = asyncio.get_event_loop().time()
 
+    _ms_role = await active_role(user_id)
     today_line = ""
     if name:
         now = now_local()
         try:
-            row, _ = await find_row(name, now.day, now.month, now.year)
+            row, _ = await find_row(name, now.day, now.month, now.year, target_role=_ms_role)
             if row:
                 value = await get_day_value(row, now.day, now.month, now.year)
                 if is_work_shift(value):
@@ -1809,6 +1838,7 @@ async def today_tomorrow_menu(message: Message):
 async def back_to_self(message: Message):
     user_id = message.from_user.id
     viewing_colleague.pop(user_id, None)
+    viewing_colleague_role.pop(user_id, None)
     reset_compare_mode(user_id)
 
     name = await get_user_name(user_id) or "не выбрано"
@@ -1849,6 +1879,7 @@ async def choose_own_name(message: Message):
     waiting_for_time.discard(user_id)
     selecting_colleague.discard(user_id)
     viewing_colleague.pop(user_id, None)
+    viewing_colleague_role.pop(user_id, None)
     reset_compare_mode(user_id)
     selecting_own_name.add(user_id)
 
@@ -1877,6 +1908,9 @@ async def department_selected(message: Message):
     user_id = message.from_user.id
     department = message.text
 
+    parts = department.split(" ", 1)
+    _last_selected_dept[user_id] = parts[1] if len(parts) == 2 else department
+
     if user_id in comparing_users:
         await message.answer("Выбери сотрудника для сравнения:", reply_markup=await compare_names_kb(department, user_id))
     elif user_id in selecting_colleague:
@@ -1890,13 +1924,13 @@ async def department_selected(message: Message):
 async def own_name_selected(message: Message):
     user_id = message.from_user.id
 
-    # Определяем роль по имени из DEPARTMENTS
-    user_role = None
-    for dept_label, names in DEPARTMENTS.items():
-        if message.text in names:
-            parts = dept_label.split(" ", 1)
-            user_role = parts[1] if len(parts) == 2 else dept_label
-            break
+    user_role = _last_selected_dept.pop(user_id, None)
+    if not user_role:
+        for dept_label, names in DEPARTMENTS.items():
+            if message.text in names:
+                parts = dept_label.split(" ", 1)
+                user_role = parts[1] if len(parts) == 2 else dept_label
+                break
 
     await save_user(user_id, name=message.text, notify=0, notify_time='', role=user_role)
     reset_modes(user_id)
@@ -1912,6 +1946,7 @@ async def colleague_selected(message: Message):
     colleague_name = message.text.replace("👀 ", "").strip()
 
     viewing_colleague[user_id] = colleague_name
+    viewing_colleague_role[user_id] = _last_selected_dept.pop(user_id, None)
     selecting_colleague.discard(user_id)
 
     compare_selected[user_id] = {colleague_name}
@@ -2010,9 +2045,10 @@ async def today(message: Message):
         selecting_own_name.add(message.from_user.id)
         return await message.answer("Сначала выбери своё имя.", reply_markup=dep_kb())
 
+    _t_role = await active_role(message.from_user.id)
     await loading_answer(
         message, "⏳ Загружаю твой график...",
-        get_day_schedule(name, now_local().day),
+        get_day_schedule(name, now_local().day, target_role=_t_role),
         reply_markup=my_schedule_kb()
     )
 
@@ -2024,10 +2060,11 @@ async def tomorrow(message: Message):
         selecting_own_name.add(message.from_user.id)
         return await message.answer("Сначала выбери своё имя.", reply_markup=dep_kb())
 
+    _tm_role = await active_role(message.from_user.id)
     tomorrow_dt = now_local() + timedelta(days=1)
     await loading_answer(
         message, "⏳ Загружаю график на завтра...",
-        get_day_schedule(name, tomorrow_dt.day, tomorrow_dt.month, tomorrow_dt.year),
+        get_day_schedule(name, tomorrow_dt.day, tomorrow_dt.month, tomorrow_dt.year, target_role=_tm_role),
         reply_markup=my_schedule_kb()
     )
 
@@ -2040,6 +2077,7 @@ async def _show_week_schedule(message: Message, week_start_dt):
         selecting_own_name.add(user_id)
         return await message.answer("Сначала выбери своё имя.", reply_markup=dep_kb())
 
+    _wk_role = await active_role(user_id)
     week_days = [week_start_dt + timedelta(days=i) for i in range(7)]
     user_week[user_id] = week_days
 
@@ -2065,7 +2103,7 @@ async def _show_week_schedule(message: Message, week_start_dt):
             day_label += " ❗"
 
         try:
-            row, _ = await find_row(name, dt.day, dt.month, dt.year)
+            row, _ = await find_row(name, dt.day, dt.month, dt.year, target_role=_wk_role)
             people_by_role = await get_people_for_day(dt.day, dt.month, dt.year)
             total_on_shift = sum(len(v) for v in people_by_role.values())
             if row:
@@ -2140,9 +2178,10 @@ async def week_day_detail(message: Message):
 
     WEEKDAYS_SHORT = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
     day_label = f"{WEEKDAYS_SHORT[target.weekday()]} {target.day} {MONTHS[target.month]}"
+    _wd_role = await active_role(user_id)
     await loading_answer(
         message, f"⏳ Загружаю {day_label}...",
-        get_day_schedule(name, target.day, target.month, target.year),
+        get_day_schedule(name, target.day, target.month, target.year, target_role=_wd_role),
         reply_markup=week_kb(week_days)
     )
 
@@ -2168,10 +2207,11 @@ async def full_schedule(message: Message):
     if month == 0:
         return await message.answer("Не могу определить месяц.", reply_markup=my_schedule_kb())
 
+    _fs_role = await active_role(message.from_user.id)
     max_day = calendar.monthrange(year, month)[1]
     await loading_answer(
         message, "⏳ Загружаю полный график...",
-        get_range_schedule(name, 1, max_day, month, year),
+        get_range_schedule(name, 1, max_day, month, year, target_role=_fs_role),
         reply_markup=my_schedule_kb()
     )
 
@@ -2316,7 +2356,7 @@ async def show_salary_stats(message: Message, year: int, month: int, period_star
 
     for day in range(period_start, period_end + 1):
         try:
-            row, _ = await find_row(name, day, month, year)
+            row, _ = await find_row(name, day, month, year, target_role=role)
             if row:
                 no_data = False
                 value = await get_day_value(row, day, month, year)
@@ -2567,13 +2607,14 @@ async def process_calendar(callback: CallbackQuery, callback_data: SimpleCalenda
         return
 
     name = user[1]
+    _cal_role = user[4] if len(user) > 4 else None
     date_str = dt.strftime("%Y-%m-%d")
     existing = await get_shift_for_date(user_id, date_str)
     shift_type = None
     standard_hours = None
 
     try:
-        row, _ = await find_row(name, dt.day, dt.month, dt.year)
+        row, _ = await find_row(name, dt.day, dt.month, dt.year, target_role=_cal_role)
         if row:
             value = await get_day_value(row, dt.day, dt.month, dt.year)
             if is_work_shift(value):
@@ -2612,6 +2653,7 @@ async def shift_date_selected(message: Message):
     if not user or not user[1]:
         return await message.answer("Сначала выбери своё имя.", reply_markup=dep_kb())
     name = user[1]
+    _sd_role = user[4] if len(user) > 4 else None
     now = now_local()
     dt = now if message.text == "📥 Сегодня" else now - timedelta(days=1)
     date_str = dt.strftime("%Y-%m-%d")
@@ -2619,7 +2661,7 @@ async def shift_date_selected(message: Message):
     shift_type = None
     standard_hours = None
     try:
-        row, _ = await find_row(name, dt.day, dt.month, dt.year)
+        row, _ = await find_row(name, dt.day, dt.month, dt.year, target_role=_sd_role)
         if row:
             value = await get_day_value(row, dt.day, dt.month, dt.year)
             if is_work_shift(value):
