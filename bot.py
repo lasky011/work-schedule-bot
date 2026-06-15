@@ -47,6 +47,14 @@ from keyboards import (
     week_kb,
 )
 
+from sheets_client import (
+    cached_df,
+    cached_time,
+    cache_locks,
+    clear_sheet_cache,
+    download_sheet,
+)
+
 
 
 
@@ -118,9 +126,6 @@ def get_gid_for_day(day):
 def get_gid_for_day_month(day, month, year):
     period_start = 1 if day <= 15 else 16
     return SHEET_GID_MAP.get((year, month, period_start))
-
-def build_csv_url(gid):
-    return f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid={gid}"
 
 dp = Dispatcher()
 
@@ -485,36 +490,6 @@ def _get_shift_for_date_sync(user_id, date):
 
 async def get_shift_for_date(user_id, date):
     return await asyncio.to_thread(_get_shift_for_date_sync, user_id, date)
-cached_df: dict = {}
-cached_time: dict = {}
-cache_locks: dict = {}   # asyncio.Lock per GID — параллельные листы не блокируют друг друга
-
-
-def clear_sheet_cache():
-    """Сброс in-memory кэша Google Sheets."""
-    cached_df.clear()
-    cached_time.clear()
-    cache_locks.clear()
-
-async def download_sheet(gid):
-    def sync():
-        url = build_csv_url(gid)
-        try:
-            r = requests.get(url, timeout=15)
-            r.raise_for_status()
-            r.encoding = "utf-8"
-            return pd.read_csv(StringIO(r.text), header=None)
-        except requests.exceptions.Timeout:
-            raise ConnectionError("⏱ Google Sheets не отвечает (таймаут). Попробуй позже.")
-        except requests.exceptions.ConnectionError:
-            raise ConnectionError("📡 Нет соединения с Google Sheets. Проверь интернет.")
-        except requests.exceptions.HTTPError as e:
-            raise ConnectionError(f"❌ Ошибка доступа к таблице: {e}. Возможно таблица закрыта.")
-        except Exception as e:
-            raise ConnectionError(f"❌ Не удалось загрузить график: {e}")
-
-    return await asyncio.to_thread(sync)
-
 async def load_sheet(day, month=None, year=None):
     global cached_df, cached_time
     now = now_local()
