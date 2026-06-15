@@ -2,7 +2,6 @@ import asyncio
 import functools
 import os
 import re
-import sqlite3
 import calendar
 import logging
 import traceback
@@ -67,6 +66,13 @@ from schedule_utils import (
     current_period,
 )
 
+from db import (
+    USE_POSTGRES,
+    init_pg_pool,
+    get_db_connection,
+    db_placeholder,
+)
+
 
 
 
@@ -112,72 +118,6 @@ def get_gid_for_day_month(day, month, year):
 dp = Dispatcher()
 
 
-try:
-    import psycopg2
-except ImportError:
-    psycopg2 = None
-
-USE_POSTGRES = bool(DATABASE_URL)
-
-
-# ── PostgreSQL Connection Pool ─────────────────────────────────────────────
-_pg_pool = None
-
-
-class _PooledConn:
-    """Прозрачная обёртка над psycopg2-соединением.
-    conn.close() возвращает соединение в пул, а не закрывает его."""
-    __slots__ = ("_conn", "_pool", "_closed")   # _closed предотвращает двойной putconn
-
-    def __init__(self, conn, pool):
-        self._conn  = conn
-        self._pool  = pool
-        self._closed = False
-
-    def cursor(self):   return self._conn.cursor()
-    def commit(self):   self._conn.commit()
-    def rollback(self): self._conn.rollback()
-
-    def close(self):
-        if self._closed:
-            return                          # уже возвращено в пул — выходим
-        self._closed = True
-        try:
-            self._conn.rollback()           # сбрасываем незафиксированную транзакцию
-        except Exception:
-            pass
-        self._pool.putconn(self._conn)
-
-    def __del__(self):
-        """Возврат в пул при GC — безопасно благодаря _closed."""
-        try:
-            self.close()
-        except Exception:
-            pass
-
-    def __getattr__(self, name):
-        return getattr(self._conn, name)
-
-
-def _ensure_pg_pool():
-    global _pg_pool
-    if _pg_pool is None and USE_POSTGRES:
-        from psycopg2 import pool as _p
-        _pg_pool = _p.ThreadedConnectionPool(
-            minconn=1, maxconn=5, dsn=DATABASE_URL
-        )
-        logging.info("PostgreSQL connection pool запущен (1–5 соединений)")
-
-
-def get_db_connection():
-    if USE_POSTGRES:
-        _ensure_pg_pool()
-        return _PooledConn(_pg_pool.getconn(), _pg_pool)
-    return sqlite3.connect("users.db")
-
-
-def db_placeholder():
-    return "%s" if USE_POSTGRES else "?"
 
 
 def init_db():
