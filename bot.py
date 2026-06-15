@@ -49,6 +49,29 @@ from keyboards import (
 
 
 
+
+def clean_person_name(name: str) -> str:
+    """
+    Чистит имя сотрудника от служебных пометок в таблице.
+
+    Примеры:
+    - "Егор Капустин C 16:00" -> "Егор Капустин"
+    - "Егор Капустин с 16:00" -> "Егор Капустин"
+    - "Егор Капустин С 16:00" -> "Егор Капустин"
+    """
+    if name is None:
+        return ""
+
+    text = str(name).replace("\xa0", " ").strip()
+    text = re.sub(r"\s+", " ", text)
+
+    # Частый случай в графике: имя + "с 16:00".
+    # Латинская C тоже учитывается, потому что визуально похожа на русскую С.
+    text = re.sub(r"\s+[сcСC]\s*\d{1,2}[:.]\d{2}\s*$", "", text).strip()
+
+    return text
+
+
 def detect_shift_type(value: str) -> str | None:
     """Определяет тип смены (morning/evening) по значению из таблицы.
 
@@ -1204,7 +1227,8 @@ async def get_people_for_day(day, month=None, year=None):
             name = clean_value(row[0])
             value = row[col]
             if name and is_work_shift(value):
-                result[role].append(f"{name} — {detect_shift(value)}")
+                display_name = clean_person_name(name)
+                result[role].append(f"{display_name} — {detect_shift(value)}")
 
     return result
 
@@ -1232,7 +1256,7 @@ async def get_common_day_off_people(name, day, month=None, year=None):
         person_name = clean_value(row[0])
         value = row[col]
         if person_name and person_name != name and not is_work_shift(value):
-            result.append(person_name)
+            result.append(clean_person_name(person_name))
 
     return result
 
