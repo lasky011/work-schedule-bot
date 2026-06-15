@@ -1046,6 +1046,32 @@ def get_day_column(df, day):
 
     return None
 
+
+def normalize_role_name(role: str | None) -> str | None:
+    """Приводит роли из кнопок и Google Sheets к одному виду."""
+    if role is None:
+        return None
+
+    text = str(role).replace("\xa0", " ").strip()
+    if not text:
+        return None
+
+    aliases = {
+        "Менеджер": "Менеджеры",
+        "Менеджеры": "Менеджеры",
+        "Официант": "Официант",
+        "Официанты": "Официант",
+        "Бармен": "Бармен",
+        "Бармены": "Бармен",
+        "Кальянщик": "Кальян",
+        "Кальянщики": "Кальян",
+        "Кальян": "Кальян",
+        "Хостес": "Хостес",
+    }
+
+    return aliases.get(text, text)
+
+
 async def find_row(name, day, month=None, year=None, target_role=None):
     now = now_local()
     if month is None:
@@ -1054,16 +1080,17 @@ async def find_row(name, day, month=None, year=None, target_role=None):
         year = now.year
     df = await load_sheet(day, month, year)
     role = None
+    target_role_norm = normalize_role_name(target_role)
     needle = str(name).strip().lower()
 
     for i in range(len(df)):
         first = str(df.iloc[i, 0]).strip()
         if first in ROLES:
-            role = first
+            role = normalize_role_name(first)
             continue
         row = df.iloc[i].fillna("").astype(str).tolist()
         if needle and needle in " ".join(row).lower():
-            if target_role is None or role == target_role:
+            if target_role_norm is None or role == target_role_norm:
                 return row, role
 
     return None, None
