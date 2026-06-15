@@ -38,6 +38,15 @@ from constants import (
     SHEET_GID_MAP,
 )
 
+from keyboards import (
+    configure_keyboard_context,
+    get_available_periods,
+    _month_label_for_period,
+    compare_period_kb,
+    compare_kb,
+    week_kb,
+)
+
 
 
 def detect_shift_type(value: str) -> str | None:
@@ -673,6 +682,8 @@ RU_HOLIDAYS = {
     (11, 4),
 }
 
+configure_keyboard_context(MONTHS, MONTHS_NOM, RU_HOLIDAYS)
+
 waiting_for_time = set()
 selecting_own_name = set()
 selecting_colleague = set()
@@ -776,25 +787,6 @@ def shift_hours_kb(standard_hours) -> ReplyKeyboardMarkup:
     ]
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
-def week_kb(week_days):
-    """Кнопки с днями недели + навигация ◀️ ▶️"""
-    WEEKDAYS_SHORT = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
-    buttons = []
-    row = []
-    for i, dt in enumerate(week_days):
-        label = f"{WEEKDAYS_SHORT[dt.weekday()]} {dt.day}"
-        row.append(KeyboardButton(text=f"📅 {label}"))
-        if len(row) == 3:
-            buttons.append(row)
-            row = []
-    if row:
-        buttons.append(row)
-    buttons.append([
-        KeyboardButton(text="◀️ Пред. неделя"),
-        KeyboardButton(text="▶️ След. неделя"),
-    ])
-    buttons.append([KeyboardButton(text="🏠 Главное меню")])
-    return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
 def my_schedule_kb():
     return ReplyKeyboardMarkup(
@@ -840,73 +832,9 @@ def colleague_kb():
     )
 
 
-def get_available_periods():
-    """
-    Актуальные периоды из SHEET_GID_MAP.
-
-    Период появляется, если для него есть gid.
-    Период исчезает, если дата конца периода уже прошла.
-    Формат элемента: (year, month, start_day, end_day)
-    """
-    today = now_local().date()
-    result = []
-
-    for key in sorted(SHEET_GID_MAP.keys()):
-        if not isinstance(key, tuple) or len(key) != 3:
-            continue
-
-        year, month, start_day = key
-        if start_day == 1:
-            end_day = 15
-        else:
-            end_day = calendar.monthrange(year, month)[1]
-
-        try:
-            period_end_date = datetime(year, month, end_day).date()
-        except Exception:
-            continue
-
-        if period_end_date >= today:
-            result.append((year, month, start_day, end_day))
-
-    return result
 
 
-def _month_label_for_period(month):
-    """Название месяца для кнопки периода."""
-    try:
-        return MONTHS_NOM[month]
-    except Exception:
-        try:
-            return MONTHS[month]
-        except Exception:
-            return str(month)
 
-
-def compare_period_kb():
-    """Клавиатура выбора периода для сравнения."""
-    buttons = []
-
-    for year, month, start_day, end_day in get_available_periods():
-        month_name = _month_label_for_period(month)
-        buttons.append([KeyboardButton(text=f"📅 {start_day}–{end_day} {month_name} {year}")])
-
-    buttons.append([KeyboardButton(text="⬅️ Назад к сравнению")])
-    buttons.append([KeyboardButton(text="🏠 Главное меню")])
-    return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
-
-
-def compare_kb():
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="➕ Добавить сотрудника")],
-            [KeyboardButton(text="✅ Посчитать совпадения")],
-            [KeyboardButton(text="🧹 Очистить выбранных")],
-            [KeyboardButton(text="⬅️ Назад к коллеге")],
-            [KeyboardButton(text="🏠 Главное меню")],
-        ],
-        resize_keyboard=True
-    )
 
 def dep_kb():
     return ReplyKeyboardMarkup(
