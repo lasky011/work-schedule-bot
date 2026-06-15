@@ -50,14 +50,13 @@ from keyboards import (
 
 
 
-def clean_person_name(name: str) -> str:
-    """
-    Чистит имя сотрудника от служебных пометок в таблице.
 
-    Примеры:
-    - "Егор Капустин C 16:00" -> "Егор Капустин"
-    - "Егор Капустин с 16:00" -> "Егор Капустин"
-    - "Егор Капустин С 16:00" -> "Егор Капустин"
+def _clean_person_name_value(name) -> str:
+    """
+    Низкоуровневая очистка имени из Google Sheets.
+
+    Пример:
+    "Егор Капустин C 16:00" -> "Егор Капустин"
     """
     if name is None:
         return ""
@@ -65,11 +64,18 @@ def clean_person_name(name: str) -> str:
     text = str(name).replace("\xa0", " ").strip()
     text = re.sub(r"\s+", " ", text)
 
-    # Частый случай в графике: имя + "с 16:00".
-    # Латинская C тоже учитывается, потому что визуально похожа на русскую С.
+    # Убираем хвосты вида "с 16:00", "С 16:00", "C 16:00".
+    # Латинская C тоже учитывается.
     text = re.sub(r"\s+[сcСC]\s*\d{1,2}[:.]\d{2}\s*$", "", text).strip()
 
     return text
+
+
+def clean_person_name(name: str) -> str:
+    """
+    Чистит имя сотрудника от служебных пометок в таблице.
+    """
+    return _clean_person_name_value(name)
 
 
 def detect_shift_type(value: str) -> str | None:
@@ -605,7 +611,7 @@ def parse_departments(df) -> dict:
             continue
         name = clean_value(first)
         if name:
-            result[current_role].append(name)
+            result[current_role].append(_clean_person_name_value(name))
     return result
 
 
@@ -1080,6 +1086,20 @@ def weekday_label(day):
 
     return label
 
+
+def unique_keep_order(items):
+    """Убирает точные дубли, сохраняя порядок."""
+    seen = set()
+    result = []
+    for item in items:
+        key = str(item).strip()
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(item)
+    return result
+
+
 def format_date(day, month=None, year=None):
     now = now_local()
     if month is None:
@@ -1337,7 +1357,7 @@ async def get_day_schedule(name, day, month=None, year=None, target_role=None):
     if not is_work_shift(value):
         common_off = await get_common_day_off_people(name, day, month, year)
         if common_off:
-            text += f"\n\n🏖 {format_date(day, month, year)} вместе отдыхают:\n" + "\n".join(common_off)
+            text += f"\n\n🏖 {format_date(day, month, year)} вместе отдыхают:\n" + "\n".join(unique_keep_order(common_off))
 
     return text
 
