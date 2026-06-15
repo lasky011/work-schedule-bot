@@ -654,6 +654,8 @@ def ordered_role_keys(people_by_role: dict) -> list:
 
 
 
+SCHEDULE_MAX_DAY_COL = 16  # B:P, правая часть листа содержит статистику, не график
+
 ROLES = ["Менеджер", "Официант", "Бармен", "Кальян", "Хостес"]
 
 MONTHS = [
@@ -1098,7 +1100,7 @@ def get_day_column(df, day):
         if first in ROLES:
             row = df.iloc[i].fillna("").astype(str).tolist()
 
-            for col_index, value in enumerate(row):
+            for col_index, value in enumerate(row[:SCHEDULE_MAX_DAY_COL + 1]):
                 if str(value).strip() == str(day):
                     return col_index
 
@@ -1182,7 +1184,7 @@ async def get_people_for_day(day, month=None, year=None):
     def find_day_col_in_row(row_idx: int):
         """Если строка содержит номер нужного дня, возвращает колонку."""
         try:
-            for col in range(1, len(df.columns)):
+            for col in range(1, min(len(df.columns), SCHEDULE_MAX_DAY_COL + 1)):
                 cell = df.iat[row_idx, col]
                 cell_text = clean_value(cell)
                 if cell_text == str(day):
@@ -1205,10 +1207,10 @@ async def get_people_for_day(day, month=None, year=None):
         raw_first = df.iat[i, 0] if len(df.columns) > 0 else ""
         first_text = str(raw_first or "").replace("\xa0", " ").strip()
 
-        # 1. Если текущая строка является строкой дат, обновляем колонку дня.
-        row_day_col = find_day_col_in_row(i)
-        if row_day_col is not None:
-            current_day_col = row_day_col
+        # 1. Колонку дня берём один раз через get_day_column(df, day).
+        # Не обновляем её по строкам ниже: в правом блоке статистики есть числа,
+        # которые можно ошибочно принять за дни графика.
+        # row_day_col = find_day_col_in_row(i)
 
         if not first_text or first_text.lower() == "nan":
             continue
