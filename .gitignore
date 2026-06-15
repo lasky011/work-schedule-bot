@@ -1,8 +1,37 @@
-.env
-users.db
+# Python
 __pycache__/
-*.pyc
-.DS_Store
-*.db
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+.venv/
+venv/
+env/
+
+# Env
 .env
-fix_*.py
+.env.*
+!.env.example
+
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
+logs/
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+
+# Backups / dumps
+*backup*.sql
+*dump*.sql
+railway_*.sql
+
+# Temporary patch files
+*_patch_*.sh
+patch_*.sh
