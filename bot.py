@@ -29,7 +29,27 @@ _missing = [k for k, v in _required_env.items() if not v]
 if _missing:
     raise SystemExit(f"❌ Не заданы обязательные переменные: {', '.join(_missing)}")
 
-APP_TIMEZONE = ZoneInfo("Europe/Moscow")
+APP_TIMEZONE_NAME = os.getenv("APP_TIMEZONE", "Europe/Moscow")
+APP_TIMEZONE = ZoneInfo(APP_TIMEZONE_NAME)
+
+def _parse_admin_ids(raw: str | None) -> set[int]:
+    if not raw:
+        return set()
+    result = set()
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            result.add(int(part))
+        except ValueError:
+            logging.warning("Некорректный ADMIN_IDS элемент: %s", part)
+    return result
+
+ADMIN_IDS = _parse_admin_ids(os.getenv("ADMIN_IDS"))
+
+def is_admin(user_id: int) -> bool:
+    return user_id in ADMIN_IDS
 
 def now_local():
     return datetime.now(APP_TIMEZONE)
@@ -478,6 +498,13 @@ async def get_shift_for_date(user_id, date):
 cached_df: dict = {}
 cached_time: dict = {}
 cache_locks: dict = {}   # asyncio.Lock per GID — параллельные листы не блокируют друг друга
+
+
+def clear_sheet_cache():
+    """Сброс in-memory кэша Google Sheets."""
+    cached_df.clear()
+    cached_time.clear()
+    cache_locks.clear()
 
 async def download_sheet(gid):
     def sync():
@@ -1726,85 +1753,98 @@ async def hours_notification_loop(bot) -> None:
     last_cleanup = now_local().date()
 
     while True:
-        now = now_local()
-        current_time = now.strftime("%H:%M")
-
-        # Чистим sent раз в день — удаляем ключи старше 2 дней
-        today_date = now.date()
-        if today_date != last_cleanup:
-            cutoff = (today_date - timedelta(days=2)).strftime("%Y-%m-%d")
-            sent = {k: v for k, v in sent.items()
-                    if k.split("-hours-")[-1] >= cutoff}
-            last_cleanup = today_date
-
-        # Ночные уведомления (до 12:00) — смена была ВЧЕРА
-        if now.hour < 12:
-            shift_dt = now - timedelta(days=1)
-        else:
-            shift_dt = now
-
-        shift_day   = shift_dt.day
-        shift_month = shift_dt.month
-        shift_year  = shift_dt.year
-        shift_key   = shift_dt.strftime("%Y-%m-%d")
-        day_type    = get_day_type(shift_dt)
-
         try:
-            conn = get_db_connection()
-            cursor = conn.cursor()
-            # notify_hours_time не используется — убираем из условия
-            cursor.execute(
-                "SELECT user_id, name, role FROM users "
-                "WHERE notify_hours=1 AND name IS NOT NULL"
-            )
-            users = cursor.fetchall()
-            cursor.close()
-            conn.close()
-        except Exception as e:
-            logging.error("hours_notification_loop DB error: %s", e)
-            await asyncio.sleep(60)
-            continue
+            now = now_local()
+            current_time = now.strftime("%H:%M")
 
-        for _hr in users:
-            user_id, name = _hr[0], _hr[1]
-            _hr_role = _hr[2] if len(_hr) > 2 else None
-            key = f"{user_id}-hours-{shift_key}"
-            if sent.get(key):
-                continue
+            # Чистим sent раз в день — удаляем ключи старше 2 дней
+            today_date = now.date()
+            if today_date != last_cleanup:
+                cutoff = (today_date - timedelta(days=2)).strftime("%Y-%m-%d")
+                sent = {k: v for k, v in sent.items()
+                        if k.split("-hours-")[-1] >= cutoff}
+                last_cleanup = today_date
+
+            # Ночные уведомления (до 12:00) — смена была ВЧЕРА
+            if now.hour < 12:
+                shift_dt = now - timedelta(days=1)
+            else:
+                shift_dt = now
+
+            shift_day   = shift_dt.day
+            shift_month = shift_dt.month
+            shift_year  = shift_dt.year
+            shift_key   = shift_dt.strftime("%Y-%m-%d")
+            day_type    = get_day_type(shift_dt)
+
             try:
-                if not is_day_published(shift_day, shift_month, shift_year):
-                    continue
-                row, _ = await find_row(name, shift_day, shift_month, shift_year, target_role=_hr_role)
-                if not row:
-                    continue
-                value = await get_day_value(row, shift_day, shift_month, shift_year)
-                if not is_work_shift(value):
-                    continue
-                shift_type = detect_shift_type(value)
-                if not shift_type:
-                    continue
-                notify_time = SHIFT_END_NOTIFY.get((shift_type, day_type))
-                if not notify_time or notify_time != current_time:
-                    continue
-                # Часы уже внесены — пропускаем
-                existing = await get_shift_for_date(user_id, shift_key)
-                if existing:
-                    sent[key] = True
-                    continue
-                shift_label = {"morning": "утро", "evening": "вечер"}.get(shift_type, "")
-                std_hours = get_standard_hours(shift_type, shift_dt)
-                lines = ["⏱ Не забудь внести часы за смену!"]
-                if shift_label:
-                    line = f"По графику {shift_day} {MONTHS[shift_month]}: {shift_label}"
-                    if std_hours:
-                        line += f", стандартная смена — {std_hours} ч"
-                    lines.append(line)
-                await bot.send_message(user_id, "\n".join(lines))
-                sent[key] = True
+                conn = get_db_connection()
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT user_id, name, role FROM users "
+                    "WHERE notify_hours=1 AND name IS NOT NULL"
+                )
+                users = cursor.fetchall()
+                cursor.close()
+                conn.close()
             except Exception as e:
-                logging.warning("hours_notification_loop error for %s: %s", user_id, e)
+                logging.error("hours_notification_loop DB error: %s", e)
+                await asyncio.sleep(60)
+                continue
+
+            for _hr in users:
+                user_id, name = _hr[0], _hr[1]
+                _hr_role = _hr[2] if len(_hr) > 2 else None
+                key = f"{user_id}-hours-{shift_key}"
+                if sent.get(key):
+                    continue
+
+                try:
+                    if not is_day_published(shift_day, shift_month, shift_year):
+                        continue
+
+                    row, _ = await find_row(name, shift_day, shift_month, shift_year, target_role=_hr_role)
+                    if not row:
+                        continue
+
+                    value = await get_day_value(row, shift_day, shift_month, shift_year)
+                    if not is_work_shift(value):
+                        continue
+
+                    shift_type = detect_shift_type(value)
+                    if not shift_type:
+                        continue
+
+                    notify_time = SHIFT_END_NOTIFY.get((shift_type, day_type))
+                    if not notify_time or notify_time != current_time:
+                        continue
+
+                    existing = await get_shift_for_date(user_id, shift_key)
+                    if existing:
+                        sent[key] = True
+                        continue
+
+                    shift_label = {"morning": "утро", "evening": "вечер"}.get(shift_type, "")
+                    std_hours = get_standard_hours(shift_type, shift_dt)
+                    lines = ["⏱ Не забудь внести часы за смену!"]
+
+                    if shift_label:
+                        line = f"По графику {shift_day} {MONTHS[shift_month]}: {shift_label}"
+                        if std_hours:
+                            line += f", стандартная смена — {std_hours} ч"
+                        lines.append(line)
+
+                    await bot.send_message(user_id, "\n".join(lines))
+                    sent[key] = True
+
+                except Exception as e:
+                    logging.exception("hours_notification_loop error for user_id=%s name=%s: %s", user_id, name, e)
+
+        except Exception as e:
+            logging.exception("hours_notification_loop: критическая ошибка цикла: %s", e)
 
         await asyncio.sleep(30)
+
 
 
 async def notification_loop(bot):
@@ -1864,6 +1904,107 @@ async def notification_loop(bot):
                 )
 
         await asyncio.sleep(10)
+
+
+@dp.message(F.text == "/health")
+async def admin_health(message: Message):
+    user_id = message.from_user.id
+    if not is_admin(user_id):
+        return
+
+    now = now_local()
+    db_status = "unknown"
+    notify_count = "?"
+    notify_hours_count = "?"
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM users WHERE notify=1")
+        notify_count = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM users WHERE notify_hours=1")
+        notify_hours_count = cursor.fetchone()[0]
+        cursor.close()
+        conn.close()
+        db_status = "ok"
+    except Exception as e:
+        db_status = f"error: {e}"
+
+    text = (
+        "🛠 Health check\n\n"
+        f"Время бота: {now.strftime('%Y-%m-%d %H:%M:%S')}\n"
+        f"Таймзона: {APP_TIMEZONE_NAME}\n"
+        f"БД: {db_status}\n"
+        f"Пользователей с уведомлениями смен: {notify_count}\n"
+        f"Пользователей с уведомлениями часов: {notify_hours_count}\n"
+        f"Периодов в SHEET_GID_MAP: {len(SHEET_GID_MAP)}\n"
+        f"Кэшированных gid: {len(cached_df)}\n"
+    )
+    await message.answer(text)
+
+
+@dp.message(F.text == "/periods")
+async def admin_periods(message: Message):
+    user_id = message.from_user.id
+    if not is_admin(user_id):
+        return
+
+    actual = set(get_available_periods())
+    lines = ["📅 Периоды графика\n"]
+    for year, month, start_day in sorted(SHEET_GID_MAP.keys()):
+        if start_day == 1:
+            end_day = 15
+        else:
+            end_day = calendar.monthrange(year, month)[1]
+        status = "актуален" if (year, month, start_day, end_day) in actual else "прошёл"
+        gid = SHEET_GID_MAP[(year, month, start_day)]
+        lines.append(
+            f"{start_day}–{end_day} {_month_label_for_period(month)} {year}: gid={gid} ({status})"
+        )
+
+    await message.answer("\n".join(lines))
+
+
+@dp.message(F.text == "/cache")
+async def admin_cache(message: Message):
+    user_id = message.from_user.id
+    if not is_admin(user_id):
+        return
+
+    now = now_local()
+    if not cached_df:
+        return await message.answer("🧹 Кэш Google Sheets пуст.")
+
+    lines = ["🧠 Кэш Google Sheets\n"]
+    for gid, df in cached_df.items():
+        ts = cached_time.get(gid)
+        age = "?"
+        if ts:
+            try:
+                age = f"{int((now - ts).total_seconds())} сек."
+            except Exception:
+                age = "?"
+        shape = getattr(df, "shape", None)
+        lines.append(f"gid={gid}: age={age}, shape={shape}")
+
+    await message.answer("\n".join(lines))
+
+
+@dp.message(F.text == "/reload_sheets")
+async def admin_reload_sheets(message: Message):
+    user_id = message.from_user.id
+    if not is_admin(user_id):
+        return
+
+    clear_sheet_cache()
+    try:
+        await load_full_sheet()
+        await message.answer("✅ Кэш Google Sheets сброшен и таблицы загружены заново.")
+    except Exception as e:
+        logging.exception("admin_reload_sheets error: %s", e)
+        await message.answer(f"⚠️ Кэш сброшен, но загрузка таблиц завершилась ошибкой: {e}")
+
+
 
 @dp.message(CommandStart())
 @with_loading("⏳ Загружаю...")
@@ -3026,7 +3167,13 @@ async def main():
             exc_info=t.exception(),
         ) if t.exception() else None
     )
-    asyncio.create_task(hours_notification_loop(bot))
+    _hours_notification_task = asyncio.create_task(hours_notification_loop(bot))
+    _hours_notification_task.add_done_callback(
+        lambda t: logging.exception(
+            "hours_notification_loop: фоновая задача завершилась с ошибкой",
+            exc_info=t.exception(),
+        ) if t.exception() else None
+    )
 
     await dp.start_polling(bot)
 
