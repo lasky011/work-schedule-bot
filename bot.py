@@ -1269,14 +1269,8 @@ async def get_people_for_day(day, month=None, year=None):
     """
     Возвращает всех работающих за день по всем подразделениям Google Sheets.
 
-    Формат:
-    {
-        "Менеджер": ["Рина — 11:00 — утро", ...],
-        "Официант": [...],
-        "Бармен": [...],
-        "Кальян": [...],
-        "Хостес": [...]
-    }
+    Поддерживает листы, где внутри одного листа есть несколько блоков с повторными строками дат.
+    Например: Менеджеры/Официанты/Бармены, потом ниже Кальян со своим заголовком дат.
     """
     now = now_local()
     month = month or now.month
@@ -1288,18 +1282,9 @@ async def get_people_for_day(day, month=None, year=None):
         logging.exception("get_people_for_day: ошибка load_sheet day=%s month=%s year=%s: %s", day, month, year, e)
         return {}
 
-    day_col = get_day_column(df, day)
-
-    if day_col is None:
-        logging.warning("get_people_for_day: колонка дня не найдена day=%s month=%s year=%s", day, month, year)
-        return {}
-
-    result = {}
-    current_role = None
-
     role_aliases = {
-        "менеджеры": "Менеджер",
-        "менеджер": "Менеджер",
+        "менеджеры": "Менеджеры",
+        "менеджер": "Менеджеры",
         "официант": "Официант",
         "официанты": "Официант",
         "бармен": "Бармен",
@@ -1317,38 +1302,71 @@ async def get_people_for_day(day, month=None, year=None):
         text_norm = re.sub(r"\s+", " ", text).lower()
         return role_aliases.get(text_norm)
 
-    for i in range(len(df)):
-        raw_name = df.iat[i, 0] if len(df.columns) > 0 else ""
-        raw_name_text = str(raw_name or "").replace("\xa0", " ").strip()
+    def find_day_col_in_row(row_idx: int):
+        """Если строка содержит номер нужного дня, возвращает колонку."""
+        try:
+            for col in range(1, len(df.columns)):
+                cell = df.iat[row_idx, col]
+                cell_text = clean_value(cell)
+                if cell_text == str(day):
+                    return col
+        except Exception:
+            return None
+        return None
 
-        if not raw_name_text or raw_name_text.lower() == "nan":
+    result = {}
+    current_role = None
+    current_day_col = None
+
+    # Начальный fallback: старый способ, если строка дат ещё не встретилась.
+    try:
+        current_day_col = get_day_column(df, day)
+    except Exception:
+        current_day_col = None
+
+    for i in range(len(df)):
+        raw_first = df.iat[i, 0] if len(df.columns) > 0 else ""
+        first_text = str(raw_first or "").replace("\xa0", " ").strip()
+
+        # 1. Если текущая строка является строкой дат, обновляем колонку дня.
+        row_day_col = find_day_col_in_row(i)
+        if row_day_col is not None:
+            current_day_col = row_day_col
+
+        if not first_text or first_text.lower() == "nan":
             continue
 
-        detected_role = detect_role_from_cell(raw_name_text)
+        # 2. Если это заголовок подразделения, меняем текущую роль.
+        detected_role = detect_role_from_cell(first_text)
         if detected_role:
             current_role = detected_role
             result.setdefault(current_role, [])
+
+            # Часто сразу следующая строка после роли содержит даты.
+            # Но если дата уже есть в этой строке, current_day_col уже обновился выше.
             continue
 
-        if not current_role:
+        if not current_role or current_day_col is None:
             continue
 
-        name = _clean_person_name_value(raw_name_text)
+        name = _clean_person_name_value(first_text)
         if not name:
             continue
 
         lower_name = name.lower().strip()
 
-        # Пропускаем служебные строки.
+        # 3. Пропускаем служебные строки.
         if lower_name in weekdays:
             continue
         if lower_name.isdigit():
             continue
         if "кол-во" in lower_name or "смен" in lower_name:
             continue
+        if lower_name in role_aliases:
+            continue
 
         try:
-            value = df.iat[i, day_col]
+            value = df.iat[i, current_day_col]
         except Exception:
             continue
 
@@ -1358,12 +1376,16 @@ async def get_people_for_day(day, month=None, year=None):
         result.setdefault(current_role, [])
         result[current_role].append(f"{name} — {detect_shift(value)}")
 
-    # Убираем пустые роли и точные дубли.
     cleaned = {}
     for role, people in result.items():
         people = unique_keep_order(people) if "unique_keep_order" in globals() else list(dict.fromkeys(people))
         if people:
             cleaned[role] = people
+
+    logging.info(
+        "get_people_for_day: day=%s month=%s year=%s roles=%s total=%s",
+        day, month, year, {k: len(v) for k, v in cleaned.items()}, sum(len(v) for v in cleaned.values())
+    )
 
     return cleaned
 
