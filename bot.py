@@ -1283,42 +1283,15 @@ async def get_people_for_day(day, month=None, year=None):
     year = year or now.year
 
     try:
-        gid = get_gid_for_date(day, month, year)
+        df = await load_sheet(day, month, year)
     except Exception as e:
-        logging.exception("get_people_for_day: ошибка get_gid_for_date day=%s month=%s year=%s: %s", day, month, year, e)
+        logging.exception("get_people_for_day: ошибка load_sheet day=%s month=%s year=%s: %s", day, month, year, e)
         return {}
 
-    if not gid:
-        logging.warning("get_people_for_day: gid не найден day=%s month=%s year=%s", day, month, year)
-        return {}
-
-    try:
-        df = await get_sheet(gid)
-    except Exception as e:
-        logging.exception("get_people_for_day: ошибка загрузки gid=%s day=%s month=%s year=%s: %s", gid, day, month, year, e)
-        return {}
-
-    # Ищем колонку нужного дня по заголовкам таблицы.
-    # В твоей таблице даты продублированы в строках подразделений, поэтому ищем день в первых ~40 строках.
-    day_col = None
-    try:
-        max_rows = min(len(df), 40)
-        max_cols = min(len(df.columns), 60)
-        for col in range(1, max_cols):
-            for row_idx in range(0, max_rows):
-                cell = df.iat[row_idx, col]
-                cell_text = str(cell).replace(".0", "").strip()
-                if cell_text == str(day):
-                    day_col = col
-                    break
-            if day_col is not None:
-                break
-    except Exception as e:
-        logging.warning("get_people_for_day: ошибка поиска колонки дня day=%s gid=%s: %s", day, gid, e)
-        day_col = None
+    day_col = get_day_column(df, day)
 
     if day_col is None:
-        logging.warning("get_people_for_day: колонка дня не найдена day=%s month=%s year=%s gid=%s", day, month, year, gid)
+        logging.warning("get_people_for_day: колонка дня не найдена day=%s month=%s year=%s", day, month, year)
         return {}
 
     result = {}
