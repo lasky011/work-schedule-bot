@@ -17,65 +17,27 @@ from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, Callback
 from aiogram_calendar import SimpleCalendar, SimpleCalendarCallback
 
 
-from dotenv import load_dotenv
+from app_config import (
+    BOT_TOKEN,
+    DATABASE_URL,
+    SHEET_ID,
+    APP_TIMEZONE_NAME,
+    APP_TIMEZONE,
+    ADMIN_IDS,
+    now_local,
+    is_admin,
+    validate_required_env,
+)
 
-load_dotenv()
+validate_required_env()
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+from constants import (
+    RATES,
+    SHIFT_HOURS,
+    SHIFT_END_NOTIFY,
+    SHEET_GID_MAP,
+)
 
-# ── Валидация env ─────────────────────────────────────────────────────────────────
-_required_env = {"BOT_TOKEN": BOT_TOKEN, "DATABASE_URL": os.getenv("DATABASE_URL")}
-_missing = [k for k, v in _required_env.items() if not v]
-if _missing:
-    raise SystemExit(f"❌ Не заданы обязательные переменные: {', '.join(_missing)}")
-
-APP_TIMEZONE_NAME = os.getenv("APP_TIMEZONE", "Europe/Moscow")
-APP_TIMEZONE = ZoneInfo(APP_TIMEZONE_NAME)
-
-def _parse_admin_ids(raw: str | None) -> set[int]:
-    if not raw:
-        return set()
-    result = set()
-    for part in raw.split(","):
-        part = part.strip()
-        if not part:
-            continue
-        try:
-            result.add(int(part))
-        except ValueError:
-            logging.warning("Некорректный ADMIN_IDS элемент: %s", part)
-    return result
-
-ADMIN_IDS = _parse_admin_ids(os.getenv("ADMIN_IDS"))
-
-def is_admin(user_id: int) -> bool:
-    return user_id in ADMIN_IDS
-
-def now_local():
-    return datetime.now(APP_TIMEZONE)
-
-
-RATES: dict[str, int] = {
-    "Официант":  int(os.getenv("RATE_WAITER", 0)),
-    "Хостес":    int(os.getenv("RATE_HOSTESS", 0)),
-    "Бармен":    int(os.getenv("RATE_BARTENDER", 0)),
-    "Кальянщик": int(os.getenv("RATE_HOOKAH", 0)),
-    "Менеджер":  int(os.getenv("RATE_MANAGER", 0)),
-}
-
-SHIFT_HOURS: dict[tuple, float] = {
-    ("morning", "weekday"): 12.5,   # Пн–Чт, Вс
-    ("morning", "weekend"): 14.5,   # Пт, Сб
-    ("evening", "weekday"): 10.0,   # Пн–Чт, Вс
-    ("evening", "weekend"): 12.0,   # Пт, Сб
-}
-
-SHIFT_END_NOTIFY: dict[tuple, str] = {
-    ("morning", "weekday"): "23:05",  # Пн–Чт, Вс
-    ("morning", "weekend"): "01:05",  # Пт, Сб — уведомление на след. день
-    ("evening", "weekday"): "02:05",  # Пн–Чт, Вс — уведомление на след. день
-    ("evening", "weekend"): "04:05",  # Пт, Сб — уведомление на след. день
-}
 
 
 def detect_shift_type(value: str) -> str | None:
@@ -111,15 +73,6 @@ def get_standard_hours(shift_type: str | None, date) -> float | None:
         return None
     return SHIFT_HOURS.get((shift_type, get_day_type(date)))
 
-SHEET_ID = os.getenv("SHEET_ID", "1bRuO870pDBf6O-kXJ1O342SmxmjZgpsiacM2aPOJm9Y")
-SHEET_GID_MAP = {
-    (2026, 5, 1):  "1690889478",   # Май 1-15
-    (2026, 5, 16): "1467004546",   # Май 16-31
-    (2026, 6, 1):  "608196188",    # Июнь 1-15
-    (2026, 6, 16): "496035797",   # Июнь 16-30
-    # сюда добавляй новые листы: (год, месяц, день_начала): "gid"
-}
-
 def get_gid_for_day(day):
     now = now_local()
     return get_gid_for_day_month(day, now.month, now.year)
@@ -133,7 +86,6 @@ def build_csv_url(gid):
 
 dp = Dispatcher()
 
-DATABASE_URL = os.getenv("DATABASE_URL")
 
 try:
     import psycopg2
