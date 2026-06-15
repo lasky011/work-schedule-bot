@@ -65,7 +65,6 @@ from schedule_utils import (
     get_standard_hours,
     format_date,
     current_period,
-    current_period_for_date,
 )
 
 
