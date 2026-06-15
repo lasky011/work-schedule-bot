@@ -9,6 +9,7 @@ from constants import SHIFT_HOURS
 # Эти значения задаются из bot.py после импорта.
 MONTHS = None
 RU_HOLIDAYS = None
+WEEKDAYS = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]
 
 
 def configure_schedule_utils(months, ru_holidays):
