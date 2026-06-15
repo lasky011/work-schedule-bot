@@ -703,6 +703,7 @@ _last_selected_dept: dict[int, str | None] = {}
 
 comparing_users = set()
 compare_selected = {}
+compare_period = {}  # user_id -> (year, month, start_day, end_day)
 user_week = {}  # хранит дни текущей недели для каждого пользователя
 
 def main_kb(user_id, name: str = "Моё имя"):
@@ -858,6 +859,63 @@ def colleague_kb():
         ],
         resize_keyboard=True
     )
+
+
+def get_available_periods():
+    """
+    Актуальные периоды из SHEET_GID_MAP.
+
+    Период появляется, если для него есть gid.
+    Период исчезает, если дата конца периода уже прошла.
+    Формат элемента: (year, month, start_day, end_day)
+    """
+    today = now_local().date()
+    result = []
+
+    for key in sorted(SHEET_GID_MAP.keys()):
+        if not isinstance(key, tuple) or len(key) != 3:
+            continue
+
+        year, month, start_day = key
+        if start_day == 1:
+            end_day = 15
+        else:
+            end_day = calendar.monthrange(year, month)[1]
+
+        try:
+            period_end_date = datetime(year, month, end_day).date()
+        except Exception:
+            continue
+
+        if period_end_date >= today:
+            result.append((year, month, start_day, end_day))
+
+    return result
+
+
+def _month_label_for_period(month):
+    """Название месяца для кнопки периода."""
+    try:
+        return MONTHS_NOM[month]
+    except Exception:
+        try:
+            return MONTHS[month]
+        except Exception:
+            return str(month)
+
+
+def compare_period_kb():
+    """Клавиатура выбора периода для сравнения."""
+    buttons = []
+
+    for year, month, start_day, end_day in get_available_periods():
+        month_name = _month_label_for_period(month)
+        buttons.append([KeyboardButton(text=f"📅 {start_day}–{end_day} {month_name} {year}")])
+
+    buttons.append([KeyboardButton(text="⬅️ Назад к сравнению")])
+    buttons.append([KeyboardButton(text="🏠 Главное меню")])
+    return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+
 
 def compare_kb():
     return ReplyKeyboardMarkup(
@@ -1020,6 +1078,7 @@ def reset_modes(user_id):
     _last_selected_dept.pop(user_id, None)
     comparing_users.discard(user_id)
     compare_selected.pop(user_id, None)
+    compare_period.pop(user_id, None)
     salary_mode.discard(user_id)
     shift_entering.pop(user_id, None)
     waiting_shift_hours.discard(user_id)
@@ -1553,19 +1612,23 @@ async def get_notification_text(name, target_role=None):
 
 async def compare_multiple(user_id):
     user = await get_user(user_id)
-
     if not user or not user[1]:
         return "Сначала выбери своё имя."
 
     my_name = user[1]
     selected = sorted(compare_selected.get(user_id, set()))
-
     if not selected:
         return "Добавь хотя бы одного сотрудника для сравнения."
 
     all_people = [my_name] + selected
 
-    period_start, period_end = current_period()
+    period = compare_period.get(user_id)
+    if period:
+        year, month, period_start, period_end = period
+    else:
+        period_start, period_end = current_period()
+        now = now_local()
+        month, year = now.month, now.year
 
     common_work = []
     common_off = []
@@ -1574,39 +1637,53 @@ async def compare_multiple(user_id):
         values = {}
 
         for name in all_people:
-            _cr = None
-            for _dl, _ns in DEPARTMENTS.items():
-                if name in _ns:
-                    _p = _dl.split(" ", 1)
-                    _cr = _p[1] if len(_p) == 2 else _dl
+            target_role = None
+            for dep_label, names in DEPARTMENTS.items():
+                if name in names:
+                    parts = dep_label.split(" ", 1)
+                    target_role = parts[1] if len(parts) == 2 else dep_label
                     break
-            row, _ = await find_row(name, day, target_role=_cr)
+
+            try:
+                row, _ = await find_row(name, day, month, year, target_role=target_role)
+            except (ValueError, ConnectionError) as e:
+                logging.warning(
+                    "compare_multiple: нет данных name=%s day=%s month=%s year=%s role=%s: %s",
+                    name, day, month, year, target_role, e,
+                )
+                continue
+            except Exception as e:
+                logging.exception(
+                    "compare_multiple: ошибка name=%s day=%s month=%s year=%s role=%s: %s",
+                    name, day, month, year, target_role, e,
+                )
+                continue
+
             if not row:
-                return f"Не смог найти график для: {name}"
-            values[name] = await get_day_value(row, day)
+                continue
 
-        all_work = all(is_work_shift(value) for value in values.values())
-        all_off = all(not is_work_shift(value) for value in values.values())
+            values[name] = await get_day_value(row, day, month, year)
 
-        if all_work:
-            shifts_text = " / ".join([f"{name}: {detect_shift(values[name])}" for name in all_people])
-            common_work.append(f"{format_date(day)} — {shifts_text}")
+        if len(values) < len(all_people):
+            continue
 
-        if all_off:
-            common_off.append(f"{format_date(day)}")
+        if all(is_work_shift(v) for v in values.values()):
+            shifts_text = " / ".join(
+                f"{name}: {detect_shift(values[name])}" for name in all_people
+            )
+            common_work.append(f"{format_date(day, month, year)} — {shifts_text}")
+        elif all(not is_work_shift(v) for v in values.values()):
+            common_off.append(format_date(day, month, year))
+
+    month_name = _month_label_for_period(month)
 
     text = "🤝 Совпадения по группе\n\n"
-    text += "Участники:\n" + "\n".join([f"• {name}" for name in all_people])
-    text += f"\n\nПериод: {period_start}–{period_end}\n\n"
-
-    text += "✅ Все работают в один день:\n"
-    text += "\n".join(common_work) if common_work else "нет"
-    text += "\n\n"
-
-    text += "🏖 Все отдыхают в один день:\n"
-    text += "\n".join(common_off) if common_off else "нет"
-
+    text += "Участники:\n" + "\n".join(f"• {name}" for name in all_people)
+    text += f"\n\nПериод: {period_start}–{period_end} {month_name} {year}\n\n"
+    text += "✅ Все работают:\n" + ("\n".join(common_work) if common_work else "нет")
+    text += "\n\n🏖 Все отдыхают:\n" + ("\n".join(common_off) if common_off else "нет")
     return text
+
 
 async def active_name(user_id):
     if user_id in viewing_colleague:
@@ -1747,12 +1824,22 @@ async def notification_loop(bot):
             if sent.get(key):
                 continue
 
-            text = await get_notification_text(name, target_role=_nr_role)
+            try:
+                text = await get_notification_text(name, target_role=_nr_role)
 
-            if text:
-                await bot.send_message(user_id, text)
-
-            sent[key] = True
+                if text:
+                    await bot.send_message(user_id, text)
+                    sent[key] = True
+                else:
+                    logging.warning(
+                        "notification_loop: пустой текст уведомления user_id=%s name=%s notify_time=%s role=%s",
+                        user_id, name, notify_time, _nr_role,
+                    )
+            except Exception as e:
+                logging.exception(
+                    "notification_loop: ошибка отправки user_id=%s name=%s notify_time=%s role=%s: %s",
+                    user_id, name, notify_time, _nr_role, e,
+                )
 
         await asyncio.sleep(10)
 
@@ -2011,15 +2098,95 @@ async def compare_menu(message: Message):
         reply_markup=compare_kb()
     )
 
+
 @dp.message(F.text == "✅ Посчитать совпадения")
-async def calculate_compare(message: Message):
+async def ask_compare_period(message: Message):
     user_id = message.from_user.id
 
+    if user_id not in comparing_users:
+        comparing_users.add(user_id)
+
+    selected = compare_selected.get(user_id, set())
+    if not selected:
+        return await message.answer(
+            "Добавь хотя бы одного сотрудника для сравнения.",
+            reply_markup=compare_kb()
+        )
+
+    periods = get_available_periods()
+    if not periods:
+        return await message.answer(
+            "❌ Нет доступных актуальных периодов. Добавь gid периода в SHEET_GID_MAP.",
+            reply_markup=compare_kb()
+        )
+
+    if len(periods) == 1:
+        compare_period[user_id] = periods[0]
+        return await loading_answer(
+            message,
+            "⏳ Считаю совпадения...",
+            compare_multiple(user_id),
+            reply_markup=compare_kb()
+        )
+
+    await message.answer(
+        "📅 Выбери период для сравнения:",
+        reply_markup=compare_period_kb()
+    )
+
+
+
+
+@dp.message(F.text == "⬅️ Назад к сравнению")
+async def back_to_compare_from_period(message: Message):
+    user_id = message.from_user.id
+    if user_id in comparing_users:
+        await message.answer("🤝 Выбери сотрудников для сравнения:", reply_markup=compare_kb())
+
+
+@dp.message(F.text.regexp(r"^📅 \d+–\d+ .+ \d{4}$"))
+async def handle_compare_period_select(message: Message):
+    user_id = message.from_user.id
+
+    if user_id not in comparing_users:
+        return
+
+    m = re.match(r"^📅 (\d+)–(\d+) (.+) (\d{4})$", message.text)
+    if not m:
+        return
+
+    start_day = int(m.group(1))
+    end_day = int(m.group(2))
+    month_name = m.group(3).strip()
+    year = int(m.group(4))
+
+    matched = None
+    for period in get_available_periods():
+        p_year, p_month, p_start, p_end = period
+        if (
+            p_year == year
+            and p_start == start_day
+            and p_end == end_day
+            and _month_label_for_period(p_month) == month_name
+        ):
+            matched = period
+            break
+
+    if not matched:
+        return await message.answer(
+            "❌ Период не найден или уже не актуален.",
+            reply_markup=compare_period_kb()
+        )
+
+    compare_period[user_id] = matched
+
     await loading_answer(
-        message, "⏳ Сравниваю графики...",
+        message,
+        "⏳ Считаю совпадения...",
         compare_multiple(user_id),
         reply_markup=compare_kb()
     )
+
 
 @dp.message(F.text == "🧹 Очистить выбранных")
 async def clear_compare(message: Message):
@@ -2830,7 +2997,13 @@ async def main():
 
     await load_full_sheet()
 
-    asyncio.create_task(notification_loop(bot))
+    _notification_task = asyncio.create_task(notification_loop(bot))
+    _notification_task.add_done_callback(
+        lambda t: logging.exception(
+            "notification_loop: фоновая задача завершилась с ошибкой",
+            exc_info=t.exception(),
+        ) if t.exception() else None
+    )
     asyncio.create_task(hours_notification_loop(bot))
 
     await dp.start_polling(bot)
