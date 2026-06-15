@@ -1269,8 +1269,8 @@ async def get_people_for_day(day, month=None, year=None):
     """
     Возвращает всех работающих за день по всем подразделениям Google Sheets.
 
-    Устойчиво поддерживает листы, где есть несколько блоков с повторными строками дат:
-    Менеджеры/Официанты/Бармены, ниже Кальян, ниже Хостес.
+    Поддерживает листы, где внутри одного листа есть несколько блоков с повторными строками дат.
+    Например: Менеджеры/Официанты/Бармены, потом ниже Кальян со своим заголовком дат.
     """
     now = now_local()
     month = month or now.month
@@ -1297,101 +1297,65 @@ async def get_people_for_day(day, month=None, year=None):
 
     weekdays = {"вт", "ср", "чт", "пт", "сб", "вс", "пн"}
 
-    def norm_cell(value) -> str:
-        return clean_value(value).replace("\xa0", " ").strip()
-
     def detect_role_from_cell(value):
-        text_norm = re.sub(r"\s+", " ", norm_cell(value)).lower()
+        text = str(value or "").replace("\xa0", " ").strip()
+        text_norm = re.sub(r"\s+", " ", text).lower()
         return role_aliases.get(text_norm)
 
-    def int_day_or_none(value):
-        text = norm_cell(value)
-        if not text:
-            return None
-        # pandas иногда даёт 16.0
-        if re.fullmatch(r"\d+\.0", text):
-            text = text[:-2]
-        if not text.isdigit():
-            return None
-        n = int(text)
-        if 1 <= n <= 31:
-            return n
-        return None
-
-    def find_day_col_in_header_row(row_idx: int):
-        """
-        Возвращает колонку дня только если строка похожа на строку дат.
-        Критерий: в строке есть минимум 3 числа-дня в соседних/почти соседних колонках.
-        Это защищает от случайного срабатывания на строках сотрудников.
-        """
-        day_cols = []
-
+    def find_day_col_in_row(row_idx: int):
+        """Если строка содержит номер нужного дня, возвращает колонку."""
         try:
             for col in range(1, len(df.columns)):
-                n = int_day_or_none(df.iat[row_idx, col])
-                if n is not None:
-                    day_cols.append((col, n))
+                cell = df.iat[row_idx, col]
+                cell_text = clean_value(cell)
+                if cell_text == str(day):
+                    return col
         except Exception:
             return None
-
-        if len(day_cols) < 3:
-            return None
-
-        # Проверяем, что это именно ряд дат, а не случайные числа.
-        cols = [c for c, _ in day_cols]
-        compact_score = 0
-        for prev, cur in zip(cols, cols[1:]):
-            if cur - prev <= 2:
-                compact_score += 1
-
-        if compact_score < 2:
-            return None
-
-        for col, n in day_cols:
-            if n == day:
-                return col
-
         return None
 
     result = {}
     current_role = None
     current_day_col = None
 
-    # Стартовый fallback, чтобы верхний блок работал даже если строка дат распознана позже.
+    # Начальный fallback: старый способ, если строка дат ещё не встретилась.
     try:
         current_day_col = get_day_column(df, day)
     except Exception:
         current_day_col = None
 
     for i in range(len(df)):
-        first_text = norm_cell(df.iat[i, 0] if len(df.columns) > 0 else "")
+        raw_first = df.iat[i, 0] if len(df.columns) > 0 else ""
+        first_text = str(raw_first or "").replace("\xa0", " ").strip()
 
-        # 1. Обновляем колонку дня только на реальных строках дат.
-        header_day_col = find_day_col_in_header_row(i)
-        if header_day_col is not None:
-            current_day_col = header_day_col
-            continue
+        # 1. Если текущая строка является строкой дат, обновляем колонку дня.
+        row_day_col = find_day_col_in_row(i)
+        if row_day_col is not None:
+            current_day_col = row_day_col
 
         if not first_text or first_text.lower() == "nan":
             continue
 
-        # 2. Заголовок подразделения.
+        # 2. Если это заголовок подразделения, меняем текущую роль.
         detected_role = detect_role_from_cell(first_text)
         if detected_role:
             current_role = detected_role
             result.setdefault(current_role, [])
+
+            # Часто сразу следующая строка после роли содержит даты.
+            # Но если дата уже есть в этой строке, current_day_col уже обновился выше.
             continue
 
         if not current_role or current_day_col is None:
             continue
 
-        # 3. Обычный сотрудник.
         name = _clean_person_name_value(first_text)
         if not name:
             continue
 
         lower_name = name.lower().strip()
 
+        # 3. Пропускаем служебные строки.
         if lower_name in weekdays:
             continue
         if lower_name.isdigit():
@@ -1630,10 +1594,11 @@ async def get_people(day, user_id, month=None, year=None):
     text += my_status + "\n\n"
 
     has_any = False
-    for role_key, label in DEPT_EMOJIS.items():
+    for role_key in ordered_role_keys(result):
         people = result.get(role_key, [])
         if people:
             has_any = True
+            label = role_display_label(role_key)
             text += f"{label} ({len(people)})\n" + "\n".join(people) + "\n\n"
 
     if not has_any:
@@ -3251,29 +3216,6 @@ async def global_error_handler(event) -> bool:
     return True
 
 
-
-def log_background_task_result(task: asyncio.Task, task_name: str) -> None:
-    """
-    Логирует падение фоновой задачи.
-
-    Важно: CancelledError при деплое/остановке контейнера является нормальным сценарием,
-    его не нужно логировать как ошибку.
-    """
-    if task.cancelled():
-        logging.info("%s: фоновая задача отменена", task_name)
-        return
-
-    try:
-        exc = task.exception()
-    except asyncio.CancelledError:
-        logging.info("%s: фоновая задача отменена", task_name)
-        return
-
-    if exc:
-        logging.exception("%s: фоновая задача завершилась с ошибкой", task_name, exc_info=exc)
-
-
-
 async def main():
     if not BOT_TOKEN:
         print("Ошибка: BOT_TOKEN не найден в .env")
@@ -3285,11 +3227,17 @@ async def main():
 
     _notification_task = asyncio.create_task(notification_loop(bot))
     _notification_task.add_done_callback(
-        lambda t: log_background_task_result(t, "notification_loop")
+        lambda t: logging.exception(
+            "notification_loop: фоновая задача завершилась с ошибкой",
+            exc_info=t.exception(),
+        ) if t.exception() else None
     )
     _hours_notification_task = asyncio.create_task(hours_notification_loop(bot))
     _hours_notification_task.add_done_callback(
-        lambda t: log_background_task_result(t, "hours_notification_loop")
+        lambda t: logging.exception(
+            "hours_notification_loop: фоновая задача завершилась с ошибкой",
+            exc_info=t.exception(),
+        ) if t.exception() else None
     )
 
     await dp.start_polling(bot)
