@@ -1266,35 +1266,134 @@ async def get_day_value(row, day, month=None, year=None):
 
 
 async def get_people_for_day(day, month=None, year=None):
-    now = now_local()
-    if month is None:
-        month = now.month
-    if year is None:
-        year = now.year
-    df = await load_sheet(day, month, year)
-    col = get_day_column(df, day)
+    """
+    Возвращает всех работающих за день по всем подразделениям Google Sheets.
 
-    if col is None:
+    Формат:
+    {
+        "Менеджер": ["Рина — 11:00 — утро", ...],
+        "Официант": [...],
+        "Бармен": [...],
+        "Кальян": [...],
+        "Хостес": [...]
+    }
+    """
+    now = now_local()
+    month = month or now.month
+    year = year or now.year
+
+    try:
+        gid = get_gid_for_date(day, month, year)
+    except Exception as e:
+        logging.exception("get_people_for_day: ошибка get_gid_for_date day=%s month=%s year=%s: %s", day, month, year, e)
         return {}
 
-    role = None
+    if not gid:
+        logging.warning("get_people_for_day: gid не найден day=%s month=%s year=%s", day, month, year)
+        return {}
+
+    try:
+        df = await get_sheet(gid)
+    except Exception as e:
+        logging.exception("get_people_for_day: ошибка загрузки gid=%s day=%s month=%s year=%s: %s", gid, day, month, year, e)
+        return {}
+
+    # Ищем колонку нужного дня по заголовкам таблицы.
+    # В твоей таблице даты продублированы в строках подразделений, поэтому ищем день в первых ~40 строках.
+    day_col = None
+    try:
+        max_rows = min(len(df), 40)
+        max_cols = min(len(df.columns), 60)
+        for col in range(1, max_cols):
+            for row_idx in range(0, max_rows):
+                cell = df.iat[row_idx, col]
+                cell_text = str(cell).replace(".0", "").strip()
+                if cell_text == str(day):
+                    day_col = col
+                    break
+            if day_col is not None:
+                break
+    except Exception as e:
+        logging.warning("get_people_for_day: ошибка поиска колонки дня day=%s gid=%s: %s", day, gid, e)
+        day_col = None
+
+    if day_col is None:
+        logging.warning("get_people_for_day: колонка дня не найдена day=%s month=%s year=%s gid=%s", day, month, year, gid)
+        return {}
+
     result = {}
+    current_role = None
+
+    role_aliases = {
+        "менеджеры": "Менеджер",
+        "менеджер": "Менеджер",
+        "официант": "Официант",
+        "официанты": "Официант",
+        "бармен": "Бармен",
+        "бармены": "Бармен",
+        "кальян": "Кальян",
+        "кальянщик": "Кальян",
+        "кальянщики": "Кальян",
+        "хостес": "Хостес",
+    }
+
+    weekdays = {"вт", "ср", "чт", "пт", "сб", "вс", "пн"}
+
+    def detect_role_from_cell(value):
+        text = str(value or "").replace("\xa0", " ").strip()
+        text_norm = re.sub(r"\s+", " ", text).lower()
+        return role_aliases.get(text_norm)
 
     for i in range(len(df)):
-        first = str(df.iloc[i, 0]).strip()
-        if first in ROLES:
-            role = first
-            result[role] = []
-            continue
-        row = df.iloc[i].fillna("").astype(str).tolist()
-        if role and len(row) > col:
-            name = clean_value(row[0])
-            value = row[col]
-            if name and is_work_shift(value):
-                display_name = clean_person_name(name)
-                result[role].append(f"{display_name} — {detect_shift(value)}")
+        raw_name = df.iat[i, 0] if len(df.columns) > 0 else ""
+        raw_name_text = str(raw_name or "").replace("\xa0", " ").strip()
 
-    return result
+        if not raw_name_text or raw_name_text.lower() == "nan":
+            continue
+
+        detected_role = detect_role_from_cell(raw_name_text)
+        if detected_role:
+            current_role = detected_role
+            result.setdefault(current_role, [])
+            continue
+
+        if not current_role:
+            continue
+
+        name = _clean_person_name_value(raw_name_text)
+        if not name:
+            continue
+
+        lower_name = name.lower().strip()
+
+        # Пропускаем служебные строки.
+        if lower_name in weekdays:
+            continue
+        if lower_name.isdigit():
+            continue
+        if "кол-во" in lower_name or "смен" in lower_name:
+            continue
+
+        try:
+            value = df.iat[i, day_col]
+        except Exception:
+            continue
+
+        if not is_work_shift(value):
+            continue
+
+        result.setdefault(current_role, [])
+        result[current_role].append(f"{name} — {detect_shift(value)}")
+
+    # Убираем пустые роли и точные дубли.
+    cleaned = {}
+    for role, people in result.items():
+        people = unique_keep_order(people) if "unique_keep_order" in globals() else list(dict.fromkeys(people))
+        if people:
+            cleaned[role] = people
+
+    return cleaned
+
 
 
 async def get_common_day_off_people(name, day, month=None, year=None):
