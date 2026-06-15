@@ -653,6 +653,50 @@ DEPT_EMOJIS: dict[str, str] = {
     "Хостес":   "🙋 Хостес",
 }
 
+
+ROLE_ORDER = ["Менеджеры", "Менеджер", "Официант", "Бармен", "Кальян", "Кальянщик", "Хостес"]
+
+def role_display_label(role: str) -> str:
+    """Красивое название роли/подразделения для вывода."""
+    if not role:
+        return ""
+
+    role = str(role).strip()
+
+    aliases = {
+        "Менеджер": "Менеджеры",
+        "Кальянщик": "Кальян",
+    }
+    display_role = aliases.get(role, role)
+
+    emoji_map = {
+        "Менеджеры": "👔 Менеджеры",
+        "Официант": "🍽 Официант",
+        "Бармен": "🍸 Бармен",
+        "Кальян": "💨 Кальян",
+        "Хостес": "🙋 Хостес",
+    }
+
+    return emoji_map.get(display_role, DEPT_EMOJIS.get(role, role))
+
+
+def ordered_role_keys(people_by_role: dict) -> list:
+    """Роли в стабильном порядке: сначала основные из таблицы, потом остальные."""
+    keys = list(people_by_role.keys())
+    result = []
+
+    for role in ROLE_ORDER:
+        if role in people_by_role and role not in result:
+            result.append(role)
+
+    for role in keys:
+        if role not in result:
+            result.append(role)
+
+    return result
+
+
+
 ROLES = ["Менеджер", "Официант", "Бармен", "Кальян", "Хостес"]
 
 MONTHS = [
@@ -1343,13 +1387,15 @@ async def get_day_schedule(name, day, month=None, year=None, target_role=None):
         text += f"\n{shift_line}"
 
     people_by_role = await get_people_for_day(day, month, year)
-    coworkers_text = ""
-    for role_key, label in DEPT_EMOJIS.items():
+    coworkers_parts = []
+    for role_key in ordered_role_keys(people_by_role):
         people = people_by_role.get(role_key, [])
-        filtered = [p for p in people if p.split(" — ")[0].strip() != name]
-        if filtered:
-            coworkers_text += f"{label}\n" + "\n".join(filtered) + "\n\n"
-
+        if not people:
+            continue
+        coworkers_parts.append(role_display_label(role_key))
+        coworkers_parts.extend(people)
+        coworkers_parts.append("")
+    coworkers_text = "\n".join(coworkers_parts).strip()
     total_on_shift = sum(len(v) for v in people_by_role.values())
     if coworkers_text:
         text += f"\n\n👥 {format_date(day, month, year)} работают: всего {total_on_shift}\n\n" + coworkers_text.strip()
