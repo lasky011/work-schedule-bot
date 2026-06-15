@@ -1644,22 +1644,44 @@ async def compare_multiple(user_id):
                     target_role = parts[1] if len(parts) == 2 else dep_label
                     break
 
+            row = None
             try:
                 row, _ = await find_row(name, day, month, year, target_role=target_role)
             except (ValueError, ConnectionError) as e:
                 logging.warning(
-                    "compare_multiple: нет данных name=%s day=%s month=%s year=%s role=%s: %s",
+                    "compare_multiple: поиск с ролью не дал данных name=%s day=%s month=%s year=%s role=%s: %s",
                     name, day, month, year, target_role, e,
                 )
-                continue
             except Exception as e:
                 logging.exception(
-                    "compare_multiple: ошибка name=%s day=%s month=%s year=%s role=%s: %s",
+                    "compare_multiple: ошибка поиска с ролью name=%s day=%s month=%s year=%s role=%s: %s",
                     name, day, month, year, target_role, e,
                 )
-                continue
+
+            if not row and target_role:
+                try:
+                    row, _ = await find_row(name, day, month, year, target_role=None)
+                    if row:
+                        logging.info(
+                            "compare_multiple: fallback без роли сработал name=%s day=%s month=%s year=%s old_role=%s",
+                            name, day, month, year, target_role,
+                        )
+                except (ValueError, ConnectionError) as e:
+                    logging.warning(
+                        "compare_multiple: fallback без роли не дал данных name=%s day=%s month=%s year=%s: %s",
+                        name, day, month, year, e,
+                    )
+                except Exception as e:
+                    logging.exception(
+                        "compare_multiple: ошибка fallback без роли name=%s day=%s month=%s year=%s: %s",
+                        name, day, month, year, e,
+                    )
 
             if not row:
+                logging.warning(
+                    "compare_multiple: сотрудник не найден name=%s day=%s month=%s year=%s role=%s",
+                    name, day, month, year, target_role,
+                )
                 continue
 
             values[name] = await get_day_value(row, day, month, year)
