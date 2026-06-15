@@ -1072,6 +1072,19 @@ def normalize_role_name(role: str | None) -> str | None:
     return aliases.get(text, text)
 
 
+
+def normalize_person_lookup_name(name: str | None) -> str:
+    """Нормализация имени для поиска сотрудника в Google Sheets."""
+    if name is None:
+        return ""
+
+    text = _clean_person_name_value(name)
+    text = text.replace("ё", "е").replace("Ё", "Е")
+    text = text.lower()
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
 async def find_row(name, day, month=None, year=None, target_role=None):
     now = now_local()
     if month is None:
@@ -1082,6 +1095,7 @@ async def find_row(name, day, month=None, year=None, target_role=None):
     role = None
     target_role_norm = normalize_role_name(target_role)
     needle = str(name).strip().lower()
+    needle_norm = normalize_person_lookup_name(name)
 
     for i in range(len(df)):
         first = str(df.iloc[i, 0]).strip()
@@ -1091,6 +1105,30 @@ async def find_row(name, day, month=None, year=None, target_role=None):
         row = df.iloc[i].fillna("").astype(str).tolist()
         if needle and needle in " ".join(row).lower():
             if target_role_norm is None or role == target_role_norm:
+                return row, role
+
+    # Fallback: точный поиск по первой колонке с нормализацией имени.
+    # Нужен для листов 16-30, где роль/строка может отличаться от выбранной кнопки.
+    role = None
+    for i in range(len(df)):
+        first = str(df.iloc[i, 0]).replace("\xa0", " ").strip()
+        first_clean = _clean_person_name_value(first)
+
+        if first in ROLES:
+            role = normalize_role_name(first)
+            continue
+
+        if not first_clean:
+            continue
+
+        first_norm = normalize_person_lookup_name(first_clean)
+        if first_norm == needle_norm:
+            if target_role_norm is None or role == target_role_norm:
+                row = df.iloc[i].fillna("").astype(str).tolist()
+                logging.info(
+                    "find_row fallback matched name=%s day=%s month=%s year=%s role=%s target_role=%s",
+                    name, day, month, year, role, target_role_norm,
+                )
                 return row, role
 
     return None, None
