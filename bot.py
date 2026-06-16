@@ -2375,6 +2375,7 @@ async def ask_notification_time(message: Message):
 # ── Зарплата ───────────────────────────────────────────────────────────────
 
 # Состояния для флоу внесения смены
+shift_history_selected_period = {}  # user_id -> (year, month, start_day, end_day)
 salary_mode: set[int] = set()
 shift_entering: dict[int, dict] = {}
 waiting_shift_hours: set[int] = set()
@@ -2923,11 +2924,48 @@ def _parse_shift_history_period_button(text: str):
     return year, month, start_day, end_day
 
 
-async def build_shift_history_text(user_id: int, year: int, month: int, start_day: int, end_day: int) -> str:
-    """Текст истории смен за выбранный период."""
-    shifts = await get_shifts_for_month(user_id, year, month)
 
-    period_shifts = []
+def shift_history_actions_kb():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="🗑 Удалить смену из этого периода")],
+            [KeyboardButton(text="⬅️ Назад к выбору периода")],
+            [KeyboardButton(text="💰 Зарплата")],
+            [KeyboardButton(text="🏠 Главное меню")],
+        ],
+        resize_keyboard=True
+    )
+
+
+def shift_history_delete_kb(shifts):
+    keyboard = []
+
+    for date_str, hours, shift_type, is_standard, note in shifts:
+        shift_label = ""
+        if shift_type == "morning":
+            shift_label = "утро"
+        elif shift_type == "evening":
+            shift_label = "вечер"
+        elif shift_type:
+            shift_label = str(shift_type)
+
+        label = f"🗑 {date_str} — {fmt_hours(hours)} ч"
+        if shift_label:
+            label += f" {shift_label}"
+
+        keyboard.append([KeyboardButton(text=label)])
+
+    keyboard.append([KeyboardButton(text="⬅️ Назад к истории")])
+    keyboard.append([KeyboardButton(text="💰 Зарплата")])
+    keyboard.append([KeyboardButton(text="🏠 Главное меню")])
+
+    return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
+
+
+async def get_shift_history_period_shifts(user_id: int, year: int, month: int, start_day: int, end_day: int):
+    shifts = await get_shifts_for_month(user_id, year, month)
+    result = []
+
     for row in shifts:
         date_value = row[0]
         hours = row[1]
@@ -2942,7 +2980,15 @@ async def build_shift_history_text(user_id: int, year: int, month: int, start_da
             continue
 
         if start_day <= day <= end_day:
-            period_shifts.append((date_str, hours, shift_type, is_standard, note))
+            result.append((date_str, hours, shift_type, is_standard, note))
+
+    return result
+
+
+
+async def build_shift_history_text(user_id: int, year: int, month: int, start_day: int, end_day: int) -> str:
+    """Текст истории смен за выбранный период."""
+    period_shifts = await get_shift_history_period_shifts(user_id, year, month, start_day, end_day)
 
     month_name = _month_label(month)
     lines = [f"📋 История смен: {start_day}–{end_day} {month_name} {year}", ""]
@@ -3037,8 +3083,77 @@ async def shift_history_period_selected(message: Message):
     year, month, start_day, end_day = parsed
     user_id = message.from_user.id
 
+    shift_history_selected_period[user_id] = (year, month, start_day, end_day)
     text = await build_shift_history_text(user_id, year, month, start_day, end_day)
-    await message.answer(text, reply_markup=salary_kb())
+    await message.answer(text, reply_markup=shift_history_actions_kb())
+
+
+
+@dp.message(F.text == "🗑 Удалить смену из этого периода")
+async def shift_history_delete_choose(message: Message):
+    user_id = message.from_user.id
+    period = shift_history_selected_period.get(user_id)
+
+    if not period:
+        return await message.answer(
+            "Сначала выбери период истории смен.",
+            reply_markup=shift_history_month_kb()
+        )
+
+    year, month, start_day, end_day = period
+    shifts = await get_shift_history_period_shifts(user_id, year, month, start_day, end_day)
+
+    if not shifts:
+        return await message.answer(
+            "В этом периоде нет внесённых смен.",
+            reply_markup=shift_history_actions_kb()
+        )
+
+    await message.answer(
+        "🗑 Выбери смену для удаления:",
+        reply_markup=shift_history_delete_kb(shifts)
+    )
+
+
+@dp.message(F.text == "⬅️ Назад к истории")
+async def shift_history_back_to_selected_period(message: Message):
+    user_id = message.from_user.id
+    period = shift_history_selected_period.get(user_id)
+
+    if not period:
+        return await message.answer(
+            "📅 Выбери месяц истории смен:",
+            reply_markup=shift_history_month_kb()
+        )
+
+    year, month, start_day, end_day = period
+    text = await build_shift_history_text(user_id, year, month, start_day, end_day)
+    await message.answer(text, reply_markup=shift_history_actions_kb())
+
+
+@dp.message(F.text.regexp(r"^🗑 \d{4}-\d{2}-\d{2} — .+"))
+async def shift_history_delete_confirm(message: Message):
+    user_id = message.from_user.id
+
+    m = re.match(r"^🗑 (\d{4}-\d{2}-\d{2}) — .+", message.text)
+    if not m:
+        return
+
+    date_str = m.group(1)
+    deleted = await delete_shift(user_id, date_str)
+
+    if deleted:
+        await message.answer(f"✅ Смена {date_str} удалена.")
+    else:
+        await message.answer(f"⚠️ Смена {date_str} не найдена или уже удалена.")
+
+    period = shift_history_selected_period.get(user_id)
+    if period:
+        year, month, start_day, end_day = period
+        text = await build_shift_history_text(user_id, year, month, start_day, end_day)
+        await message.answer(text, reply_markup=shift_history_actions_kb())
+    else:
+        await message.answer("📋 История смен", reply_markup=shift_history_month_kb())
 
 
 @dp.message()
