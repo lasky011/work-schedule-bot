@@ -30,6 +30,8 @@ def test_imports():
     import keyboards
     import sheets_client
     import schedule_utils
+    import repositories.users_repo
+    import repositories.shifts_repo
 
     assert app_config.APP_TIMEZONE is not None
     assert isinstance(constants.SHEET_GID_MAP, dict)

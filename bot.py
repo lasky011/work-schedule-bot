@@ -5,11 +5,7 @@ import re
 import calendar
 import logging
 import traceback
-from io import StringIO
 from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
-import pandas as pd
-import requests
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, CallbackQuery
