@@ -2376,6 +2376,7 @@ async def ask_notification_time(message: Message):
 
 # Состояния для флоу внесения смены
 shift_history_selected_period = {}  # user_id -> (year, month, start_day, end_day)
+shift_history_selected_month = {}  # user_id -> (year, month)
 salary_mode: set[int] = set()
 shift_entering: dict[int, dict] = {}
 waiting_shift_hours: set[int] = set()
@@ -3060,6 +3061,8 @@ async def shift_history_month_selected(message: Message):
         return
 
     year, month = parsed
+    shift_history_selected_month[message.from_user.id] = (year, month)
+
     await message.answer(
         "📋 Выбери период истории смен:",
         reply_markup=shift_history_period_kb(month, year)
@@ -3074,6 +3077,32 @@ async def shift_history_back_to_month(message: Message):
     )
 
 
+
+@dp.message(F.text == "⬅️ Назад к выбору периода")
+async def shift_history_back_to_period(message: Message):
+    user_id = message.from_user.id
+
+    selected_month = shift_history_selected_month.get(user_id)
+
+    if not selected_month:
+        period = shift_history_selected_period.get(user_id)
+        if period:
+            year, month, _start_day, _end_day = period
+            selected_month = (year, month)
+
+    if not selected_month:
+        return await message.answer(
+            "📅 Выбери месяц истории смен:",
+            reply_markup=shift_history_month_kb()
+        )
+
+    year, month = selected_month
+    await message.answer(
+        "📋 Выбери период истории смен:",
+        reply_markup=shift_history_period_kb(month, year)
+    )
+
+
 @dp.message(F.text.regexp(r"^🧾 Период: \d+–\d+ .+ \d{4}$"))
 async def shift_history_period_selected(message: Message):
     parsed = _parse_shift_history_period_button(message.text)
@@ -3083,6 +3112,7 @@ async def shift_history_period_selected(message: Message):
     year, month, start_day, end_day = parsed
     user_id = message.from_user.id
 
+    shift_history_selected_month[user_id] = (year, month)
     shift_history_selected_period[user_id] = (year, month, start_day, end_day)
     text = await build_shift_history_text(user_id, year, month, start_day, end_day)
     await message.answer(text, reply_markup=shift_history_actions_kb())
