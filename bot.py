@@ -2950,7 +2950,7 @@ def shift_history_delete_kb(shifts):
         elif shift_type:
             shift_label = str(shift_type)
 
-        label = f"🗑 {date_str} — {fmt_hours(hours)} ч"
+        label = f"❌ {date_str} — {fmt_hours(hours)} ч"
         if shift_label:
             label += f" {shift_label}"
 
@@ -3161,11 +3161,11 @@ async def shift_history_back_to_selected_period(message: Message):
     await message.answer(text, reply_markup=shift_history_actions_kb())
 
 
-@dp.message(F.text.regexp(r"^🗑 \d{4}-\d{2}-\d{2} — .+"))
+@dp.message(F.text.regexp(r"^❌ \d{4}-\d{2}-\d{2} — .+"))
 async def shift_history_delete_confirm(message: Message):
     user_id = message.from_user.id
 
-    m = re.match(r"^🗑 (\d{4}-\d{2}-\d{2}) — .+", message.text)
+    m = re.match(r"^❌ (\d{4}-\d{2}-\d{2}) — .+", message.text)
     if not m:
         return
 
