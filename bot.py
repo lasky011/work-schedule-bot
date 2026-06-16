@@ -1585,7 +1585,10 @@ async def hours_notification_loop(bot) -> None:
         except Exception as e:
             logging.exception("hours_notification_loop: критическая ошибка цикла: %s", e)
 
-        await asyncio.sleep(30)
+        try:
+            await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            break
 
 
 
@@ -1645,7 +1648,10 @@ async def notification_loop(bot):
                     user_id, name, notify_time, _nr_role, e,
                 )
 
-        await asyncio.sleep(10)
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            break
 
 
 @dp.message(F.text == "/health")
