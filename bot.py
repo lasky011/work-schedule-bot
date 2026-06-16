@@ -3267,14 +3267,14 @@ async def main():
         lambda t: logging.exception(
             "notification_loop: фоновая задача завершилась с ошибкой",
             exc_info=t.exception(),
-        ) if t.exception() else None
+        ) if not t.cancelled() and t.exception() else None
     )
     _hours_notification_task = asyncio.create_task(hours_notification_loop(bot))
     _hours_notification_task.add_done_callback(
         lambda t: logging.exception(
             "hours_notification_loop: фоновая задача завершилась с ошибкой",
             exc_info=t.exception(),
-        ) if t.exception() else None
+        ) if not t.cancelled() and t.exception() else None
     )
 
     await dp.start_polling(bot)
