@@ -2831,7 +2831,7 @@ def shift_history_month_kb():
     buttons = []
 
     for year, month in get_shift_history_months():
-        buttons.append([KeyboardButton(text=f"🧾 {_month_label(month)} {year}")])
+        buttons.append([KeyboardButton(text=f"🧾 Месяц: {_month_label(month)} {year}")])
 
     buttons.append([KeyboardButton(text="⬅️ Назад к зарплате")])
     buttons.append([KeyboardButton(text="🏠 Главное меню")])
@@ -2843,7 +2843,7 @@ def _parse_shift_history_month_button(text: str):
     Парсит кнопку:
     📅 Июнь 2026
     """
-    m = re.match(r"^🧾 (.+) (\d{4})$", text.strip())
+    m = re.match(r"^🧾 Месяц: (.+) (\d{4})$", text.strip())
     if not m:
         return None
 
@@ -2877,8 +2877,8 @@ def shift_history_period_kb(month=None, year=None):
     month_name = _month_label(month)
 
     keyboard = [
-        [KeyboardButton(text=f"🧾 1–15 {month_name} {year}")],
-        [KeyboardButton(text=f"🧾 16–{last_day} {month_name} {year}")],
+        [KeyboardButton(text=f"🧾 Период: 1–15 {month_name} {year}")],
+        [KeyboardButton(text=f"🧾 Период: 16–{last_day} {month_name} {year}")],
         [KeyboardButton(text="⬅️ Назад к выбору месяца")],
         [KeyboardButton(text="⬅️ Назад к зарплате")],
         [KeyboardButton(text="🏠 Главное меню")],
@@ -2892,7 +2892,7 @@ def _parse_shift_history_period_button(text: str):
     📋 1–15 Июнь 2026
     📋 16–30 Июнь 2026
     """
-    m = re.match(r"^🧾 (\d+)–(\d+) (.+) (\d{4})$", text.strip())
+    m = re.match(r"^🧾 Период: (\d+)–(\d+) (.+) (\d{4})$", text.strip())
     if not m:
         return None
 
@@ -3007,7 +3007,7 @@ async def shift_history(message: Message):
     )
 
 
-@dp.message(F.text.regexp(r"^🧾 .+ \d{4}$"))
+@dp.message(F.text.regexp(r"^🧾 Месяц: .+ \d{4}$"))
 async def shift_history_month_selected(message: Message):
     parsed = _parse_shift_history_month_button(message.text)
     if not parsed:
@@ -3028,7 +3028,7 @@ async def shift_history_back_to_month(message: Message):
     )
 
 
-@dp.message(F.text.regexp(r"^🧾 \d+–\d+ .+ \d{4}$"))
+@dp.message(F.text.regexp(r"^🧾 Период: \d+–\d+ .+ \d{4}$"))
 async def shift_history_period_selected(message: Message):
     parsed = _parse_shift_history_period_button(message.text)
     if not parsed:
