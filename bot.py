@@ -2792,38 +2792,253 @@ async def shift_custom_hours(message: Message):
     await message.answer("Напиши количество часов, например: 11.5")
 
 
-@dp.message(F.text == "📋 История смен")
-@with_loading("⏳ Загружаю историю...")
-async def shift_history(message: Message):
-    user_id = message.from_user.id
+
+def _month_label(month: int) -> str:
+    try:
+        return MONTHS_NOM[month]
+    except Exception:
+        try:
+            return MONTHS[month]
+        except Exception:
+            return str(month)
+
+
+def get_shift_history_months():
+    """
+    Месяцы для истории смен на основе SHEET_GID_MAP.
+
+    Показываем текущий и будущие месяцы, для которых есть хотя бы один gid.
+    Как только добавишь gid июля, июль появится в списке.
+    """
+    today = now_local().date()
+    months = set()
+
+    for key in SHEET_GID_MAP.keys():
+        if not isinstance(key, tuple) or len(key) != 3:
+            continue
+
+        year, month, _start_day = key
+
+        # Оставляем текущий и будущие месяцы.
+        if (year, month) >= (today.year, today.month):
+            months.add((year, month))
+
+    return sorted(months)
+
+
+def shift_history_month_kb():
+    """Клавиатура выбора месяца истории смен."""
+    buttons = []
+
+    for year, month in get_shift_history_months():
+        buttons.append([KeyboardButton(text=f"📅 {_month_label(month)} {year}")])
+
+    buttons.append([KeyboardButton(text="⬅️ Назад к зарплате")])
+    buttons.append([KeyboardButton(text="🏠 Главное меню")])
+    return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+
+
+def _parse_shift_history_month_button(text: str):
+    """
+    Парсит кнопку:
+    📅 Июнь 2026
+    """
+    m = re.match(r"^📅 (.+) (\d{4})$", text.strip())
+    if not m:
+        return None
+
+    month_label = m.group(1).strip()
+    year = int(m.group(2))
+
+    for month in range(1, 13):
+        names = set()
+        try:
+            names.add(str(MONTHS[month]))
+        except Exception:
+            pass
+        try:
+            names.add(str(MONTHS_NOM[month]))
+        except Exception:
+            pass
+
+        if month_label in names:
+            return year, month
+
+    return None
+
+
+def shift_history_period_kb(month=None, year=None):
+    """Клавиатура выбора периода истории смен."""
     now = now_local()
-    shifts = await get_shifts_for_month(user_id, now.year, now.month)
-    user = await get_user(user_id)
-    track_hours = user[5] if user and len(user) > 5 else 0
-    if not shifts:
-        return await message.answer("Нет внесённых смен за этот месяц.", reply_markup=salary_kb(track_hours or 0))
-    month_name = MONTHS_RU.get(now.month, str(now.month))
-    lines = ["📋 История смен за " + month_name + " " + str(now.year), ""]
-    total_hours = 0.0
+    month = month or now.month
+    year = year or now.year
+
+    last_day = calendar.monthrange(year, month)[1]
+    month_name = _month_label(month)
+
+    keyboard = [
+        [KeyboardButton(text=f"📋 1–15 {month_name} {year}")],
+        [KeyboardButton(text=f"📋 16–{last_day} {month_name} {year}")],
+        [KeyboardButton(text="⬅️ Назад к выбору месяца")],
+        [KeyboardButton(text="⬅️ Назад к зарплате")],
+        [KeyboardButton(text="🏠 Главное меню")],
+    ]
+    return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
+
+
+def _parse_shift_history_period_button(text: str):
+    """
+    Парсит кнопку:
+    📋 1–15 Июнь 2026
+    📋 16–30 Июнь 2026
+    """
+    m = re.match(r"^📋 (\d+)–(\d+) (.+) (\d{4})$", text.strip())
+    if not m:
+        return None
+
+    start_day = int(m.group(1))
+    end_day = int(m.group(2))
+    month_label = m.group(3).strip()
+    year = int(m.group(4))
+
+    month = None
+    for idx in range(1, 13):
+        names = set()
+        try:
+            names.add(str(MONTHS[idx]))
+        except Exception:
+            pass
+        try:
+            names.add(str(MONTHS_NOM[idx]))
+        except Exception:
+            pass
+
+        if month_label in names:
+            month = idx
+            break
+
+    if month is None:
+        return None
+
+    return year, month, start_day, end_day
+
+
+async def build_shift_history_text(user_id: int, year: int, month: int, start_day: int, end_day: int) -> str:
+    """Текст истории смен за выбранный период."""
+    shifts = await get_shifts_for_month(user_id, year, month)
+
+    period_shifts = []
     for row in shifts:
-        date, hours, shift_type, is_standard, note = row
-        shift_label = {"morning": "утро", "evening": "вечер"}.get(shift_type or "", "")
-        std_label = "" if is_standard else " (своё)"
-        total_hours += float(hours)
-        lines.append("📅 " + str(date) + " — " + fmt_hours(hours) + " ч " + shift_label + std_label)
+        date_value = row[0]
+        hours = row[1]
+        shift_type = row[2] if len(row) > 2 else None
+        is_standard = row[3] if len(row) > 3 else None
+        note = row[4] if len(row) > 4 else None
+
+        date_str = str(date_value)
+        try:
+            day = int(date_str.split("-")[-1])
+        except Exception:
+            continue
+
+        if start_day <= day <= end_day:
+            period_shifts.append((date_str, hours, shift_type, is_standard, note))
+
+    month_name = _month_label(month)
+    lines = [f"📋 История смен: {start_day}–{end_day} {month_name} {year}", ""]
+
+    if not period_shifts:
+        lines.append("За этот период смены не внесены.")
+        return "\\n".join(lines)
+
+    total_hours = 0
+
+    for date_str, hours, shift_type, is_standard, note in period_shifts:
+        try:
+            total_hours += float(hours)
+        except Exception:
+            pass
+
+        shift_label = ""
+        if shift_type == "morning":
+            shift_label = "утро"
+        elif shift_type == "evening":
+            shift_label = "вечер"
+        elif shift_type:
+            shift_label = str(shift_type)
+
+        std_label = ""
+        try:
+            if is_standard:
+                std_label = " стандартная"
+        except Exception:
+            pass
+
+        line = f"📅 {date_str} — {fmt_hours(hours)} ч"
+        if shift_label:
+            line += f" {shift_label}"
+        if std_label:
+            line += f" ({std_label.strip()})"
+        if note:
+            line += f" — {note}"
+
+        lines.append(line)
+
     lines.append("")
-    lines.append("Итого: " + str(total_hours) + " ч")
-    keyboard = []
-    for row in shifts:
-        date, hours, shift_type, is_standard, note = row
-        shift_label = {"morning": "утро", "evening": "вечер"}.get(shift_type or "", "")
-        keyboard.append([KeyboardButton(text="🗑 " + str(date) + " — " + str(hours) + " ч " + shift_label)])
-    keyboard.append([KeyboardButton(text="⬅️ Назад к зарплате")])
+    lines.append("Итого: " + fmt_hours(total_hours) + " ч")
+
+    return "\\n".join(lines)
+
+
+
+
+@dp.message(F.text == "📋 История смен")
+async def shift_history(message: Message):
+    months = get_shift_history_months()
+    if not months:
+        return await message.answer(
+            "📋 Нет доступных месяцев для истории смен. Добавь gid в SHEET_GID_MAP.",
+            reply_markup=salary_kb()
+        )
+
     await message.answer(
-        "\n".join(lines),
-        reply_markup=ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
+        "📅 Выбери месяц истории смен:",
+        reply_markup=shift_history_month_kb()
     )
 
+
+@dp.message(F.text.regexp(r"^📅 .+ \d{4}$"))
+async def shift_history_month_selected(message: Message):
+    parsed = _parse_shift_history_month_button(message.text)
+    if not parsed:
+        return
+
+    year, month = parsed
+    await message.answer(
+        "📋 Выбери период истории смен:",
+        reply_markup=shift_history_period_kb(month, year)
+    )
+
+
+@dp.message(F.text == "⬅️ Назад к выбору месяца")
+async def shift_history_back_to_month(message: Message):
+    await message.answer(
+        "📅 Выбери месяц истории смен:",
+        reply_markup=shift_history_month_kb()
+    )
+
+
+@dp.message(F.text.regexp(r"^📋 \d+–\d+ .+ \d{4}$"))
+async def shift_history_period_selected(message: Message):
+    parsed = _parse_shift_history_period_button(message.text)
+    if not parsed:
+        return
+
+    year, month, start_day, end_day = parsed
+    user_id = message.from_user.id
+
+    text = await build_shift_history_text(user_id, year, month, start_day, end_day)
+    await message.answer(text, reply_markup=salary_kb())
 
 
 @dp.message()
