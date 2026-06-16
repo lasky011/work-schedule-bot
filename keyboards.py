@@ -52,8 +52,8 @@ def get_available_periods():
         except Exception:
             continue
 
-        if period_end_date >= today:
-            result.append((year, month, start_day, end_day))
+        # Показываем все периоды, чтобы можно было смотреть старые совпадения
+        result.append((year, month, start_day, end_day))
 
     return result
 

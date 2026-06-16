@@ -321,6 +321,8 @@ async def refresh_departments(force: bool = False) -> None:
             logging.warning("refresh_departments: пустой результат, оставляю fallback")
             return
         emoji_map = {label.split(" ", 1)[1]: label for label in DEPARTMENTS_FALLBACK}
+        emoji_map["Менеджеры"] = "👔 Менеджер"
+        emoji_map["Кальянщик"] = "💨 Кальян"
         DEPARTMENTS = {
             emoji_map.get(role, role): names
             for role, names in parsed.items()
@@ -2031,14 +2033,7 @@ async def ask_compare_period(message: Message):
             reply_markup=compare_kb()
         )
 
-    if len(periods) == 1:
-        compare_period[user_id] = periods[0]
-        return await loading_answer(
-            message,
-            "⏳ Считаю совпадения...",
-            compare_multiple(user_id),
-            reply_markup=compare_kb()
-        )
+    # if len(periods) == 1: (убрано, чтобы всегда показывать выбор периода)
 
     await message.answer(
         "📅 Выбери период для сравнения:",
@@ -2099,7 +2094,7 @@ async def handle_compare_period_select(message: Message):
     )
 
 
-@dp.message(F.text == "🧹 Очистить выбранных")
+@dp.message(F.text == "🗑 Очистить список")
 async def clear_compare(message: Message):
     user_id = message.from_user.id
 
