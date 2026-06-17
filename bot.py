@@ -33,14 +33,7 @@ from constants import (
     SHEET_GID_MAP,
 )
 
-from keyboards import (
-    configure_keyboard_context,
-    get_available_periods,
-    _month_label_for_period,
-    compare_period_kb,
-    compare_kb,
-    week_kb,
-)
+
 
 from sheets_client import (
     cached_df,
