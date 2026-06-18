@@ -202,7 +202,6 @@ def init_db():
     conn.close()
 
 
-init_db()
 
 
 async def load_sheet(day, month=None, year=None):
@@ -3255,6 +3254,8 @@ async def global_error_handler(event) -> bool:
 
 
 async def main():
+    import asyncio
+    await asyncio.to_thread(init_db)
     if not BOT_TOKEN:
         print("Ошибка: BOT_TOKEN не найден в .env")
         return
