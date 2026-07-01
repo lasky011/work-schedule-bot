@@ -37,6 +37,7 @@ def test_imports():
     import departments_manager
     import fsm_context
     import routers
+    import services.schedule_service as schedule_service
     import services.salary_service as salary_service
 
     assert app_config.APP_TIMEZONE is not None
@@ -49,9 +50,13 @@ def test_imports():
     assert hasattr(keyboards, "compare_kb")
     assert hasattr(states, "NotificationStates")
     assert hasattr(routers, "salary_router")
+    assert hasattr(routers, "schedule_router")
+    assert hasattr(routers, "settings_router")
+    assert hasattr(routers, "admin_router")
     assert hasattr(routers, "colleagues_router")
     assert hasattr(fsm_context, "set_shift_entry")
     assert hasattr(fsm_context, "resolve_compare_role")
+    assert hasattr(schedule_service, "find_row")
     assert hasattr(salary_service, "build_salary_stats_text")
 
 
