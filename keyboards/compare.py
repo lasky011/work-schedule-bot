@@ -1,32 +1,18 @@
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
-from constants import SHEET_GID_MAP
-from app_config import now_local
 import calendar
 
+from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
 
-# Эти значения будут переданы из bot.py после импорта функций.
-MONTHS = None
-MONTHS_NOM = None
-RU_HOLIDAYS = None
-
-
-def configure_keyboard_context(months, months_nom, ru_holidays):
-    global MONTHS, MONTHS_NOM, RU_HOLIDAYS
-    MONTHS = months
-    MONTHS_NOM = months_nom
-    RU_HOLIDAYS = ru_holidays
-
+from app_config import now_local
+from constants import SHEET_GID_MAP
+from ui_utils import month_label
 
 
 def get_available_periods():
     """
     Актуальные периоды из SHEET_GID_MAP.
 
-    Период появляется, если для него есть gid.
-    Период исчезает, если дата конца периода уже прошла.
     Формат элемента: (year, month, start_day, end_day)
     """
-    today = now_local().date()
     result = []
 
     for key in sorted(SHEET_GID_MAP.keys()):
@@ -40,7 +26,7 @@ def get_available_periods():
             end_day = calendar.monthrange(year, month)[1]
 
         try:
-            period_end_date = now_local().replace(
+            now_local().replace(
                 year=year,
                 month=month,
                 day=end_day,
@@ -52,21 +38,9 @@ def get_available_periods():
         except Exception:
             continue
 
-        # Показываем все периоды, чтобы можно было смотреть старые совпадения
         result.append((year, month, start_day, end_day))
 
     return result
-
-
-def _month_label_for_period(month):
-    """Название месяца для кнопки периода."""
-    try:
-        return MONTHS_NOM[month]
-    except Exception:
-        try:
-            return MONTHS[month]
-        except Exception:
-            return str(month)
 
 
 def compare_period_kb():
@@ -74,13 +48,12 @@ def compare_period_kb():
     buttons = []
 
     for year, month, start_day, end_day in get_available_periods():
-        month_name = _month_label_for_period(month)
+        month_name = month_label(month)
         buttons.append([KeyboardButton(text=f"📅 {start_day}–{end_day} {month_name} {year}")])
 
     buttons.append([KeyboardButton(text="⬅️ Назад к сравнению")])
     buttons.append([KeyboardButton(text="🏠 Главное меню")])
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
-
 
 
 def compare_kb():
@@ -91,7 +64,7 @@ def compare_kb():
             [KeyboardButton(text="🗑 Очистить список")],
             [KeyboardButton(text="🏠 Главное меню")],
         ],
-        resize_keyboard=True
+        resize_keyboard=True,
     )
 
 
@@ -117,5 +90,3 @@ def week_kb(week_days):
     ])
     buttons.append([KeyboardButton(text="🏠 Главное меню")])
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
-
-

@@ -32,6 +32,12 @@ def test_imports():
     import schedule_utils
     import repositories.users_repo
     import repositories.shifts_repo
+    import states
+    import ui_utils
+    import departments_manager
+    import fsm_context
+    import routers
+    import services.salary_service as salary_service
 
     assert app_config.APP_TIMEZONE is not None
     assert isinstance(constants.SHEET_GID_MAP, dict)
@@ -41,6 +47,89 @@ def test_imports():
     assert hasattr(schedule_utils, "format_date")
     assert hasattr(schedule_utils, "detect_shift")
     assert hasattr(keyboards, "compare_kb")
+    assert hasattr(states, "NotificationStates")
+    assert hasattr(routers, "salary_router")
+    assert hasattr(routers, "colleagues_router")
+    assert hasattr(fsm_context, "set_shift_entry")
+    assert hasattr(fsm_context, "resolve_compare_role")
+    assert hasattr(salary_service, "build_salary_stats_text")
+
+
+def test_salary_service():
+    import services.salary_service as salary_service
+    import ui_utils
+
+    ui_utils.configure_ui_utils(
+        {5: "мая", 6: "июня"},
+        {5: "Май", 6: "Июнь"},
+    )
+
+    assert salary_service.get_role_key("🍸 Бармен") == "Бармен"
+    assert salary_service.get_role_key("Бармен") == "Бармен"
+    from datetime import datetime
+    assert salary_service.parse_salary_period_button(
+        "1-15 Май", datetime(2026, 6, 15),
+    ) == (2026, 5, 1, 15)
+
+
+def test_ui_utils():
+    import ui_utils
+
+    ui_utils.configure_ui_utils(
+        {
+            1: "января",
+            2: "февраля",
+            3: "марта",
+            4: "апреля",
+            5: "мая",
+            6: "июня",
+            7: "июля",
+            8: "августа",
+            9: "сентября",
+            10: "октября",
+            11: "ноября",
+            12: "декабря",
+        },
+        {
+            1: "Январь",
+            2: "Февраль",
+            3: "Март",
+            4: "Апрель",
+            5: "Май",
+            6: "Июнь",
+            7: "Июль",
+            8: "Август",
+            9: "Сентябрь",
+            10: "Октябрь",
+            11: "Ноябрь",
+            12: "Декабрь",
+        },
+    )
+
+    assert ui_utils.fmt_hours(12.0) == "12"
+    assert ui_utils.fmt_hours(11.5) == "11.5"
+    assert ui_utils.is_valid_time("09:30") is True
+    assert ui_utils.is_valid_time("9.30") is False
+    assert ui_utils.month_label(6) == "Июнь"
+
+
+def test_departments_manager():
+    import departments_manager
+
+    departments_manager.configure_departments_manager(
+        lambda name: str(name).strip(),
+        None,
+    )
+
+    assert "👔 Менеджер" in departments_manager.DEPARTMENTS
+    assert departments_manager.is_department_label("👔 Менеджер") is True
+    assert departments_manager.is_department_label("🏠 Главное меню") is False
+    assert departments_manager.role_display_label("Официант") == "🍽 Официант"
+    assert departments_manager.ordered_role_keys({"Бармен": [], "Официант": []})[0] == "Официант"
+    assert departments_manager.person_has_ambiguous_role("Дарья") is True
+    assert departments_manager.roles_for_person("Дарья") == ["Бармен", "Хостес"]
+    assert departments_manager.roles_for_person("Виталий") == ["Официант"]
+    assert departments_manager.normalize_role_name("Менеджер") == "Менеджеры"
 
 
 def test_schedule_utils():
@@ -128,8 +217,11 @@ def test_keyboards():
 def main():
     checks = [
         ("imports", test_imports),
+        ("salary_service", test_salary_service),
         ("schedule_utils", test_schedule_utils),
         ("keyboards", test_keyboards),
+        ("ui_utils", test_ui_utils),
+        ("departments_manager", test_departments_manager),
     ]
 
     for name, fn in checks:
