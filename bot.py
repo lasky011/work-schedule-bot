@@ -1,7 +1,6 @@
 """Точка входа Telegram-бота расписания."""
 
 import asyncio
-import calendar
 import logging
 import traceback
 from datetime import timedelta
@@ -10,13 +9,11 @@ from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 
 from app_config import (
-    APP_TIMEZONE,
     BOT_TOKEN,
-    SHIFT_END_NOTIFY,
     now_local,
     validate_required_env,
 )
-from constants import SHEET_GID_MAP
+from constants import SHIFT_END_NOTIFY
 from departments_manager import refresh_departments
 from departments_manager import configure_departments_manager
 from db import USE_POSTGRES, get_db_connection, init_pg_pool

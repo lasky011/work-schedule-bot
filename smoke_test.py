@@ -24,6 +24,14 @@ def check(name, fn):
         raise
 
 
+def test_bot_import():
+    import os
+
+    os.environ.setdefault("BOT_TOKEN", "smoke-test-token")
+    os.environ.setdefault("DATABASE_URL", "postgresql://smoke/test")
+    import bot  # noqa: F401
+
+
 def test_imports():
     import app_config
     import constants
@@ -221,6 +229,7 @@ def test_keyboards():
 
 def main():
     checks = [
+        ("bot_import", test_bot_import),
         ("imports", test_imports),
         ("salary_service", test_salary_service),
         ("schedule_utils", test_schedule_utils),
