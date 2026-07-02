@@ -103,6 +103,7 @@ def week_day_line(
     month_short: str,
     working: bool,
     shift_text: str | None,
+    is_today: bool = False,
 ) -> str:
     if working and shift_text:
         status = f"✅ {esc(shift_text)}"
@@ -110,7 +111,11 @@ def week_day_line(
         status = "✅ смена"
     else:
         status = "🏖 выходной"
-    return f"{esc(day_short)} {day_num} {esc(month_short)} · {status}"
+    marker = "📍 " if is_today else ""
+    line = f"{marker}{esc(day_short)} {day_num} {esc(month_short)} · {status}"
+    if is_today:
+        return f"<b>{line}</b>"
+    return line
 
 
 def week_list_block(header: str, lines: list[str]) -> str:
@@ -142,7 +147,7 @@ def salary_dashboard(
         act_h = fmt_hours(actual_hours)
         row_shift = f"{'Смены:':8}{schedule_shifts:<13}{actual_shifts}"
         row_hours = f"{'Часы:':8}{sched_h:<13}{act_h}"
-        table = f"{'':8}По графику    По факту\n{row_shift}\n{row_hours}"
+        table = f"{'':8}По графику    Внес. смены\n{row_shift}\n{row_hours}"
         if approx_salary is not None and actual_salary is not None:
             table += f"\n{'₽:':8}{money(approx_salary):<13}{money(actual_salary)}"
         lines.append(f"<pre>{table}</pre>")

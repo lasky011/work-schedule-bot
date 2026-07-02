@@ -182,31 +182,39 @@ async def _show_week_schedule(
         )
 
     day_lines = []
+    today = now_local().date()
     for dt in week_days:
         day_short = weekdays_short[dt.weekday()]
         month_short = ru_months_short[dt.month]
+        is_today = dt.date() == today
         try:
             row, _ = await schedule.find_row(name, dt.day, dt.month, dt.year, target_role=role)
             if row:
                 value = await schedule.get_day_value(row, dt.day, dt.month, dt.year)
                 if is_work_shift(value):
                     day_lines.append(
-                        mf.week_day_line(day_short, dt.day, month_short, True, detect_shift(value))
+                        mf.week_day_line(
+                            day_short, dt.day, month_short, True, detect_shift(value), is_today,
+                        )
                     )
                 else:
                     day_lines.append(
-                        mf.week_day_line(day_short, dt.day, month_short, False, None)
+                        mf.week_day_line(day_short, dt.day, month_short, False, None, is_today)
                     )
             else:
-                day_lines.append(
-                    f"{day_short} {dt.day} {month_short} · 📋 нет данных"
-                )
+                line = f"{day_short} {dt.day} {month_short} · 📋 нет данных"
+                if is_today:
+                    line = f"<b>📍 {line}</b>"
+                day_lines.append(line)
         except (ValueError, ConnectionError):
-            day_lines.append(f"{day_short} {dt.day} {month_short} · ⚠️ таблица недоступна")
+            line = f"{day_short} {dt.day} {month_short} · ⚠️ таблица недоступна"
+            if is_today:
+                line = f"<b>📍 {line}</b>"
+            day_lines.append(line)
 
     body = mf.week_list_block(header, day_lines)
     text = await with_viewing_context(state, body)
-    inline = week_inline_kb(week_days)
+    inline = week_inline_kb(week_days, today=today)
 
     elapsed = asyncio.get_event_loop().time() - t0
     if elapsed < MIN_LOADING_SEC:
