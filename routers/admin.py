@@ -1,5 +1,6 @@
 """Админ-команды и интерфейс admin-бота."""
 
+import asyncio
 import calendar
 import logging
 import re
@@ -13,13 +14,20 @@ from app_config import APP_TIMEZONE_NAME, is_admin, now_local
 from db import get_db_connection
 from keyboards.admin import (
     BTN_ADD_PERIOD,
+    BTN_BROADCAST,
     BTN_CACHE,
     BTN_CANCEL,
+    BTN_DASHBOARD,
     BTN_HELP,
     BTN_PERIODS,
     BTN_RELOAD_PERIODS,
     BTN_RELOAD_SHEETS,
     BTN_STATUS,
+    BTN_USERS,
+    CB_BROADCAST_CONFIRM,
+    CB_CANCEL,
+    CB_CONFIRM_DELETE,
+    CB_DELETE_PERIOD,
     CB_EDIT_PERIOD,
     CB_RELOAD_PERIODS,
     CB_RELOAD_SHEETS,
@@ -27,12 +35,15 @@ from keyboards.admin import (
     add_period_month_kb,
     admin_cancel_kb,
     admin_main_kb,
+    broadcast_confirm_kb,
+    confirm_delete_kb,
     periods_inline_kb,
 )
 from keyboards import get_available_periods
-from services.sheet_periods_service import SHEET_GID_MAP, add_period, reload_from_db
+from repositories.admin_repo import get_broadcast_recipients, get_dashboard_stats, list_users
+from services.sheet_periods_service import SHEET_GID_MAP, add_period, reload_from_db, remove_period
 from sheets_client import cached_df, cached_time, clear_sheet_cache
-from states import AdminAddPeriodStates, AdminEditPeriodStates
+from states import AdminAddPeriodStates, AdminBroadcastStates, AdminEditPeriodStates
 from ui_utils import month_label
 
 router = Router(name="admin")
@@ -389,6 +400,188 @@ async def admin_add_period_command(message: Message, state: FSMContext):
         return await message.answer("⚠️ gid должен содержать только цифры.")
 
     await _save_period(message, state, year, month, start_day, gid)
+
+
+@router.message(F.text == BTN_DASHBOARD)
+async def admin_dashboard(message: Message, state: FSMContext):
+    if _deny(message):
+        return
+    await state.clear()
+    stats = await get_dashboard_stats()
+    text = (
+        "📊 Дашборд\n\n"
+        f"👤 Пользователей: {stats['users_total']} "
+        f"(с именем: {stats['users_named']})\n"
+        f"🔔 Уведомления смен: {stats['notify_shift']}\n"
+        f"⏱ Уведомления часов: {stats['notify_hours']}\n"
+        f"📝 Учёт часов вкл: {stats['track_hours']}\n"
+        f"📋 Смен в БД: {stats['shifts_total']} "
+        f"(за {month_label(stats['month'])}: {stats['shifts_month']})\n"
+        f"📅 Периодов в кэше: {len(SHEET_GID_MAP)}\n"
+        f"🧠 Кэш листов: {len(cached_df)} gid"
+    )
+    await message.answer(text, reply_markup=admin_main_kb())
+
+
+@router.message(F.text == BTN_USERS)
+async def admin_users(message: Message, state: FSMContext):
+    if _deny(message):
+        return
+    await state.clear()
+    users = await list_users()
+    if not users:
+        return await message.answer("👥 Пользователей нет.", reply_markup=admin_main_kb())
+
+    lines = [f"👥 Пользователи ({len(users)})\n"]
+    for row in users:
+        user_id, name, role, notify, notify_time, notify_hours, track_hours = row
+        display_name = name or "—"
+        role_text = role or "—"
+        flags = []
+        if notify:
+            flags.append(f"🔔 {notify_time or '?'}")
+        if notify_hours:
+            flags.append("⏱ увед.")
+        if track_hours:
+            flags.append("📝 часы")
+        flag_text = ", ".join(flags) if flags else "без уведомлений"
+        lines.append(f"• {display_name} — {role_text} | {flag_text}")
+
+    text = "\n".join(lines)
+    if len(text) > 4000:
+        text = text[:3990] + "\n…"
+    await message.answer(text, reply_markup=admin_main_kb())
+
+
+@router.message(F.text == BTN_BROADCAST)
+async def admin_broadcast_start(message: Message, state: FSMContext):
+    if _deny(message):
+        return
+    await state.set_state(AdminBroadcastStates.waiting_text)
+    recipients = await get_broadcast_recipients(notify_shift=True)
+    await message.answer(
+        f"📢 Рассылка для {len(recipients)} чел. с уведомлениями смен.\n\n"
+        "Отправь текст сообщения одним сообщением:",
+        reply_markup=admin_cancel_kb(),
+    )
+
+
+@router.message(AdminBroadcastStates.waiting_text)
+async def admin_broadcast_preview(message: Message, state: FSMContext):
+    if _deny(message):
+        return
+    if message.text == BTN_CANCEL:
+        await state.clear()
+        return await message.answer("Отменено.", reply_markup=admin_main_kb())
+
+    text = (message.text or "").strip()
+    if not text:
+        return await message.answer("Текст не может быть пустым.", reply_markup=admin_cancel_kb())
+
+    recipients = await get_broadcast_recipients(notify_shift=True)
+    await state.update_data(broadcast_text=text)
+    await message.answer(
+        f"Получателей: {len(recipients)}\n\n"
+        f"Текст:\n{text}\n\n"
+        "Отправить?",
+        reply_markup=broadcast_confirm_kb(),
+    )
+
+
+@router.callback_query(F.data == CB_BROADCAST_CONFIRM)
+async def admin_broadcast_send(callback: CallbackQuery, state: FSMContext):
+    if await _deny_callback(callback):
+        return
+
+    data = await state.get_data()
+    text = data.get("broadcast_text")
+    if not text:
+        await state.clear()
+        return await callback.answer("Нет текста", show_alert=True)
+
+    recipients = await get_broadcast_recipients(notify_shift=True)
+    await callback.answer()
+    await callback.message.edit_reply_markup(reply_markup=None)
+
+    sent, failed = 0, 0
+    for user_id, name in recipients:
+        try:
+            await callback.bot.send_message(user_id, text)
+            sent += 1
+        except Exception as e:
+            logging.warning("broadcast failed user_id=%s name=%s: %s", user_id, name, e)
+            failed += 1
+        await asyncio.sleep(0.05)
+
+    await state.clear()
+    await callback.message.answer(
+        f"✅ Рассылка завершена.\nОтправлено: {sent}\nОшибок: {failed}",
+        reply_markup=admin_main_kb(),
+    )
+
+
+@router.callback_query(F.data == CB_CANCEL)
+async def admin_inline_cancel(callback: CallbackQuery, state: FSMContext):
+    if await _deny_callback(callback):
+        return
+    await state.clear()
+    await callback.answer("Отменено")
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await callback.message.answer("Отменено.", reply_markup=admin_main_kb())
+
+
+@router.callback_query(F.data.startswith(f"{CB_DELETE_PERIOD}:"))
+async def admin_delete_period_ask(callback: CallbackQuery, state: FSMContext):
+    if await _deny_callback(callback):
+        return
+
+    parts = callback.data.split(":")
+    if len(parts) != 4:
+        return await callback.answer("Некорректные данные", show_alert=True)
+
+    year, month, start_day = int(parts[1]), int(parts[2]), int(parts[3])
+    end_day = _period_end_day(year, month, start_day)
+    gid = SHEET_GID_MAP.get((year, month, start_day), "?")
+
+    await callback.answer()
+    await callback.message.answer(
+        f"🗑 Удалить период {start_day}–{end_day} {month_label(month)} {year}?\n"
+        f"gid={gid}\n\n"
+        "Prod и test перестанут видеть этот период после синхронизации.",
+        reply_markup=confirm_delete_kb(year, month, start_day),
+    )
+
+
+@router.callback_query(F.data.startswith(f"{CB_CONFIRM_DELETE}:"))
+async def admin_delete_period_confirm(callback: CallbackQuery, state: FSMContext):
+    if await _deny_callback(callback):
+        return
+
+    parts = callback.data.split(":")
+    if len(parts) != 4:
+        return await callback.answer("Некорректные данные", show_alert=True)
+
+    year, month, start_day = int(parts[1]), int(parts[2]), int(parts[3])
+    try:
+        count = await remove_period(year, month, start_day)
+    except Exception as e:
+        logging.exception("delete period error: %s", e)
+        return await callback.answer(f"Ошибка: {e}", show_alert=True)
+
+    end_day = _period_end_day(year, month, start_day)
+    await callback.answer("Удалено")
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await callback.message.answer(
+        f"✅ Период {start_day}–{end_day} {month_label(month)} {year} удалён.\n"
+        f"Осталось периодов: {count}",
+        reply_markup=admin_main_kb(),
+    )
 
 
 @router.callback_query(F.data.startswith(f"{CB_EDIT_PERIOD}:"))

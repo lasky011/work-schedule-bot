@@ -48,3 +48,7 @@ class AdminAddPeriodStates(StatesGroup):
 
 class AdminEditPeriodStates(StatesGroup):
     waiting_gid = State()
+
+
+class AdminBroadcastStates(StatesGroup):
+    waiting_text = State()

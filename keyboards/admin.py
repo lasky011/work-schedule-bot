@@ -7,6 +7,9 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardBu
 from app_config import now_local
 from ui_utils import month_label
 
+BTN_DASHBOARD = "📊 Дашборд"
+BTN_USERS = "👥 Пользователи"
+BTN_BROADCAST = "📢 Рассылка"
 BTN_PERIODS = "📅 Периоды"
 BTN_ADD_PERIOD = "➕ Добавить период"
 BTN_RELOAD_SHEETS = "🔄 Листы"
@@ -17,7 +20,11 @@ BTN_HELP = "📋 Справка"
 BTN_CANCEL = "❌ Отмена"
 
 CB_EDIT_PERIOD = "edit_period"
-CB_RELOAD_MENU = "reload_menu"
+CB_DELETE_PERIOD = "del_period"
+CB_CONFIRM_DELETE = "cfm_del"
+CB_BROADCAST_CONFIRM = "bc_ok"
+CB_BROADCAST_CANCEL = "bc_no"
+CB_CANCEL = "adm_cancel"
 CB_RELOAD_SHEETS = "reload_sheets"
 CB_RELOAD_PERIODS = "reload_periods"
 
@@ -26,6 +33,8 @@ def admin_main_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text=BTN_PERIODS), KeyboardButton(text=BTN_ADD_PERIOD)],
+            [KeyboardButton(text=BTN_DASHBOARD), KeyboardButton(text=BTN_USERS)],
+            [KeyboardButton(text=BTN_BROADCAST)],
             [KeyboardButton(text=BTN_RELOAD_SHEETS), KeyboardButton(text=BTN_RELOAD_PERIODS)],
             [KeyboardButton(text=BTN_STATUS), KeyboardButton(text=BTN_CACHE)],
             [KeyboardButton(text=BTN_HELP)],
@@ -84,14 +93,43 @@ def periods_inline_kb(period_keys: list[tuple[int, int, int]]) -> InlineKeyboard
             end_day = 15
         else:
             end_day = calendar.monthrange(year, month)[1]
-        label = f"✏️ {start_day}–{end_day} {month_label(month)} {year}"
+        label = f"{start_day}–{end_day} {month_label(month)} {year}"
         rows.append([
             InlineKeyboardButton(
-                text=label,
+                text=f"✏️ {label}",
                 callback_data=f"{CB_EDIT_PERIOD}:{year}:{month}:{start_day}",
-            )
+            ),
+            InlineKeyboardButton(
+                text="🗑",
+                callback_data=f"{CB_DELETE_PERIOD}:{year}:{month}:{start_day}",
+            ),
         ])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def confirm_delete_kb(year: int, month: int, start_day: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✅ Удалить",
+                    callback_data=f"{CB_CONFIRM_DELETE}:{year}:{month}:{start_day}",
+                ),
+                InlineKeyboardButton(text="❌ Отмена", callback_data=CB_CANCEL),
+            ],
+        ]
+    )
+
+
+def broadcast_confirm_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Отправить", callback_data=CB_BROADCAST_CONFIRM),
+                InlineKeyboardButton(text="❌ Отмена", callback_data=CB_CANCEL),
+            ],
+        ]
+    )
 
 
 def reload_inline_kb() -> InlineKeyboardMarkup:

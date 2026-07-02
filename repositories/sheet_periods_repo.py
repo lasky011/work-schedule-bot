@@ -57,3 +57,29 @@ async def fetch_all() -> list[tuple[int, int, int, str]]:
 
 async def upsert(year: int, month: int, start_day: int, gid: str) -> None:
     await asyncio.to_thread(_upsert_sync, year, month, start_day, gid)
+
+
+def _delete_sync(year: int, month: int, start_day: int) -> bool:
+    if not USE_POSTGRES:
+        raise RuntimeError("sheet_periods доступны только с PostgreSQL")
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "DELETE FROM sheet_periods WHERE year=%s AND month=%s AND start_day=%s",
+            (year, month, start_day),
+        )
+        deleted = cursor.rowcount > 0
+        conn.commit()
+        return deleted
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cursor.close()
+        conn.close()
+
+
+async def delete_period(year: int, month: int, start_day: int) -> bool:
+    return await asyncio.to_thread(_delete_sync, year, month, start_day)

@@ -4,7 +4,7 @@ import asyncio
 import logging
 
 from constants import SHEET_GID_MAP as FALLBACK_SHEET_GID_MAP
-from repositories.sheet_periods_repo import fetch_all, upsert
+from repositories.sheet_periods_repo import delete_period as repo_delete_period, fetch_all, upsert
 
 # Общий dict мутируется in-place — фильтры и импорты не ломаются.
 SHEET_GID_MAP: dict[tuple[int, int, int], str] = dict(FALLBACK_SHEET_GID_MAP)
@@ -72,4 +72,11 @@ async def sync_from_db() -> bool:
 
 async def add_period(year: int, month: int, start_day: int, gid: str) -> int:
     await upsert(year, month, start_day, gid)
+    return await reload_from_db()
+
+
+async def remove_period(year: int, month: int, start_day: int) -> int:
+    deleted = await repo_delete_period(year, month, start_day)
+    if not deleted:
+        raise ValueError("Период не найден в БД")
     return await reload_from_db()
