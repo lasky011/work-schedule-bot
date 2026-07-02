@@ -95,7 +95,6 @@ async def main():
     await asyncio.to_thread(load_from_db_sync)
 
     bot = Bot(token=token)
-    await load_full_sheet()
 
     sync_task = asyncio.create_task(periods_sync_loop())
     sync_task.add_done_callback(
