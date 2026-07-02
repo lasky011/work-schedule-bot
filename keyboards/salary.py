@@ -3,7 +3,7 @@ import calendar
 from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
 
 from app_config import now_local
-from constants import SHEET_GID_MAP
+from services.sheet_periods_service import SHEET_GID_MAP
 from keyboards import context
 from ui_utils import fmt_hours, month_label
 

@@ -8,9 +8,9 @@ from aiogram import F, Router
 from aiogram.types import Message
 
 from app_config import APP_TIMEZONE_NAME, is_admin, now_local
-from constants import SHEET_GID_MAP
 from db import get_db_connection
 from keyboards import get_available_periods
+from services.sheet_periods_service import SHEET_GID_MAP, add_period, reload_from_db
 from sheets_client import cached_df, cached_time, clear_sheet_cache
 from ui_utils import month_label
 
@@ -55,7 +55,7 @@ async def admin_health(message: Message):
         f"БД: {db_status}\n"
         f"Пользователей с уведомлениями смен: {notify_count}\n"
         f"Пользователей с уведомлениями часов: {notify_hours_count}\n"
-        f"Периодов в SHEET_GID_MAP: {len(SHEET_GID_MAP)}\n"
+        f"Периодов в БД: {len(SHEET_GID_MAP)}\n"
         f"Кэшированных gid: {len(cached_df)}\n"
     )
     await message.answer(text)
@@ -81,6 +81,64 @@ async def admin_periods(message: Message):
         )
 
     await message.answer("\n".join(lines))
+
+
+@router.message(F.text.regexp(r"^/add_period(\s|$)"))
+async def admin_add_period(message: Message):
+    user_id = message.from_user.id
+    if not is_admin(user_id):
+        return
+
+    parts = (message.text or "").split()
+    if len(parts) != 5:
+        return await message.answer(
+            "Формат: /add_period год месяц start_day gid\n"
+            "Пример: /add_period 2026 8 1 1234567890\n"
+            "start_day: 1 (1–15) или 16 (16–конец месяца)"
+        )
+
+    try:
+        year = int(parts[1])
+        month = int(parts[2])
+        start_day = int(parts[3])
+        gid = parts[4].strip()
+    except ValueError:
+        return await message.answer("⚠️ год, месяц и start_day должны быть числами.")
+
+    if not (1 <= month <= 12):
+        return await message.answer("⚠️ месяц должен быть от 1 до 12.")
+    if start_day not in (1, 16):
+        return await message.answer("⚠️ start_day только 1 или 16.")
+    if not gid.isdigit():
+        return await message.answer("⚠️ gid должен содержать только цифры.")
+
+    try:
+        count = await add_period(year, month, start_day, gid)
+    except Exception as e:
+        logging.exception("admin_add_period error: %s", e)
+        return await message.answer(f"⚠️ Не удалось сохранить период: {e}")
+
+    end_day = 15 if start_day == 1 else calendar.monthrange(year, month)[1]
+    await message.answer(
+        f"✅ Период {start_day}–{end_day} {month_label(month)} {year} сохранён.\n"
+        f"gid={gid}\n"
+        f"Всего периодов: {count}"
+    )
+
+
+@router.message(F.text == "/reload_periods")
+async def admin_reload_periods(message: Message):
+    user_id = message.from_user.id
+    if not is_admin(user_id):
+        return
+
+    try:
+        count = await reload_from_db()
+    except Exception as e:
+        logging.exception("admin_reload_periods error: %s", e)
+        return await message.answer(f"⚠️ Не удалось перезагрузить периоды: {e}")
+
+    await message.answer(f"✅ Периоды перезагружены из БД: {count}")
 
 
 @router.message(F.text == "/cache")
@@ -119,8 +177,11 @@ async def admin_reload_sheets(message: Message):
 
     clear_sheet_cache()
     try:
+        await reload_from_db()
         await _load_full_sheet()
-        await message.answer("✅ Кэш Google Sheets сброшен и таблицы загружены заново.")
+        await message.answer(
+            "✅ Периоды и кэш Google Sheets сброшены, данные загружены заново."
+        )
     except Exception as e:
         logging.exception("admin_reload_sheets error: %s", e)
         await message.answer(f"⚠️ Кэш сброшен, но загрузка таблиц завершилась ошибкой: {e}")

@@ -182,7 +182,7 @@ async def ask_compare_period(message: Message, state: FSMContext):
     periods = get_available_periods()
     if not periods:
         return await message.answer(
-            "❌ Нет доступных актуальных периодов. Добавь gid периода в SHEET_GID_MAP.",
+            "❌ Нет доступных актуальных периодов. Попроси админа добавить gid через /add_period.",
             reply_markup=compare_kb(),
         )
 

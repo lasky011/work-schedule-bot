@@ -45,12 +45,15 @@ def test_imports():
     import departments_manager
     import fsm_context
     import routers
+    import services.sheet_periods_service as sheet_periods_service
     import services.schedule_service as schedule_service
     import services.salary_service as salary_service
 
     assert app_config.APP_TIMEZONE is not None
     assert isinstance(constants.SHEET_GID_MAP, dict)
-    assert constants.SHEET_GID_MAP, "SHEET_GID_MAP пустой"
+    assert constants.SHEET_GID_MAP, "SHEET_GID_MAP fallback пустой"
+    assert isinstance(sheet_periods_service.SHEET_GID_MAP, dict)
+    assert sheet_periods_service.SHEET_GID_MAP, "SHEET_GID_MAP кэш пустой"
 
     # Проверяем, что модульные globals настроены хотя бы импортом.
     assert hasattr(schedule_utils, "format_date")

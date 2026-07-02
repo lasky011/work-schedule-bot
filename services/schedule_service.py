@@ -6,7 +6,7 @@ import re
 from datetime import date, datetime, timedelta
 
 from app_config import now_local
-from constants import SHEET_GID_MAP
+from services.sheet_periods_service import SHEET_GID_MAP
 from departments_manager import (
     DEPT_EMOJIS,
     SHEET_ROLES,

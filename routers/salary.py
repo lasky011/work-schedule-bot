@@ -363,7 +363,7 @@ async def shift_history(message: Message, state: FSMContext):
     months = get_shift_history_months()
     if not months:
         return await message.answer(
-            "📋 Нет доступных месяцев для истории смен. Добавь gid в SHEET_GID_MAP.",
+            "📋 Нет доступных месяцев для истории смен. Попроси админа добавить gid через /add_period.",
             reply_markup=salary_kb(),
         )
 

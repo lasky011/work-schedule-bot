@@ -1,6 +1,6 @@
 from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
 
-from constants import SHEET_GID_MAP
+from services.sheet_periods_service import SHEET_GID_MAP
 from departments_manager import DEPARTMENTS
 from keyboards import context
 from repositories.users_repo import get_user_name

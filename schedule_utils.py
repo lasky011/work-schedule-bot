@@ -4,6 +4,7 @@ from datetime import datetime
 
 from app_config import now_local
 from constants import SHIFT_HOURS
+from services.sheet_periods_service import SHEET_GID_MAP
 
 
 # Эти значения задаются из bot.py после импорта.

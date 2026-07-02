@@ -37,6 +37,7 @@ from schedule_utils import (
 from services import schedule_service as schedule
 from services.compare_service import configure_compare_service
 from services.salary_service import configure_salary_service
+from services.sheet_periods_service import load_from_db_sync
 from sheets_client import cache_locks, cached_df, cached_time, download_sheet
 from ui_utils import configure_ui_utils
 
@@ -146,7 +147,10 @@ async def load_sheet(day, month=None, year=None):
 
     gid = schedule.get_gid_for_day_month(day, month, year)
     if gid is None:
-        raise ValueError(f"Нет GID для {year}-{month}, день {day}. Добавь в SHEET_GID_MAP.")
+        raise ValueError(
+            f"Нет GID для {year}-{month}, день {day}. "
+            "Добавь период через /add_period (админ)."
+        )
 
     if gid not in cache_locks:
         cache_locks[gid] = asyncio.Lock()
@@ -376,6 +380,7 @@ async def global_error_handler(event) -> bool:
 async def main():
     await asyncio.to_thread(init_db)
     init_pg_pool()
+    await asyncio.to_thread(load_from_db_sync)
 
     if not BOT_TOKEN:
         print("Ошибка: BOT_TOKEN не найден в .env")
