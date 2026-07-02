@@ -52,3 +52,7 @@ class AdminEditPeriodStates(StatesGroup):
 
 class AdminBroadcastStates(StatesGroup):
     waiting_text = State()
+
+
+class AdminStatsStates(StatesGroup):
+    choosing_month = State()

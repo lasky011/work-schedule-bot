@@ -7,6 +7,8 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardBu
 from app_config import now_local
 from ui_utils import month_label
 
+BTN_STATS = "📈 Статистика"
+BTN_LOGS = "📜 Логи"
 BTN_DASHBOARD = "📊 Дашборд"
 BTN_USERS = "👥 Пользователи"
 BTN_BROADCAST = "📢 Рассылка"
@@ -34,6 +36,7 @@ def admin_main_kb() -> ReplyKeyboardMarkup:
         keyboard=[
             [KeyboardButton(text=BTN_PERIODS), KeyboardButton(text=BTN_ADD_PERIOD)],
             [KeyboardButton(text=BTN_DASHBOARD), KeyboardButton(text=BTN_USERS)],
+            [KeyboardButton(text=BTN_STATS), KeyboardButton(text=BTN_LOGS)],
             [KeyboardButton(text=BTN_BROADCAST)],
             [KeyboardButton(text=BTN_RELOAD_SHEETS), KeyboardButton(text=BTN_RELOAD_PERIODS)],
             [KeyboardButton(text=BTN_STATUS), KeyboardButton(text=BTN_CACHE)],
@@ -130,6 +133,35 @@ def broadcast_confirm_kb() -> InlineKeyboardMarkup:
             ],
         ]
     )
+
+
+def stats_month_kb() -> ReplyKeyboardMarkup:
+    rows = []
+    row: list[KeyboardButton] = []
+    for year, month in recent_month_choices():
+        row.append(KeyboardButton(text=f"📈 {month_label(month)} {year}"))
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append([KeyboardButton(text=BTN_CANCEL)])
+    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
+
+
+def recent_month_choices(count: int = 6) -> list[tuple[int, int]]:
+    now = now_local()
+    year, month = now.year, now.month
+    result: list[tuple[int, int]] = []
+    for offset in range(count):
+        mm = month - offset
+        yy = year
+        while mm <= 0:
+            mm += 12
+            yy -= 1
+        result.append((yy, mm))
+    result.reverse()
+    return result
 
 
 def reload_inline_kb() -> InlineKeyboardMarkup:

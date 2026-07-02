@@ -22,6 +22,8 @@ from keyboards.admin import (
     BTN_PERIODS,
     BTN_RELOAD_PERIODS,
     BTN_RELOAD_SHEETS,
+    BTN_STATS,
+    BTN_LOGS,
     BTN_STATUS,
     BTN_USERS,
     CB_BROADCAST_CONFIRM,
@@ -38,13 +40,15 @@ from keyboards.admin import (
     broadcast_confirm_kb,
     confirm_delete_kb,
     periods_inline_kb,
+    stats_month_kb,
 )
 from keyboards import get_available_periods
-from repositories.admin_repo import get_broadcast_recipients, get_dashboard_stats, list_users
+from repositories.admin_log_repo import list_recent_logs, record_action
+from repositories.admin_repo import get_broadcast_recipients, get_dashboard_stats, get_shift_stats, list_users
 from services.sheet_periods_service import SHEET_GID_MAP, add_period, reload_from_db, remove_period
 from sheets_client import cached_df, cached_time, clear_sheet_cache
-from states import AdminAddPeriodStates, AdminBroadcastStates, AdminEditPeriodStates
-from ui_utils import month_label
+from states import AdminAddPeriodStates, AdminBroadcastStates, AdminEditPeriodStates, AdminStatsStates
+from ui_utils import fmt_hours, month_label
 
 router = Router(name="admin")
 
@@ -53,6 +57,14 @@ _load_full_sheet: Callable[[], Awaitable] | None = None
 _MONTH_YEAR_RE = re.compile(r"^(.+?)\s+(\d{4})$")
 _HALF_FIRST_RE = re.compile(r"^1–15\s+")
 _HALF_SECOND_RE = re.compile(r"^16–\d+\s+")
+
+_ACTION_LABELS = {
+    "save_period": "💾 период",
+    "delete_period": "🗑 период",
+    "reload_periods": "🔄 периоды",
+    "reload_sheets": "🔄 листы",
+    "broadcast": "📢 рассылка",
+}
 
 
 def configure_admin_router(load_full_sheet):
@@ -150,6 +162,7 @@ async def _reload_periods(message: Message) -> None:
     except Exception as e:
         logging.exception("admin_reload_periods error: %s", e)
         return await message.answer(f"⚠️ Не удалось перезагрузить периоды: {e}")
+    await record_action(message.from_user.id, "reload_periods", f"count={count}")
     await message.answer(f"✅ Периоды перезагружены из БД: {count}", reply_markup=admin_main_kb())
 
 
@@ -161,6 +174,7 @@ async def _reload_sheets(message: Message) -> None:
     try:
         await reload_from_db()
         await _load_full_sheet()
+        await record_action(message.from_user.id, "reload_sheets", "cache cleared")
         await message.answer(
             "✅ Периоды и кэш Google Sheets сброшены, данные загружены заново.",
             reply_markup=admin_main_kb(),
@@ -182,6 +196,53 @@ def _parse_month_button(text: str) -> tuple[int, int] | None:
         if month_label(month) == month_name:
             return int(year_str), month
     return None
+
+
+def _parse_stats_month(text: str) -> tuple[int, int] | None:
+    cleaned = (text or "").replace("📈", "").strip()
+    return _parse_month_button(cleaned)
+
+
+def _format_logs_text(rows: list[tuple]) -> str:
+    if not rows:
+        return "📜 Логи пусты — действия админа будут записываться отсюда."
+
+    lines = [f"📜 Логи (последние {len(rows)})\n"]
+    for created_at, admin_id, action, details in rows:
+        ts = created_at
+        if hasattr(ts, "astimezone"):
+            ts = ts.astimezone(now_local().tzinfo)
+        time_label = ts.strftime("%d.%m %H:%M") if hasattr(ts, "strftime") else str(ts)
+        label = _ACTION_LABELS.get(action, action)
+        line = f"{time_label} | {label} | id {admin_id}"
+        if details:
+            line += f"\n  {details}"
+        lines.append(line)
+    text = "\n\n".join(lines)
+    if len(text) > 4000:
+        text = text[:3990] + "\n…"
+    return text
+
+
+async def _send_shift_stats(message: Message, year: int, month: int) -> None:
+    stats = await get_shift_stats(year, month)
+    lines = [
+        f"📈 Статистика смен — {month_label(month)} {year}\n",
+        f"Всего смен: {stats['total_shifts']}",
+        f"Сумма часов: {fmt_hours(stats['total_hours'])}",
+        f"Сотрудников: {stats['people_count']}\n",
+    ]
+    if not stats["rows"]:
+        lines.append("Нет внесённых смен за этот месяц.")
+    else:
+        for name, role, shift_count, hours in stats["rows"]:
+            lines.append(
+                f"• {name} ({role}): {shift_count} см., {fmt_hours(hours)} ч"
+            )
+    text = "\n".join(lines)
+    if len(text) > 4000:
+        text = text[:3990] + "\n…"
+    await message.answer(text, reply_markup=admin_main_kb())
 
 
 def _parse_half_button(text: str, year: int, month: int) -> int | None:
@@ -208,6 +269,11 @@ async def _save_period(
         return await message.answer(f"⚠️ Не удалось сохранить период: {e}", reply_markup=admin_main_kb())
 
     end_day = _period_end_day(year, month, start_day)
+    await record_action(
+        message.from_user.id,
+        "save_period",
+        f"{start_day}–{end_day} {month_label(month)} {year}, gid={gid}",
+    )
     await state.clear()
     await message.answer(
         f"✅ Период {start_day}–{end_day} {month_label(month)} {year} сохранён.\n"
@@ -229,7 +295,8 @@ async def admin_start(message: Message, state: FSMContext):
         "🛠 Admin-бот расписания\n\n"
         "Используй кнопки ниже или команды:\n"
         "/periods /health /cache\n"
-        "/add_period год месяц start_day gid",
+        "📈 Статистика — смены по месяцам\n"
+        "📜 Логи — последние действия админа",
         reply_markup=admin_main_kb(),
     )
 
@@ -258,6 +325,43 @@ async def admin_cache(message: Message, state: FSMContext):
         return
     await state.clear()
     await _send_cache(message)
+
+
+@router.message(F.text == BTN_STATS)
+async def admin_stats_start(message: Message, state: FSMContext):
+    if _deny(message):
+        return
+    await state.set_state(AdminStatsStates.choosing_month)
+    await message.answer(
+        "Выбери месяц для статистики смен:",
+        reply_markup=stats_month_kb(),
+    )
+
+
+@router.message(AdminStatsStates.choosing_month)
+async def admin_stats_month(message: Message, state: FSMContext):
+    if _deny(message):
+        return
+    if message.text == BTN_CANCEL:
+        await state.clear()
+        return await message.answer("Отменено.", reply_markup=admin_main_kb())
+
+    parsed = _parse_stats_month(message.text or "")
+    if not parsed:
+        return await message.answer("Выбери месяц кнопкой ниже.", reply_markup=stats_month_kb())
+
+    year, month = parsed
+    await state.clear()
+    await _send_shift_stats(message, year, month)
+
+
+@router.message(F.text == BTN_LOGS)
+async def admin_logs(message: Message, state: FSMContext):
+    if _deny(message):
+        return
+    await state.clear()
+    rows = await list_recent_logs()
+    await message.answer(_format_logs_text(rows), reply_markup=admin_main_kb())
 
 
 @router.message(F.text == BTN_RELOAD_PERIODS)
@@ -514,6 +618,11 @@ async def admin_broadcast_send(callback: CallbackQuery, state: FSMContext):
         await asyncio.sleep(0.05)
 
     await state.clear()
+    await record_action(
+        callback.from_user.id,
+        "broadcast",
+        f"sent={sent}, failed={failed}, len={len(text)}",
+    )
     await callback.message.answer(
         f"✅ Рассылка завершена.\nОтправлено: {sent}\nОшибок: {failed}",
         reply_markup=admin_main_kb(),
@@ -572,6 +681,11 @@ async def admin_delete_period_confirm(callback: CallbackQuery, state: FSMContext
         return await callback.answer(f"Ошибка: {e}", show_alert=True)
 
     end_day = _period_end_day(year, month, start_day)
+    await record_action(
+        callback.from_user.id,
+        "delete_period",
+        f"{start_day}–{end_day} {month_label(month)} {year}",
+    )
     await callback.answer("Удалено")
     try:
         await callback.message.edit_reply_markup(reply_markup=None)

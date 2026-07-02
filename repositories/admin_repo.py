@@ -1,4 +1,5 @@
 import asyncio
+import calendar
 from datetime import date
 
 from db import get_db_connection
@@ -97,3 +98,49 @@ async def list_users() -> list[tuple]:
 
 async def get_broadcast_recipients(notify_shift: bool = True) -> list[tuple[int, str | None]]:
     return await asyncio.to_thread(_broadcast_recipients_sync, notify_shift)
+
+
+def _shift_stats_sync(year: int, month: int) -> dict:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        _, last_day = calendar.monthrange(year, month)
+        month_start = date(year, month, 1)
+        month_end = date(year, month, last_day)
+
+        cursor.execute(
+            """
+            SELECT COALESCE(u.name, '—'), COALESCE(u.role, '—'),
+                   COUNT(s.id), COALESCE(SUM(s.hours), 0)
+            FROM shifts s
+            LEFT JOIN users u ON u.user_id = s.user_id
+            WHERE s.date >= %s AND s.date <= %s
+            GROUP BY u.user_id, u.name, u.role
+            ORDER BY SUM(s.hours) DESC, u.name
+            """,
+            (month_start, month_end),
+        )
+        rows = cursor.fetchall()
+
+        cursor.execute(
+            "SELECT COUNT(*), COALESCE(SUM(hours), 0) FROM shifts "
+            "WHERE date >= %s AND date <= %s",
+            (month_start, month_end),
+        )
+        total_shifts, total_hours = cursor.fetchone()
+
+        return {
+            "year": year,
+            "month": month,
+            "rows": rows,
+            "total_shifts": int(total_shifts or 0),
+            "total_hours": float(total_hours or 0),
+            "people_count": len(rows),
+        }
+    finally:
+        cursor.close()
+        conn.close()
+
+
+async def get_shift_stats(year: int, month: int) -> dict:
+    return await asyncio.to_thread(_shift_stats_sync, year, month)
