@@ -69,19 +69,18 @@ def _list_users_sync() -> list[tuple]:
         conn.close()
 
 
-def _broadcast_recipients_sync(notify_shift: bool = True) -> list[tuple[int, str | None]]:
+def _broadcast_recipients_sync(audience: str = "notify") -> list[tuple[int, str | None]]:
     conn = get_db_connection()
     cursor = conn.cursor()
+    queries = {
+        "all": "SELECT user_id, name FROM users WHERE name IS NOT NULL",
+        "notify": "SELECT user_id, name FROM users WHERE notify=1 AND name IS NOT NULL",
+        "track": "SELECT user_id, name FROM users WHERE track_hours=1 AND name IS NOT NULL",
+        "hours": "SELECT user_id, name FROM users WHERE notify_hours=1 AND name IS NOT NULL",
+    }
+    sql = queries.get(audience, queries["notify"])
     try:
-        if notify_shift:
-            cursor.execute(
-                "SELECT user_id, name FROM users "
-                "WHERE notify=1 AND name IS NOT NULL"
-            )
-        else:
-            cursor.execute(
-                "SELECT user_id, name FROM users WHERE name IS NOT NULL"
-            )
+        cursor.execute(sql)
         return [(row[0], row[1]) for row in cursor.fetchall()]
     finally:
         cursor.close()
@@ -96,8 +95,8 @@ async def list_users() -> list[tuple]:
     return await asyncio.to_thread(_list_users_sync)
 
 
-async def get_broadcast_recipients(notify_shift: bool = True) -> list[tuple[int, str | None]]:
-    return await asyncio.to_thread(_broadcast_recipients_sync, notify_shift)
+async def get_broadcast_recipients(audience: str = "notify") -> list[tuple[int, str | None]]:
+    return await asyncio.to_thread(_broadcast_recipients_sync, audience)
 
 
 def _shift_stats_sync(year: int, month: int) -> dict:

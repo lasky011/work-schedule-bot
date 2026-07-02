@@ -29,6 +29,19 @@ CB_BROADCAST_CANCEL = "bc_no"
 CB_CANCEL = "adm_cancel"
 CB_RELOAD_SHEETS = "reload_sheets"
 CB_RELOAD_PERIODS = "reload_periods"
+CB_BC_AUDIENCE = "bc_aud:"
+
+BC_AUD_ALL = "all"
+BC_AUD_NOTIFY = "notify"
+BC_AUD_TRACK = "track"
+BC_AUD_HOURS = "hours"
+
+BC_AUDIENCE_LABELS = {
+    BC_AUD_ALL: "👥 Все сотрудники",
+    BC_AUD_NOTIFY: "🔔 С уведомлениями смен",
+    BC_AUD_TRACK: "⏱ С учётом часов",
+    BC_AUD_HOURS: "⏱ Напоминания о часах",
+}
 
 
 def admin_main_kb() -> ReplyKeyboardMarkup:
@@ -131,6 +144,20 @@ def broadcast_confirm_kb() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="✅ Отправить", callback_data=CB_BROADCAST_CONFIRM),
                 InlineKeyboardButton(text="❌ Отмена", callback_data=CB_CANCEL),
             ],
+        ]
+    )
+
+
+def broadcast_audience_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=BC_AUDIENCE_LABELS[BC_AUD_NOTIFY], callback_data=f"{CB_BC_AUDIENCE}{BC_AUD_NOTIFY}")],
+            [InlineKeyboardButton(text=BC_AUDIENCE_LABELS[BC_AUD_ALL], callback_data=f"{CB_BC_AUDIENCE}{BC_AUD_ALL}")],
+            [
+                InlineKeyboardButton(text=BC_AUDIENCE_LABELS[BC_AUD_TRACK], callback_data=f"{CB_BC_AUDIENCE}{BC_AUD_TRACK}"),
+                InlineKeyboardButton(text=BC_AUDIENCE_LABELS[BC_AUD_HOURS], callback_data=f"{CB_BC_AUDIENCE}{BC_AUD_HOURS}"),
+            ],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data=CB_CANCEL)],
         ]
     )
 

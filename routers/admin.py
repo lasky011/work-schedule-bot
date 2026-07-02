@@ -27,7 +27,9 @@ from keyboards.admin import (
     BTN_STATUS,
     BTN_USERS,
     CB_BROADCAST_CONFIRM,
+    CB_BC_AUDIENCE,
     CB_CANCEL,
+    BC_AUDIENCE_LABELS,
     CB_CONFIRM_DELETE,
     CB_DELETE_PERIOD,
     CB_EDIT_PERIOD,
@@ -37,6 +39,7 @@ from keyboards.admin import (
     add_period_month_kb,
     admin_cancel_kb,
     admin_main_kb,
+    broadcast_audience_kb,
     broadcast_confirm_kb,
     confirm_delete_kb,
     periods_inline_kb,
@@ -561,11 +564,34 @@ async def admin_users(message: Message, state: FSMContext):
 async def admin_broadcast_start(message: Message, state: FSMContext):
     if _deny(message):
         return
-    await state.set_state(AdminBroadcastStates.waiting_text)
-    recipients = await get_broadcast_recipients(notify_shift=True)
+    await state.set_state(AdminBroadcastStates.choosing_audience)
     await message.answer(
-        f"📢 Рассылка для {len(recipients)} чел. с уведомлениями смен.\n\n"
+        "📢 Кому отправить рассылку?",
+        reply_markup=broadcast_audience_kb(),
+    )
+
+
+@router.callback_query(F.data.startswith(CB_BC_AUDIENCE))
+async def admin_broadcast_audience(callback: CallbackQuery, state: FSMContext):
+    if await _deny_callback(callback):
+        return
+
+    audience = callback.data[len(CB_BC_AUDIENCE):]
+    if audience not in BC_AUDIENCE_LABELS:
+        return await callback.answer("Неизвестная аудитория", show_alert=True)
+
+    recipients = await get_broadcast_recipients(audience)
+    await state.update_data(broadcast_audience=audience)
+    await state.set_state(AdminBroadcastStates.waiting_text)
+    await callback.answer()
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await callback.message.answer(
+        f"Аудитория: <b>{BC_AUDIENCE_LABELS[audience]}</b> — {len(recipients)} чел.\n\n"
         "Отправь текст сообщения одним сообщением:",
+        parse_mode="HTML",
         reply_markup=admin_cancel_kb(),
     )
 
@@ -582,9 +608,13 @@ async def admin_broadcast_preview(message: Message, state: FSMContext):
     if not text:
         return await message.answer("Текст не может быть пустым.", reply_markup=admin_cancel_kb())
 
-    recipients = await get_broadcast_recipients(notify_shift=True)
+    data = await state.get_data()
+    audience = data.get("broadcast_audience", "notify")
+    recipients = await get_broadcast_recipients(audience)
     await state.update_data(broadcast_text=text)
+    aud_label = BC_AUDIENCE_LABELS.get(audience, audience)
     await message.answer(
+        f"Аудитория: {aud_label}\n"
         f"Получателей: {len(recipients)}\n\n"
         f"Текст:\n{text}\n\n"
         "Отправить?",
@@ -603,7 +633,8 @@ async def admin_broadcast_send(callback: CallbackQuery, state: FSMContext):
         await state.clear()
         return await callback.answer("Нет текста", show_alert=True)
 
-    recipients = await get_broadcast_recipients(notify_shift=True)
+    audience = data.get("broadcast_audience", "notify")
+    recipients = await get_broadcast_recipients(audience)
     await callback.answer()
     await callback.message.edit_reply_markup(reply_markup=None)
 
@@ -621,7 +652,7 @@ async def admin_broadcast_send(callback: CallbackQuery, state: FSMContext):
     await record_action(
         callback.from_user.id,
         "broadcast",
-        f"sent={sent}, failed={failed}, len={len(text)}",
+        f"audience={audience}, sent={sent}, failed={failed}, len={len(text)}",
     )
     await callback.message.answer(
         f"✅ Рассылка завершена.\nОтправлено: {sent}\nОшибок: {failed}",

@@ -2,7 +2,7 @@
 
 import calendar
 import re
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
@@ -41,9 +41,34 @@ from services import salary_service
 from states import ShiftEntryStates, ShiftHistoryStates
 from message_format import card
 from ui_calendar import shift_calendar
+from keyboards.inline_salary import CB_SHIFT_ENTRY, shift_entry_kb
 from ui_utils import answer_html, fmt_hours, with_loading
 
 router = Router(name="salary")
+
+
+async def _begin_shift_entry(user_id: int, state: FSMContext, dt, reply_to) -> bool:
+    user = await get_user(user_id)
+    if not user or not user[1]:
+        await reply_to.answer("Сначала выбери своё имя.", reply_markup=dep_kb())
+        return False
+
+    name = user[1]
+    role = user[4] if len(user) > 4 else None
+    date_str = dt.strftime("%Y-%m-%d")
+    existing = await get_shift_for_date(user_id, date_str)
+    shift_type, standard_hours = await salary_service.lookup_shift_for_date(name, role, dt)
+
+    await set_shift_entry(state, {
+        "date": date_str,
+        "shift_type": shift_type,
+        "standard_hours": standard_hours,
+    })
+    await reply_to.answer(
+        salary_service.format_shift_entry_prompt(dt, shift_type, standard_hours, existing),
+        reply_markup=shift_hours_kb(standard_hours),
+    )
+    return True
 
 
 @router.message(F.text == "💰 Зарплата")
@@ -254,57 +279,28 @@ async def process_calendar(callback: CallbackQuery, callback_data: SimpleCalenda
         return
 
     await callback.answer()
-    user_id = callback.from_user.id
-    user = await get_user(user_id)
+    await _begin_shift_entry(callback.from_user.id, state, dt, callback.message)
 
-    if not user or not user[1]:
-        await callback.message.answer("Сначала выбери своё имя.", reply_markup=dep_kb())
-        return
 
-    name = user[1]
-    role = user[4] if len(user) > 4 else None
-    date_str = dt.strftime("%Y-%m-%d")
-    existing = await get_shift_for_date(user_id, date_str)
-    shift_type, standard_hours = await salary_service.lookup_shift_for_date(name, role, dt)
+@router.callback_query(F.data.startswith(CB_SHIFT_ENTRY))
+async def shift_entry_from_notify(callback: CallbackQuery, state: FSMContext):
+    date_str = callback.data[len(CB_SHIFT_ENTRY):]
+    try:
+        dt = datetime.strptime(date_str, "%Y-%m-%d")
+        dt = dt.replace(tzinfo=now_local().tzinfo)
+    except ValueError:
+        return await callback.answer("Некорректная дата", show_alert=True)
 
-    await set_shift_entry(state, {
-        "date": date_str,
-        "shift_type": shift_type,
-        "standard_hours": standard_hours,
-    })
-
-    await callback.message.answer(
-        salary_service.format_shift_entry_prompt(dt, shift_type, standard_hours, existing),
-        reply_markup=shift_hours_kb(standard_hours),
-    )
+    await callback.answer()
+    await _begin_shift_entry(callback.from_user.id, state, dt, callback.message)
 
 
 @router.message(F.text.in_({"📥 Сегодня", "📥 Вчера"}))
 @with_loading("⏳ Проверяю график...")
 async def shift_date_selected(message: Message, state: FSMContext):
-    user_id = message.from_user.id
-    user = await get_user(user_id)
-    if not user or not user[1]:
-        return await message.answer("Сначала выбери своё имя.", reply_markup=dep_kb())
-
-    name = user[1]
-    role = user[4] if len(user) > 4 else None
     now = now_local()
     dt = now if message.text == "📥 Сегодня" else now - timedelta(days=1)
-    date_str = dt.strftime("%Y-%m-%d")
-    existing = await get_shift_for_date(user_id, date_str)
-    shift_type, standard_hours = await salary_service.lookup_shift_for_date(name, role, dt)
-
-    await set_shift_entry(state, {
-        "date": date_str,
-        "shift_type": shift_type,
-        "standard_hours": standard_hours,
-    })
-
-    await message.answer(
-        salary_service.format_shift_entry_prompt(dt, shift_type, standard_hours, existing),
-        reply_markup=shift_hours_kb(standard_hours),
-    )
+    await _begin_shift_entry(message.from_user.id, state, dt, message)
 
 
 @router.message(ShiftEntryStates.choosing_hours, F.text.startswith("✅ Стандартная ("))

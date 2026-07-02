@@ -51,6 +51,7 @@ class AdminEditPeriodStates(StatesGroup):
 
 
 class AdminBroadcastStates(StatesGroup):
+    choosing_audience = State()
     waiting_text = State()
 
 

@@ -19,6 +19,7 @@ from departments_manager import refresh_departments
 from departments_manager import configure_departments_manager
 from db import USE_POSTGRES, get_db_connection, init_pg_pool
 from keyboards import configure_keyboard_context
+from keyboards.inline_salary import shift_entry_kb
 from repositories.shifts_repo import get_shift_for_date
 from repositories.users_repo import get_notify_users
 from routers.colleagues import router as colleagues_router
@@ -229,7 +230,9 @@ async def hours_notification_loop(bot) -> None:
                             line += f", стандартная смена — {std_hours} ч"
                         lines.append(line)
 
-                    await bot.send_message(user_id, "\n".join(lines))
+                    await bot.send_message(
+                        user_id, "\n".join(lines), reply_markup=shift_entry_kb(shift_key),
+                    )
                     sent[key] = True
 
                 except Exception as e:
