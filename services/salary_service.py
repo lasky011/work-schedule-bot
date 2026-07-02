@@ -9,6 +9,7 @@ from constants import RATES
 from repositories.shifts_repo import get_shifts_for_month
 from schedule_utils import detect_shift_type, get_standard_hours, is_work_shift
 from ui_utils import fmt_hours, month_label
+import message_format as mf
 import ui_utils
 
 _find_row: Callable[..., Awaitable] | None = None
@@ -85,7 +86,6 @@ async def build_salary_stats_text(
     track_hours = user[5] if len(user) > 5 else 0
 
     period_name = str(period_start) + "-" + str(period_end)
-    month_name = month_label(month) + " " + str(year) + " (" + period_name + ")"
 
     schedule_shifts = 0
     schedule_hours = 0.0
@@ -107,35 +107,33 @@ async def build_salary_stats_text(
             pass
 
     rate = RATES.get(get_role_key(role) or "", 0)
-    lines = ["📊 " + month_name, ""]
+    period_title = f"{month_label(month)} {year} ({period_start}–{period_end})"
 
-    if no_data:
-        lines.append("📭 График за этот период ещё не составлен.")
-        lines.append("Примерная зарплата недоступна.")
-    else:
-        lines.append("По графику смен: " + str(schedule_shifts))
-        lines.append("Часов по графику (прим.): " + str(schedule_hours))
-        if rate:
-            approx_salary = round(schedule_hours * rate)
-            lines.append("")
-            lines.append("💰 Примерная зарплата: ~" + f"{approx_salary:,}".replace(",", " ") + " ₽")
-            lines.append("   (" + str(rate) + " ₽/ч × " + str(schedule_hours) + " ч)")
-        else:
-            lines.append("")
-            lines.append("⚠️ Ставка для твоей должности не указана")
-
+    actual_shifts = 0
+    actual_hours = 0.0
+    actual_salary = None
     if track_hours:
         shifts = await get_shifts_for_month(user_id, year, month)
         shifts = [r for r in shifts if period_start <= int(str(r[0]).split("-")[2]) <= period_end]
+        actual_shifts = len(shifts)
         actual_hours = sum(float(r[1]) for r in shifts)
-        lines.append("")
-        lines.append("✅ Внесено смен: " + str(len(shifts)))
-        lines.append("⏱ Часов внесено: " + fmt_hours(actual_hours))
         if rate and actual_hours > 0:
             actual_salary = round(actual_hours * rate)
-            lines.append("💰 Зарплата по факту: ~" + f"{actual_salary:,}".replace(",", " ") + " ₽")
 
-    return "\n".join(lines)
+    approx_salary = round(schedule_hours * rate) if rate and not no_data else None
+
+    return mf.salary_dashboard(
+        period_title,
+        schedule_shifts,
+        schedule_hours,
+        approx_salary,
+        rate or None,
+        bool(track_hours),
+        actual_shifts,
+        actual_hours,
+        actual_salary,
+        no_data,
+    )
 
 
 async def get_shift_history_period_shifts(

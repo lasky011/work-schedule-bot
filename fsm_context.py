@@ -13,6 +13,7 @@ from departments_manager import (
     roles_for_person,
 )
 from keyboards import dep_kb
+from message_format import context_banner, onboarding_step, prepend_context
 from repositories.users_repo import get_user, get_user_name
 from states import (
     COMPARE_PERIOD,
@@ -183,19 +184,40 @@ async def selected_compare_text(state: FSMContext) -> str:
     selected = sorted(await get_compare_selected(state))
 
     if not selected:
-        return "Выбранные сотрудники: пока никого."
+        return "<b>Выбранные сотрудники:</b>\nпока никого."
 
     roles = await get_compare_selected_roles(state)
-    lines = []
+    lines = ["<b>Выбранные сотрудники:</b>"]
     for name in selected:
         role = roles.get(name)
         if not role and person_has_ambiguous_role(name):
             role = await resolve_compare_role(name, state, None)
         if role:
-            lines.append(f"• {name} ({role_display_label(role)})")
+            lines.append(f"  • {name} ({role_display_label(role)})")
         else:
-            lines.append(f"• {name}")
-    return "Выбранные сотрудники:\n" + "\n".join(lines)
+            lines.append(f"  • {name}")
+    return "\n".join(lines)
+
+
+async def viewing_context_line(state: FSMContext) -> str | None:
+    colleague = await get_viewing_colleague(state)
+    if not colleague:
+        return None
+    role = await get_viewing_colleague_role(state)
+    role_label = role_display_label(role) if role else None
+    return context_banner(colleague, role_label)
+
+
+async def with_viewing_context(state: FSMContext, body: str) -> str:
+    return prepend_context(await viewing_context_line(state), body)
+
+
+async def prompt_choose_own_name(message: Message, state: FSMContext):
+    await state.set_state(NameFlowStates.choosing_own_department)
+    from ui_utils import answer_html
+
+    text = onboarding_step(1, 3, "Сначала выбери своё имя.\n\n<b>Шаг 1:</b> подразделение")
+    return await answer_html(message, text, reply_markup=dep_kb())
 
 
 async def active_name(user_id: int, state: FSMContext):
@@ -210,11 +232,6 @@ async def active_role(user_id: int, state: FSMContext):
         return await get_viewing_colleague_role(state)
     user = await get_user(user_id)
     return user[4] if user else None
-
-
-async def prompt_choose_own_name(message: Message, state: FSMContext):
-    await state.set_state(NameFlowStates.choosing_own_department)
-    return await message.answer("Сначала выбери своё имя.", reply_markup=dep_kb())
 
 
 async def clear_notification_state(state: FSMContext) -> None:

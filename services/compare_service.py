@@ -15,6 +15,7 @@ from fsm_context import (
 from repositories.users_repo import get_user
 from schedule_utils import current_period, detect_shift, format_date, is_work_shift
 from ui_utils import month_label
+import message_format as mf
 
 _find_row: Callable[..., Awaitable] | None = None
 _get_day_value: Callable[..., Awaitable] | None = None
@@ -113,16 +114,16 @@ async def compare_multiple(user_id: int, state: FSMContext) -> str:
             common_off.append(format_date(day, month, year))
 
     month_name = month_label(month)
+    period_label = f"{period_start}–{period_end} {month_name} {year}"
 
-    text = "🤝 Совпадения по группе\n\n"
-    text += "Участники:\n"
+    participants = []
     for person in all_people:
         person_role = await resolve_compare_role(person, state, user)
-        if person_role:
-            text += f"• {person} ({role_display_label(person_role)})\n"
-        else:
-            text += f"• {person}\n"
-    text += f"\n\nПериод: {period_start}–{period_end} {month_name} {year}\n\n"
-    text += "✅ Все работают:\n" + ("\n".join(common_work) if common_work else "нет")
-    text += "\n\n🏖 Все отдыхают:\n" + ("\n".join(common_off) if common_off else "нет")
-    return text
+        role_label = role_display_label(person_role) if person_role else None
+        participants.append((person, role_label))
+
+    work_lines = []
+    for item in common_work:
+        work_lines.append(item)
+
+    return mf.compare_result(participants, period_label, work_lines, common_off)

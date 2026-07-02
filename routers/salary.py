@@ -39,7 +39,8 @@ from repositories.shifts_repo import delete_shift, get_shift_for_date, get_shift
 from repositories.users_repo import get_user, save_user
 from services import salary_service
 from states import ShiftEntryStates, ShiftHistoryStates
-from ui_utils import fmt_hours, with_loading
+from message_format import card
+from ui_utils import answer_html, fmt_hours, with_loading
 
 router = Router(name="salary")
 
@@ -54,7 +55,11 @@ async def salary_menu(message: Message):
     track_hours = user[5] if user and len(user) > 5 else 0
     role = user[4] if user and len(user) > 4 else None
     role_line = f"\n{DEPT_EMOJIS.get(role, role)}" if role else ""
-    await message.answer(f"💰 Зарплата\n{user[1]}{role_line}", reply_markup=salary_kb(track_hours or 0))
+    await answer_html(
+        message,
+        f"💰 <b>Зарплата</b>\n<b>{user[1]}</b>{role_line}",
+        reply_markup=salary_kb(track_hours or 0),
+    )
 
 
 @router.message(F.text == "📊 Примерная зарплата")
@@ -63,7 +68,7 @@ async def salary_stats_choose_period(message: Message):
     user = await get_user(message.from_user.id)
     if not user or not user[1]:
         return await message.answer("Сначала выбери своё имя.", reply_markup=dep_kb())
-    await message.answer("Выбери период:", reply_markup=salary_period_kb())
+    await answer_html(message, "📊 <b>Выбери период</b>", reply_markup=salary_period_kb())
 
 
 @router.message(F.text == "📅 Текущий период")
@@ -81,7 +86,7 @@ async def salary_current_period(message: Message):
     text = await salary_service.build_salary_stats_text(
         message.from_user.id, user, year, month, period_start, period_end,
     )
-    await message.answer(text, reply_markup=salary_kb(track_hours or 0))
+    await answer_html(message, text, reply_markup=salary_kb(track_hours or 0))
 
 
 @router.message(F.text.regexp(r"^(1-15|16-\d+) [А-Яа-я]+$"))
@@ -96,7 +101,7 @@ async def salary_period_selected(message: Message):
     text = await salary_service.build_salary_stats_text(
         message.from_user.id, user, year, month_num, period_start, period_end,
     )
-    await message.answer(text, reply_markup=salary_kb(track_hours or 0))
+    await answer_html(message, text, reply_markup=salary_kb(track_hours or 0))
 
 
 @router.message(F.text == "⚙️ Настройки учёта")
@@ -225,8 +230,13 @@ async def back_to_salary(message: Message, state: FSMContext):
 @router.message(F.text == "⏱ Внести смену")
 async def enter_shift_start(message: Message):
     now = now_local()
+    await answer_html(
+        message,
+        card("⏱ Внести смену", "Выбери дату в календаре или кнопкой ниже 👇"),
+        reply_markup=shift_date_kb(),
+    )
     await message.answer(
-        "Выбери дату смены:",
+        "📅 Календарь:",
         reply_markup=await SimpleCalendar(
             cancel_btn="Отмена", today_btn="Сегодня",
         ).start_calendar(year=now.year, month=now.month),

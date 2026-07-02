@@ -33,9 +33,11 @@ from keyboards import (
     colleague_names_kb,
 )
 from repositories.users_repo import get_user_name
+from departments_manager import role_display_label
 from services import compare_service
 from states import CompareStates, NameFlowStates
-from ui_utils import loading_answer, month_label, with_loading
+from message_format import context_banner
+from ui_utils import answer_html, loading_answer, month_label, with_loading
 
 router = Router(name="colleagues")
 
@@ -48,8 +50,9 @@ async def back_to_self(message: Message, state: FSMContext):
     await reset_compare_mode(state)
 
     name = await get_user_name(user_id) or "не выбрано"
-    await message.answer(
-        f"👤 Твой график — {name}",
+    await answer_html(
+        message,
+        f"👤 <b>Твой график</b> — {name}",
         reply_markup=await main_kb_async(user_id),
     )
 
@@ -67,18 +70,19 @@ async def back_to_colleague(message: Message, state: FSMContext):
     if not colleague_name:
         return await message.answer("Коллега не выбран.", reply_markup=await main_kb_async(user_id))
 
-    await message.answer(
-        f"👀 Ты смотришь график коллеги: {colleague_name}",
-        reply_markup=colleague_kb(),
-    )
+    role = await get_viewing_colleague_role(state)
+    role_label = role_display_label(role) if role else None
+    banner = context_banner(colleague_name, role_label)
+    await answer_html(message, banner, reply_markup=colleague_kb())
 
 
 @router.message(F.text == "⬅️ Назад к сравнению")
 async def back_to_compare(message: Message, state: FSMContext):
     user_id = message.from_user.id
     await state.set_state(CompareStates.selecting_people)
-    await message.answer(
-        "🤝 Сравнение графиков\n\n" + await selected_compare_text(state),
+    await answer_html(
+        message,
+        "🤝 <b>Сравнение графиков</b>\n\n" + await selected_compare_text(state),
         reply_markup=compare_kb(),
     )
 
@@ -88,7 +92,7 @@ async def choose_colleague_department(message: Message, state: FSMContext):
     await clear_notification_state(state)
     await reset_compare_mode(state)
     await state.set_state(NameFlowStates.choosing_colleague_department)
-    await message.answer("Выбери подразделение коллеги:", reply_markup=dep_kb())
+    await answer_html(message, "👀 <b>Коллеги</b>\n\nВыбери подразделение:", reply_markup=dep_kb())
 
 
 @router.message(F.text == "➕ Добавить сотрудника")
@@ -107,10 +111,9 @@ async def colleague_selected(message: Message, state: FSMContext):
     await set_compare_selected(state, {colleague_name})
     await set_compare_selected_roles(state, {colleague_name: role} if role else {})
 
-    await message.answer(
-        f"👀 Ты смотришь график коллеги: {colleague_name}",
-        reply_markup=colleague_kb(),
-    )
+    role_label = role_display_label(role) if role else None
+    banner = context_banner(colleague_name, role_label)
+    await answer_html(message, banner, reply_markup=colleague_kb())
 
 
 @router.message(F.text.startswith("➕ "))
@@ -162,8 +165,9 @@ async def compare_menu(message: Message, state: FSMContext):
         role = await get_viewing_colleague_role(state)
         await add_compare_selected_name(state, colleague_name, role)
 
-    await message.answer(
-        "🤝 Сравнение графиков\n\n" + await selected_compare_text(state),
+    await answer_html(
+        message,
+        "🤝 <b>Сравнение графиков</b>\n\n" + await selected_compare_text(state),
         reply_markup=compare_kb(),
     )
 

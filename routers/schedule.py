@@ -6,7 +6,7 @@ from datetime import timedelta
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message
+from aiogram.types import CallbackQuery, Message
 
 from app_config import now_local
 from fsm_context import (
@@ -17,6 +17,7 @@ from fsm_context import (
     prompt_choose_own_name,
     reset_compare_mode,
     set_user_week,
+    with_viewing_context,
 )
 from keyboards import context as kb_context
 from keyboards import (
@@ -25,11 +26,33 @@ from keyboards import (
     today_tomorrow_kb,
     week_kb,
 )
+from keyboards.inline_schedule import CB_WEEK_DAY, CB_WEEK_NEXT, CB_WEEK_PREV, week_inline_kb
+import message_format as mf
 from schedule_utils import detect_shift, is_work_shift
 from services import schedule_service as schedule
-from ui_utils import MIN_LOADING_SEC, loading_answer
+from ui_utils import MIN_LOADING_SEC, answer_html, loading_answer
 
 router = Router(name="schedule")
+
+
+@router.message(F.text == "📅 Сегодня")
+async def today(message: Message, state: FSMContext):
+    name = await active_name(message.from_user.id, state)
+    if not name:
+        return await prompt_choose_own_name(message, state)
+
+    role = await active_role(message.from_user.id, state)
+    now = now_local()
+
+    async def _load():
+        body = await schedule.get_day_schedule(name, now.day, target_role=role)
+        return await with_viewing_context(state, body)
+
+    await loading_answer(
+        message, "⏳ Загружаю твой график...",
+        _load(),
+        reply_markup=await _schedule_reply_kb(state),
+    )
 
 
 @router.message(F.text == "📌 Мой график")
@@ -51,9 +74,9 @@ async def my_schedule_menu(message: Message, state: FSMContext):
             if row:
                 value = await schedule.get_day_value(row, now.day, now.month, now.year)
                 if is_work_shift(value):
-                    today_line = f"\n\n📅 Сегодня работаешь — {detect_shift(value)}"
+                    today_line = f"\n\n📅 Сегодня: ✅ <code>{mf.esc(detect_shift(value))}</code>"
                 else:
-                    today_line = "\n\n🏖 Сегодня выходной"
+                    today_line = "\n\n🏖 Сегодня: выходной"
             else:
                 today_line = "\n\n📋 График на сегодня ещё не составлен"
         except Exception:
@@ -66,26 +89,22 @@ async def my_schedule_menu(message: Message, state: FSMContext):
         await loading.delete()
     except Exception:
         pass
-    await message.answer(f"📌 Мой график{today_line}", reply_markup=my_schedule_kb())
+
+    text = await with_viewing_context(state, f"📌 <b>Мой график</b>{today_line}")
+    await answer_html(message, text, reply_markup=my_schedule_kb())
 
 
 @router.message(F.text == "📆 График сегодня/завтра")
 async def today_tomorrow_menu(message: Message):
-    await message.answer("📆 График сегодня/завтра:", reply_markup=today_tomorrow_kb())
+    await answer_html(message, "📆 <b>График сегодня/завтра</b>", reply_markup=today_tomorrow_kb())
 
 
-@router.message(F.text == "📅 Сегодня")
-async def today(message: Message, state: FSMContext):
-    name = await active_name(message.from_user.id, state)
-    if not name:
-        return await prompt_choose_own_name(message, state)
-
-    role = await active_role(message.from_user.id, state)
-    await loading_answer(
-        message, "⏳ Загружаю твой график...",
-        schedule.get_day_schedule(name, now_local().day, target_role=role),
-        reply_markup=my_schedule_kb(),
-    )
+async def _schedule_reply_kb(state: FSMContext):
+    from fsm_context import get_viewing_colleague
+    if await get_viewing_colleague(state):
+        from keyboards import colleague_kb
+        return colleague_kb()
+    return my_schedule_kb()
 
 
 @router.message(F.text == "📆 Завтра")
@@ -96,16 +115,21 @@ async def tomorrow(message: Message, state: FSMContext):
 
     role = await active_role(message.from_user.id, state)
     tomorrow_dt = now_local() + timedelta(days=1)
+
+    async def _load():
+        body = await schedule.get_day_schedule(
+            name, tomorrow_dt.day, tomorrow_dt.month, tomorrow_dt.year, target_role=role,
+        )
+        return await with_viewing_context(state, body)
+
     await loading_answer(
         message, "⏳ Загружаю график на завтра...",
-        schedule.get_day_schedule(
-            name, tomorrow_dt.day, tomorrow_dt.month, tomorrow_dt.year, target_role=role,
-        ),
-        reply_markup=my_schedule_kb(),
+        _load(),
+        reply_markup=await _schedule_reply_kb(state),
     )
 
 
-async def _show_week_schedule(message: Message, week_start_dt, state: FSMContext):
+async def _show_week_schedule(message: Message, week_start_dt, state: FSMContext, edit_msg=None):
     user_id = message.from_user.id
     name = await active_name(user_id, state)
 
@@ -116,7 +140,9 @@ async def _show_week_schedule(message: Message, week_start_dt, state: FSMContext
     week_days = [week_start_dt + timedelta(days=i) for i in range(7)]
     await set_user_week(state, week_days)
 
-    loading = await message.answer("⏳ Собираю график на неделю...")
+    loading = None
+    if not edit_msg:
+        loading = await message.answer("⏳ Собираю график на неделю...")
     t0 = asyncio.get_event_loop().time()
 
     weekdays_short = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
@@ -126,20 +152,16 @@ async def _show_week_schedule(message: Message, week_start_dt, state: FSMContext
     first = week_days[0]
     last = week_days[-1]
     if first.month == last.month:
-        header = f"🗓 Неделя: {first.day}–{last.day} {schedule.MONTHS[first.month]}"
+        header = f"Неделя {first.day}–{last.day} {schedule.MONTHS[first.month]}"
     else:
         header = (
-            f"🗓 Неделя: {first.day} {ru_months_short[first.month]} – "
+            f"Неделя {first.day} {ru_months_short[first.month]} – "
             f"{last.day} {ru_months_short[last.month]}"
         )
 
-    lines = [header, ""]
+    table_lines = []
     for dt in week_days:
-        is_weekend = dt.weekday() in (4, 5) or (dt.month, dt.day) in (schedule.RU_HOLIDAYS or set())
-        day_label = f"{weekdays_short[dt.weekday()]} {dt.day}"
-        if is_weekend:
-            day_label += " ❗"
-
+        day_short = weekdays_short[dt.weekday()]
         try:
             row, _ = await schedule.find_row(name, dt.day, dt.month, dt.year, target_role=role)
             people_by_role = await schedule.get_people_for_day(dt.day, dt.month, dt.year)
@@ -147,22 +169,48 @@ async def _show_week_schedule(message: Message, week_start_dt, state: FSMContext
             if row:
                 value = await schedule.get_day_value(row, dt.day, dt.month, dt.year)
                 if is_work_shift(value):
-                    lines.append(f"{day_label} — {detect_shift(value)} ✅ (на смене: {total_on_shift})")
+                    shift_short = detect_shift(value).split("–")[0][:5]
+                    icon = "✅"
                 else:
-                    lines.append(f"{day_label} — выходной 🏖 (на смене: {total_on_shift})")
+                    shift_short = ""
+                    icon = "🏖"
             else:
-                lines.append(f"{day_label} — нет данных")
+                shift_short = ""
+                icon = "·"
+                total_on_shift = 0
+            table_lines.append(
+                mf.week_table_row(day_short, dt.day, icon, shift_short, total_on_shift)
+            )
         except (ValueError, ConnectionError):
-            lines.append(f"{day_label} — таблица недоступна")
+            table_lines.append(mf.week_table_row(day_short, dt.day, "!", "нет", 0))
+
+    body = mf.week_pre_block(header, table_lines)
+    text = await with_viewing_context(state, body)
+    inline = week_inline_kb(week_days)
 
     elapsed = asyncio.get_event_loop().time() - t0
     if elapsed < MIN_LOADING_SEC:
         await asyncio.sleep(MIN_LOADING_SEC - elapsed)
-    try:
-        await loading.delete()
-    except Exception:
-        pass
-    await message.answer("\n".join(lines), reply_markup=week_kb(week_days))
+
+    reply_kb = week_kb(week_days) if not await _is_colleague_mode(state) else None
+    if edit_msg:
+        try:
+            await edit_msg.edit_text(text, parse_mode=mf.PARSE_MODE, reply_markup=inline)
+        except Exception:
+            await message.answer(text, parse_mode=mf.PARSE_MODE, reply_markup=inline)
+    else:
+        try:
+            await loading.delete()
+        except Exception:
+            pass
+        await message.answer(text, parse_mode=mf.PARSE_MODE, reply_markup=inline)
+        if reply_kb:
+            await message.answer("Навигация 👇", reply_markup=reply_kb)
+
+
+async def _is_colleague_mode(state: FSMContext) -> bool:
+    from fsm_context import get_viewing_colleague
+    return bool(await get_viewing_colleague(state))
 
 
 @router.message(F.text == "🗓 Недели")
@@ -176,7 +224,7 @@ async def week(message: Message, state: FSMContext):
 async def prev_week(message: Message, state: FSMContext):
     week_days = await get_user_week(state)
     if not week_days:
-        return await message.answer("Сначала открой неделю.", reply_markup=my_schedule_kb())
+        return await answer_html(message, "Сначала открой неделю.", reply_markup=my_schedule_kb())
     await _show_week_schedule(message, week_days[0] - timedelta(days=7), state)
 
 
@@ -184,8 +232,61 @@ async def prev_week(message: Message, state: FSMContext):
 async def next_week(message: Message, state: FSMContext):
     week_days = await get_user_week(state)
     if not week_days:
-        return await message.answer("Сначала открой неделю.", reply_markup=my_schedule_kb())
+        return await answer_html(message, "Сначала открой неделю.", reply_markup=my_schedule_kb())
     await _show_week_schedule(message, week_days[0] + timedelta(days=7), state)
+
+
+@router.callback_query(F.data == CB_WEEK_PREV)
+async def week_inline_prev(callback: CallbackQuery, state: FSMContext):
+    week_days = await get_user_week(state)
+    if not week_days:
+        return await callback.answer("Сначала открой неделю", show_alert=True)
+    await callback.answer()
+    await _show_week_schedule(
+        callback.message, week_days[0] - timedelta(days=7), state, edit_msg=callback.message,
+    )
+
+
+@router.callback_query(F.data == CB_WEEK_NEXT)
+async def week_inline_next(callback: CallbackQuery, state: FSMContext):
+    week_days = await get_user_week(state)
+    if not week_days:
+        return await callback.answer("Сначала открой неделю", show_alert=True)
+    await callback.answer()
+    await _show_week_schedule(
+        callback.message, week_days[0] + timedelta(days=7), state, edit_msg=callback.message,
+    )
+
+
+@router.callback_query(F.data.startswith(CB_WEEK_DAY))
+async def week_inline_day(callback: CallbackQuery, state: FSMContext):
+    user_id = callback.from_user.id
+    name = await active_name(user_id, state)
+    if not name:
+        return await callback.answer("Сначала выбери имя", show_alert=True)
+
+    date_str = callback.data[len(CB_WEEK_DAY):]
+    target = now_local().replace(
+        year=int(date_str[:4]),
+        month=int(date_str[5:7]),
+        day=int(date_str[8:10]),
+        hour=0, minute=0, second=0, microsecond=0,
+    )
+    role = await active_role(user_id, state)
+
+    async def _load():
+        body = await schedule.get_day_schedule(
+            name, target.day, target.month, target.year, target_role=role,
+        )
+        return await with_viewing_context(state, body)
+
+    await callback.answer()
+    await loading_answer(
+        callback.message,
+        f"⏳ Загружаю {target.day} число...",
+        _load(),
+        reply_markup=week_kb(await get_user_week(state) or []),
+    )
 
 
 @router.message(F.text.regexp(r"^📅 (Пн|Вт|Ср|Чт|Пт|Сб|Вс) \d+$"))
@@ -198,7 +299,7 @@ async def week_day_detail(message: Message, state: FSMContext):
 
     week_days = await get_user_week(state)
     if not week_days:
-        return await message.answer("Сначала открой неделю.", reply_markup=my_schedule_kb())
+        return await answer_html(message, "Сначала открой неделю.", reply_markup=my_schedule_kb())
 
     parts = message.text.replace("📅 ", "").strip().split()
     day_num = int(parts[1])
@@ -215,11 +316,16 @@ async def week_day_detail(message: Message, state: FSMContext):
     weekdays_short = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
     day_label = f"{weekdays_short[target.weekday()]} {target.day} {schedule.MONTHS[target.month]}"
     role = await active_role(user_id, state)
+
+    async def _load():
+        body = await schedule.get_day_schedule(
+            name, target.day, target.month, target.year, target_role=role,
+        )
+        return await with_viewing_context(state, body)
+
     await loading_answer(
         message, f"⏳ Загружаю {day_label}...",
-        schedule.get_day_schedule(
-            name, target.day, target.month, target.year, target_role=role,
-        ),
+        _load(),
         reply_markup=week_kb(week_days),
     )
 
@@ -227,7 +333,7 @@ async def week_day_detail(message: Message, state: FSMContext):
 @router.message(F.text == "📋 Весь график")
 @router.message(F.text == "📋 Выбрать месяц")
 async def choose_month(message: Message):
-    await message.answer("Выбери месяц:", reply_markup=months_kb())
+    await answer_html(message, "📋 <b>Выбери месяц</b>", reply_markup=months_kb())
 
 
 @router.message(F.text.regexp(r"^📋 \w+ \d{4}$"))
@@ -242,13 +348,18 @@ async def full_schedule(message: Message, state: FSMContext):
     month = kb_context.MONTHS_NOM.index(month_name)
 
     if month == 0:
-        return await message.answer("Не могу определить месяц.", reply_markup=my_schedule_kb())
+        return await answer_html(message, "Не могу определить месяц.", reply_markup=my_schedule_kb())
 
     role = await active_role(message.from_user.id, state)
     max_day = calendar.monthrange(year, month)[1]
+
+    async def _load():
+        body = await schedule.get_range_schedule(name, 1, max_day, month, year, target_role=role)
+        return await with_viewing_context(state, body)
+
     await loading_answer(
         message, "⏳ Загружаю полный график...",
-        schedule.get_range_schedule(name, 1, max_day, month, year, target_role=role),
+        _load(),
         reply_markup=my_schedule_kb(),
     )
 

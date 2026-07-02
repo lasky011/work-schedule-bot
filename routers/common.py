@@ -7,21 +7,12 @@ from aiogram.types import Message
 
 from fsm_context import reset_modes
 from keyboards import main_kb_async
+from message_format import onboarding_step, welcome_card
 from repositories.users_repo import get_user, get_user_name
 from states import NameFlowStates
-from ui_utils import with_loading
+from ui_utils import answer_html, with_loading
 
 router = Router(name="common")
-
-WELCOME_TEXT = (
-    "Привет{name_part} 👋\n\n"
-    "Я бот расписания — помогаю смотреть график и считать зарплату.\n\n"
-    "📌 Мой график — сегодня, завтра, неделя или весь месяц\n"
-    "👀 Коллеги — кто работает рядом, совпадение смен\n"
-    "💰 Зарплата — примерный расчёт по ставке и учёт фактических часов\n"
-    "🔔 Уведомления — о графике каждый день и напоминание внести часы\n\n"
-    "{action}"
-)
 
 
 @router.message(CommandStart())
@@ -33,22 +24,17 @@ async def start(message: Message, state: FSMContext):
     user = await get_user(user_id)
 
     if user and user[1]:
-        await message.answer(
-            WELCOME_TEXT.format(
-                name_part=f", {user[1]}",
-                action="Выбери раздел 👇",
-            ),
-            reply_markup=await main_kb_async(user_id),
-        )
+        text = welcome_card(f", {user[1]}", "Выбери раздел 👇")
+        await answer_html(message, text, reply_markup=await main_kb_async(user_id))
     else:
-        await message.answer(
-            WELCOME_TEXT.format(
-                name_part="",
-                action="Для начала выбери своё имя — нажми 📌 Мой график.",
-            ),
+        text = welcome_card("", "Для начала пройди короткую настройку 👇")
+        await answer_html(message, text, reply_markup=await main_kb_async(user_id))
+        await state.set_state(NameFlowStates.choosing_own_department)
+        await answer_html(
+            message,
+            onboarding_step(1, 3, "<b>Шаг 1:</b> выбери своё подразделение"),
             reply_markup=await main_kb_async(user_id),
         )
-        await state.set_state(NameFlowStates.choosing_own_department)
 
 
 @router.message(F.text == "🏠 Главное меню")
@@ -58,5 +44,5 @@ async def home(message: Message, state: FSMContext):
     await reset_modes(user_id, state)
 
     name = await get_user_name(user_id)
-    greeting = f"Привет, {name} 👋" if name else "🏠 Главное меню"
-    await message.answer(greeting, reply_markup=await main_kb_async(user_id))
+    greeting = f"Привет, <b>{name}</b> 👋" if name else "🏠 <b>Главное меню</b>"
+    await answer_html(message, greeting, reply_markup=await main_kb_async(user_id))

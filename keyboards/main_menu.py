@@ -6,6 +6,7 @@ from repositories.users_repo import get_user_name
 def main_kb(user_id, name: str = "Моё имя"):
     return ReplyKeyboardMarkup(
         keyboard=[
+            [KeyboardButton(text="📅 Сегодня")],
             [KeyboardButton(text="📌 Мой график"), KeyboardButton(text="📆 График сегодня/завтра")],
             [KeyboardButton(text="👀 Коллеги"), KeyboardButton(text="🔔 Уведомления")],
             [KeyboardButton(text="💰 Зарплата"), KeyboardButton(text=f"👤 {name}")],

@@ -4,7 +4,9 @@ import logging
 import traceback
 from datetime import datetime
 
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message, ReplyKeyboardMarkup
+
+from message_format import PARSE_MODE
 
 MIN_LOADING_SEC = 0.8
 
@@ -68,7 +70,14 @@ def with_loading(text="⏳ Загружаю..."):
     return decorator
 
 
-async def loading_answer(message: Message, loading_text: str, coro_or_text, reply_markup=None):
+async def loading_answer(
+    message: Message,
+    loading_text: str,
+    coro_or_text,
+    reply_markup=None,
+    parse_mode: str | None = PARSE_MODE,
+    inline_markup: InlineKeyboardMarkup | None = None,
+):
     """Показывает loading_text, затем плавно заменяет на результат."""
     loading = await message.answer(loading_text)
     t0 = asyncio.get_event_loop().time()
@@ -77,11 +86,14 @@ async def loading_answer(message: Message, loading_text: str, coro_or_text, repl
             result = await coro_or_text
         except ConnectionError as e:
             result = str(e)
+            parse_mode = None
         except ValueError as e:
             result = f"📋 {e}"
+            parse_mode = None
         except Exception as e:
             logging.error(f"loading_answer: {e}\n{traceback.format_exc()}")
             result = "❌ Что-то пошло не так. Попробуй позже."
+            parse_mode = None
     else:
         result = coro_or_text
 
@@ -89,21 +101,43 @@ async def loading_answer(message: Message, loading_text: str, coro_or_text, repl
     if elapsed < MIN_LOADING_SEC:
         await asyncio.sleep(MIN_LOADING_SEC - elapsed)
 
-    if reply_markup:
+    send_kwargs = {}
+    if parse_mode:
+        send_kwargs["parse_mode"] = parse_mode
+
+    if reply_markup or inline_markup:
         try:
             await loading.delete()
         except Exception:
             pass
-        await message.answer(str(result), reply_markup=reply_markup)
+        if inline_markup:
+            send_kwargs["reply_markup"] = inline_markup
+        elif reply_markup:
+            send_kwargs["reply_markup"] = reply_markup
+        await message.answer(str(result), **send_kwargs)
     else:
         try:
-            await loading.edit_text(str(result))
+            await loading.edit_text(str(result), **send_kwargs)
         except Exception:
             try:
                 await loading.delete()
             except Exception:
                 pass
-            await message.answer(str(result))
+            await message.answer(str(result), **send_kwargs)
+
+
+async def answer_html(
+    message: Message,
+    text: str,
+    reply_markup: ReplyKeyboardMarkup | None = None,
+    inline_markup: InlineKeyboardMarkup | None = None,
+):
+    kwargs = {"parse_mode": PARSE_MODE}
+    if inline_markup:
+        kwargs["reply_markup"] = inline_markup
+    elif reply_markup:
+        kwargs["reply_markup"] = reply_markup
+    return await message.answer(text, **kwargs)
 
 
 async def safe_schedule(coro):

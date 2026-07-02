@@ -16,6 +16,7 @@ from departments_manager import (
 )
 from schedule_utils import clean_value, detect_shift, format_date, is_work_shift
 from repositories.users_repo import get_user
+import message_format as mf
 
 SCHEDULE_MAX_DAY_COL = 16
 ROLES = SHEET_ROLES
@@ -344,7 +345,7 @@ async def get_my_status_for_day(user_id, day, month=None, year=None):
 
     value = await get_day_value(row, day, month, year)
     if is_work_shift(value):
-        return f"✅ Ты работаешь: {detect_shift(value)}"
+        return f"✅ Ты работаешь: <code>{mf.esc(detect_shift(value))}</code>"
 
     return "🏖 Ты отдыхаешь."
 
@@ -361,49 +362,47 @@ async def get_day_schedule(name, day, month=None, year=None, target_role=None):
         return "Такой даты в этом месяце нет."
 
     if not is_day_published(day, month, year):
-        return f"{name}\n\n{format_date(day, month, year)} — график пока не составлен"
+        return mf.empty_state(
+            "📭",
+            f"{format_date(day, month, year)}",
+            "График пока не составлен",
+        )
 
     row, role = await find_row(name, day, month, year, target_role=target_role)
 
     if not row:
-        return f"Не нашёл график для: {name}"
+        return mf.empty_state("📋", f"Не нашёл график для {name}")
 
-    role_text = f"\n{DEPT_EMOJIS.get(role, role)}" if role else ""
+    role_label = role_display_label(role) if role else None
     value = await get_day_value(row, day, month, year)
-    if is_work_shift(value):
-        header = f"{format_date(day, month, year)} — {name} работает ✅"
-        shift_line = f"Смена: {detect_shift(value)}"
-    else:
-        header = f"{format_date(day, month, year)} — {name} отдыхает 🏖"
-        shift_line = ""
-
-    role_suffix = role_text.strip() if role_text else ""
-    text = header
-    if role_suffix:
-        text += f"  ({role_suffix})"
-    if shift_line:
-        text += f"\n{shift_line}"
+    working = is_work_shift(value)
+    shift_line = detect_shift(value) if working else None
 
     people_by_role = await get_people_for_day(day, month, year)
-    coworkers_parts = []
-    for role_key in ordered_role_keys(people_by_role):
-        people = people_by_role.get(role_key, [])
-        if not people:
-            continue
-        coworkers_parts.append(role_display_label(role_key))
-        coworkers_parts.extend(people)
-        coworkers_parts.append("")
-    coworkers_text = "\n".join(coworkers_parts).strip()
+    role_blocks = [
+        (role_display_label(role_key), people)
+        for role_key in ordered_role_keys(people_by_role)
+        for people in [people_by_role.get(role_key, [])]
+        if people
+    ]
     total_on_shift = sum(len(v) for v in people_by_role.values())
-    if coworkers_text:
-        text += f"\n\n👥 {format_date(day, month, year)} работают: всего {total_on_shift}\n\n" + coworkers_text.strip()
+    team_section = mf.team_on_shift(total_on_shift, role_blocks) if role_blocks else None
 
-    if not is_work_shift(value):
+    off_section = None
+    if not working:
         common_off = await get_common_day_off_people(name, day, month, year)
         if common_off:
-            text += f"\n\n🏖 {format_date(day, month, year)} вместе отдыхают:\n" + "\n".join(unique_keep_order(common_off))
+            off_section = mf.day_off_together(unique_keep_order(common_off))
 
-    return text
+    return mf.day_schedule_card(
+        format_date(day, month, year),
+        name,
+        role_label,
+        working,
+        shift_line,
+        team_section,
+        off_section,
+    )
 
 
 async def get_range_schedule(name, start_day, end_day, month=None, year=None, target_role=None):
@@ -416,11 +415,11 @@ async def get_range_schedule(name, start_day, end_day, month=None, year=None, ta
     max_day = calendar.monthrange(year, month)[1]
     end_day = min(end_day, max_day)
 
-    result = [name]
     saved_role = None
     found_any = False
     role_line_index = None
     unpublished_start = None
+    day_lines: list[str] = []
 
     for day in range(start_day, end_day + 1):
         if not is_day_published(day, month, year):
@@ -429,14 +428,14 @@ async def get_range_schedule(name, start_day, end_day, month=None, year=None, ta
             continue
 
         if unpublished_start is not None:
-            if role_line_index is None:
-                result.append("")
-                role_line_index = 1
-                result.append("")
             if unpublished_start == day - 1:
-                result.append(f"{unpublished_start} {MONTHS[month]} — график пока не составлен")
+                day_lines.append(
+                    f"{unpublished_start} {MONTHS[month]} — график пока не составлен"
+                )
             else:
-                result.append(f"{unpublished_start}–{day - 1} {MONTHS[month]} — график пока не составлен")
+                day_lines.append(
+                    f"{unpublished_start}–{day - 1} {MONTHS[month]} — график пока не составлен"
+                )
             unpublished_start = None
 
         row, role = await find_row(name, day, month, year, target_role=target_role)
@@ -449,30 +448,73 @@ async def get_range_schedule(name, start_day, end_day, month=None, year=None, ta
         else:
             value = ""
 
-        if role_line_index is None:
-            result.append(DEPT_EMOJIS.get(saved_role or role or '', saved_role or role or ''))
+        if role_line_index is None and role:
+            saved_role = role
             role_line_index = 1
-            result.append("")
 
-        result.append(f"{format_date(day, month, year)} — {detect_shift(value)}")
+        day_lines.append(mf.range_schedule_day(format_date(day, month, year), detect_shift(value)))
 
     if unpublished_start is not None:
-        if role_line_index is None:
-            result.append(DEPT_EMOJIS.get(saved_role or '', saved_role or ''))
-            role_line_index = 1
-            result.append("")
         if unpublished_start == end_day:
-            result.append(f"{unpublished_start} {MONTHS[month]} — график пока не составлен")
+            day_lines.append(f"{unpublished_start} {MONTHS[month]} — график пока не составлен")
         else:
-            result.append(f"{unpublished_start}–{end_day} {MONTHS[month]} — график пока не составлен")
+            day_lines.append(
+                f"{unpublished_start}–{end_day} {MONTHS[month]} — график пока не составлен"
+            )
 
     if not found_any:
-        return f"Не нашёл график для: {name}"
+        return mf.empty_state("📭", f"Не нашёл график для {name}")
 
-    if saved_role and role_line_index is not None:
-        result[role_line_index] = DEPT_EMOJIS.get(saved_role, saved_role)
+    if saved_role:
+        header = mf.range_schedule_header(name, DEPT_EMOJIS.get(saved_role, saved_role))
+    else:
+        header = mf.range_schedule_header(name, None)
 
-    return "\n".join(result)
+    return header + "\n".join(day_lines)
+
+
+async def build_today_summary(name, role, user_id, track_hours: bool = False) -> str:
+    """Карточка «Сегодня» — смена, завтра, подсказка по часам."""
+    now = now_local()
+    today = now.day
+    month = now.month
+    year = now.year
+
+    role_label = role_display_label(role) if role else None
+
+    if not is_day_published(today, month, year):
+        today_line = "📭 График на сегодня ещё не составлен"
+        tomorrow_hint = None
+    else:
+        row, _ = await find_row(name, today, month, year, target_role=role)
+        if not row:
+            today_line = "📋 Тебя нет в графике на сегодня"
+        else:
+            value = await get_day_value(row, today, month, year)
+            if is_work_shift(value):
+                today_line = f"✅ Работаешь — <code>{mf.esc(detect_shift(value))}</code>"
+            else:
+                today_line = "🏖 Выходной"
+
+        tomorrow_dt = now + timedelta(days=1)
+        tomorrow_hint = None
+        if is_day_published(tomorrow_dt.day, tomorrow_dt.month, tomorrow_dt.year):
+            try:
+                t_row, _ = await find_row(
+                    name, tomorrow_dt.day, tomorrow_dt.month, tomorrow_dt.year, target_role=role,
+                )
+                if t_row:
+                    t_val = await get_day_value(t_row, tomorrow_dt.day, tomorrow_dt.month, tomorrow_dt.year)
+                    if is_work_shift(t_val):
+                        tomorrow_hint = f"✅ {detect_shift(t_val)}"
+                    else:
+                        tomorrow_hint = "🏖 выходной"
+            except Exception:
+                pass
+
+    hours_hint = "⏱ Не забудь внести часы после смены" if track_hours else None
+
+    return mf.today_summary_card(name, role_label, today_line, tomorrow_hint, hours_hint)
 
 
 async def get_people(day, user_id, month=None, year=None):
@@ -489,26 +531,24 @@ async def get_people(day, user_id, month=None, year=None):
     my_status = await get_my_status_for_day(user_id, day, month, year)
 
     if not is_day_published(day, month, year):
-        return f"👥 {format_date(day, month, year)}\n\n{my_status}\n\nГрафик на этот период пока не составлен."
+        return (
+            mf.who_works_card(
+                format_date(day, month, year),
+                my_status,
+                [],
+            )
+            + "\n\n📭 График на этот период пока не составлен."
+        )
 
     result = await get_people_for_day(day, month, year)
 
-    total = sum(len(v) for v in result.values())
-    text = f"👥 {format_date(day, month, year)} работают: всего {total}\n\n"
-    text += my_status + "\n\n"
+    role_blocks = [
+        (role_display_label(role_key), len(people), people)
+        for role_key in ordered_role_keys(result)
+        for people in [result.get(role_key, [])]
+    ]
 
-    has_any = False
-    for role_key in ordered_role_keys(result):
-        people = result.get(role_key, [])
-        if people:
-            has_any = True
-            label = role_display_label(role_key)
-            text += f"{label} ({len(people)})\n" + "\n".join(people) + "\n\n"
-
-    if not has_any:
-        text += "Никто не работает."
-
-    return text.strip()
+    return mf.who_works_card(format_date(day, month, year), my_status, role_blocks)
 
 async def find_next_shift(name, from_day, from_month=None, from_year=None, target_role=None):
     """Ищет следующую смену начиная с from_day, переходит через месяц если нужно."""

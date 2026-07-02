@@ -242,6 +242,25 @@ def test_keyboards():
     assert isinstance(periods, list)
 
 
+def test_message_format():
+    import message_format as mf
+
+    assert mf.esc("<b>") == "&lt;b&gt;"
+    card = mf.day_schedule_card(
+        "15 июля, вторник",
+        "Виталий",
+        "🍽 Официант",
+        True,
+        "16:00–04:00",
+        team_section=mf.team_on_shift(3, [("🍽 Официант", ["Платон"])]),
+    )
+    assert "<b>" in card
+    assert "Виталий" in card
+    assert mf.money(86400) == "86 400 ₽"
+    row = mf.week_table_row("Пн", 15, "✅", "16:00", 8)
+    assert "Пн" in row and "15" in row
+
+
 def main():
     checks = [
         ("bot_import", test_bot_import),
@@ -252,6 +271,7 @@ def main():
         ("keyboards", test_keyboards),
         ("ui_utils", test_ui_utils),
         ("departments_manager", test_departments_manager),
+        ("message_format", test_message_format),
     ]
 
     for name, fn in checks:

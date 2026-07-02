@@ -27,7 +27,8 @@ from keyboards import (
 )
 from repositories.users_repo import get_user, save_user
 from states import CompareStates, NameFlowStates, NotificationStates
-from ui_utils import is_valid_time, with_loading
+from message_format import onboarding_step
+from ui_utils import answer_html, is_valid_time, with_loading
 
 router = Router(name="settings")
 
@@ -38,7 +39,7 @@ async def choose_own_name(message: Message, state: FSMContext):
     await clear_colleague_view(state)
     await reset_compare_mode(state)
     await state.set_state(NameFlowStates.choosing_own_department)
-    await message.answer("Выбери своё подразделение:", reply_markup=dep_kb())
+    await answer_html(message, onboarding_step(1, 3, "<b>Шаг 1:</b> выбери подразделение"), reply_markup=dep_kb())
 
 
 @router.message(F.text.func(is_department_label))
@@ -61,10 +62,18 @@ async def department_selected(message: Message, state: FSMContext):
         )
     elif current == NameFlowStates.choosing_colleague_department.state:
         await state.set_state(None)
-        await message.answer("Выбери коллегу:", reply_markup=await colleague_names_kb(department, user_id))
+        await answer_html(
+            message,
+            onboarding_step(2, 2, "<b>Шаг 2:</b> выбери коллегу"),
+            reply_markup=await colleague_names_kb(department, user_id),
+        )
     else:
         await state.set_state(NameFlowStates.choosing_own_name)
-        await message.answer("Выбери своё имя:", reply_markup=own_names_kb(department))
+        await answer_html(
+            message,
+            onboarding_step(2, 3, "<b>Шаг 2:</b> выбери своё имя"),
+            reply_markup=own_names_kb(department),
+        )
 
 
 @router.message(F.text.func(is_person_name))
@@ -83,8 +92,9 @@ async def own_name_selected(message: Message, state: FSMContext):
     await save_user(user_id, name=message.text, notify=0, notify_time='', role=user_role)
     await reset_modes(user_id, state)
 
-    await message.answer(
-        f"✅ Готово! Теперь ты — {message.text}",
+    await answer_html(
+        message,
+        f"✅ <b>Готово!</b>\n\nТеперь ты — <b>{message.text}</b>",
         reply_markup=await main_kb_async(user_id),
     )
 
@@ -108,8 +118,11 @@ async def notifications_menu(message: Message, state: FSMContext):
     status = "включены 🔔" if user[2] else "выключены 🔕"
     notify_time = user[3] or "не задано"
 
-    await message.answer(
-        f"🔔 Настройки уведомлений\n\nСтатус: {status}\nВремя: {notify_time}",
+    await answer_html(
+        message,
+        f"🔔 <b>Настройки уведомлений</b>\n\n"
+        f"Статус: <b>{status}</b>\n"
+        f"Время: <code>{notify_time}</code>",
         reply_markup=notifications_kb(),
     )
 
