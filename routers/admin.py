@@ -24,6 +24,24 @@ def configure_admin_router(load_full_sheet):
     _load_full_sheet = load_full_sheet
 
 
+@router.message(F.text == "/start")
+async def admin_start(message: Message):
+    user_id = message.from_user.id
+    if not is_admin(user_id):
+        return await message.answer("⛔ Нет доступа. Этот бот только для администраторов.")
+
+    await message.answer(
+        "🛠 Admin-бот расписания\n\n"
+        "Команды:\n"
+        "/health — статус БД и кэша\n"
+        "/periods — список периодов\n"
+        "/add_period год месяц start_day gid — добавить период\n"
+        "/reload_periods — перечитать периоды из БД\n"
+        "/reload_sheets — сбросить кэш Google Sheets\n"
+        "/cache — состояние кэша листов"
+    )
+
+
 @router.message(F.text == "/health")
 async def admin_health(message: Message):
     user_id = message.from_user.id

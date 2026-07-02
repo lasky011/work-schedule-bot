@@ -24,6 +24,15 @@ def check(name, fn):
         raise
 
 
+def test_admin_bot_import():
+    import os
+
+    os.environ["ADMIN_BOT_TOKEN"] = "smoke-admin-token"
+    os.environ.setdefault("DATABASE_URL", "postgresql://smoke/test")
+    os.environ["ADMIN_IDS"] = "1"
+    import admin_bot  # noqa: F401
+
+
 def test_bot_import():
     import os
 
@@ -234,6 +243,7 @@ def test_keyboards():
 def main():
     checks = [
         ("bot_import", test_bot_import),
+        ("admin_bot_import", test_admin_bot_import),
         ("imports", test_imports),
         ("salary_service", test_salary_service),
         ("schedule_utils", test_schedule_utils),
@@ -251,6 +261,9 @@ def main():
 if __name__ == "__main__":
     try:
         main()
+    except SystemExit:
+        print("\n❌ Smoke-test failed")
+        sys.exit(1)
     except Exception:
         print("\n❌ Smoke-test failed")
         sys.exit(1)

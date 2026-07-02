@@ -6,6 +6,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+
+ADMIN_BOT_TOKEN = os.getenv("ADMIN_BOT_TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
 SHEET_ID = os.getenv("SHEET_ID", "1bRuO870pDBf6O-kXJ1O342SmxmjZgpsiacM2aPOJm9Y")
 
@@ -54,3 +56,18 @@ def validate_required_env():
     missing = [key for key, value in required.items() if not value]
     if missing:
         raise SystemExit(f"❌ Не заданы обязательные переменные: {', '.join(missing)}")
+
+
+def validate_admin_env():
+    token = os.getenv("ADMIN_BOT_TOKEN")
+    db_url = os.getenv("DATABASE_URL")
+    admin_ids = _parse_admin_ids(os.getenv("ADMIN_IDS"))
+    missing = []
+    if not token:
+        missing.append("ADMIN_BOT_TOKEN")
+    if not db_url:
+        missing.append("DATABASE_URL")
+    if missing:
+        raise SystemExit(f"❌ Не заданы обязательные переменные: {', '.join(missing)}")
+    if not admin_ids:
+        raise SystemExit("❌ ADMIN_IDS пуст — admin-бот не сможет авторизовать никого")

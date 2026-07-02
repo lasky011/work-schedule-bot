@@ -21,7 +21,6 @@ from db import USE_POSTGRES, get_db_connection, init_pg_pool
 from keyboards import configure_keyboard_context
 from repositories.shifts_repo import get_shift_for_date
 from repositories.users_repo import get_notify_users
-from routers.admin import configure_admin_router, router as admin_router
 from routers.colleagues import router as colleagues_router
 from routers.common import router as common_router
 from routers.fallback import router as fallback_router
@@ -38,8 +37,8 @@ from schedule_utils import (
 from services import schedule_service as schedule
 from services.compare_service import configure_compare_service
 from services.salary_service import configure_salary_service
+from services.sheet_loader import load_full_sheet, load_sheet
 from services.sheet_periods_service import load_from_db_sync, sync_from_db
-from sheets_client import cache_locks, cached_df, cached_time, download_sheet
 from ui_utils import configure_ui_utils
 
 validate_required_env()
@@ -138,55 +137,10 @@ def init_db():
     conn.close()
 
 
-async def load_sheet(day, month=None, year=None):
-    global cached_df, cached_time
-    now = now_local()
-    if month is None:
-        month = now.month
-    if year is None:
-        year = now.year
-
-    gid = schedule.get_gid_for_day_month(day, month, year)
-    if gid is None:
-        raise ValueError(
-            f"Нет GID для {year}-{month}, день {day}. "
-            "Добавь период через /add_period (админ)."
-        )
-
-    if gid not in cache_locks:
-        cache_locks[gid] = asyncio.Lock()
-
-    async with cache_locks[gid]:
-        now_time = now_local()
-        if gid in cached_df and gid in cached_time:
-            if (now_time - cached_time[gid]).total_seconds() < 60:
-                return cached_df[gid]
-
-        df = await download_sheet(gid)
-        cached_df[gid] = df
-        cached_time[gid] = now_time
-        return cached_df[gid]
-
-
-async def load_full_sheet():
-    dfs = []
-    for day in [1, 16]:
-        try:
-            dfs.append(await load_sheet(day))
-        except (ValueError, ConnectionError):
-            pass
-    if not dfs:
-        logging.warning("Нет доступных листов при старте — бот запустится без кэша.")
-        return None
-    await refresh_departments(force=True)
-    return None
-
-
 schedule.configure_schedule_service(load_sheet, MONTHS, RU_HOLIDAYS)
 configure_departments_manager(schedule.clean_person_name, load_sheet)
 configure_salary_service(find_row=schedule.find_row, get_day_value=schedule.get_day_value)
 configure_compare_service(find_row=schedule.find_row, get_day_value=schedule.get_day_value)
-configure_admin_router(load_full_sheet)
 
 
 async def hours_notification_loop(bot) -> None:
@@ -357,7 +311,6 @@ async def notification_loop(bot):
             break
 
 
-dp.include_router(admin_router)
 dp.include_router(common_router)
 dp.include_router(settings_router)
 dp.include_router(schedule_router)
