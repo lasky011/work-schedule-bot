@@ -10,6 +10,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 from app_config import (
     BOT_TOKEN,
+    SHEET_PERIODS_REFRESH_SECONDS,
     now_local,
     validate_required_env,
 )
@@ -37,7 +38,7 @@ from schedule_utils import (
 from services import schedule_service as schedule
 from services.compare_service import configure_compare_service
 from services.salary_service import configure_salary_service
-from services.sheet_periods_service import load_from_db_sync
+from services.sheet_periods_service import load_from_db_sync, sync_from_db
 from sheets_client import cache_locks, cached_df, cached_time, download_sheet
 from ui_utils import configure_ui_utils
 
@@ -296,6 +297,7 @@ async def notification_loop(bot):
     sent = {}
     last_cleanup = now_local().date()
     last_dept_refresh = now_local()
+    last_periods_refresh = now_local()
 
     while True:
         now = now_local()
@@ -308,6 +310,13 @@ async def notification_loop(bot):
                 logging.info("refresh_departments: обновлено")
             except Exception as e:
                 logging.warning("refresh_departments error: %s", e)
+
+        if (now - last_periods_refresh).total_seconds() > SHEET_PERIODS_REFRESH_SECONDS:
+            try:
+                await sync_from_db()
+                last_periods_refresh = now
+            except Exception as e:
+                logging.warning("sheet_periods sync error: %s", e)
 
         today_key = now.strftime("%Y-%m-%d")
         today_date = now.date()

@@ -54,6 +54,7 @@ def test_imports():
     assert constants.SHEET_GID_MAP, "SHEET_GID_MAP fallback пустой"
     assert isinstance(sheet_periods_service.SHEET_GID_MAP, dict)
     assert sheet_periods_service.SHEET_GID_MAP, "SHEET_GID_MAP кэш пустой"
+    assert hasattr(sheet_periods_service, "sync_from_db")
 
     # Проверяем, что модульные globals настроены хотя бы импортом.
     assert hasattr(schedule_utils, "format_date")

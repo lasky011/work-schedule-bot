@@ -38,6 +38,9 @@ def _parse_admin_ids(raw: str | None) -> set[int]:
 
 ADMIN_IDS = _parse_admin_ids(os.getenv("ADMIN_IDS"))
 
+# Как часто prod/test подтягивают gid из sheet_periods (секунды).
+SHEET_PERIODS_REFRESH_SECONDS = int(os.getenv("SHEET_PERIODS_REFRESH_SECONDS", "300"))
+
 
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS

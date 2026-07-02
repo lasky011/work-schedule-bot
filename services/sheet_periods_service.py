@@ -23,7 +23,7 @@ def _restore_fallback() -> int:
     return len(SHEET_GID_MAP)
 
 
-def load_from_db_sync() -> int:
+def load_from_db_sync(*, quiet: bool = False) -> int:
     from db import USE_POSTGRES
     from repositories.sheet_periods_repo import _fetch_all_sync
 
@@ -42,18 +42,32 @@ def load_from_db_sync() -> int:
         return len(SHEET_GID_MAP)
 
     if not conn_rows:
+        if quiet and SHEET_GID_MAP:
+            return len(SHEET_GID_MAP)
         logging.warning(
             "sheet_periods: таблица пуста, используем fallback из constants.py"
         )
         return _restore_fallback()
 
+    before = dict(SHEET_GID_MAP)
     count = _apply_rows(conn_rows)
-    logging.info("sheet_periods: загружено %s периодов из БД", count)
+    if not quiet or before != SHEET_GID_MAP:
+        if before != SHEET_GID_MAP:
+            logging.info("sheet_periods: синхронизировано с БД (%s периодов)", count)
+        else:
+            logging.info("sheet_periods: загружено %s периодов из БД", count)
     return count
 
 
-async def reload_from_db() -> int:
-    return await asyncio.to_thread(load_from_db_sync)
+async def reload_from_db(*, quiet: bool = False) -> int:
+    return await asyncio.to_thread(load_from_db_sync, quiet=quiet)
+
+
+async def sync_from_db() -> bool:
+    """Перечитывает периоды из БД. True — если кэш изменился."""
+    before = dict(SHEET_GID_MAP)
+    await reload_from_db(quiet=True)
+    return dict(SHEET_GID_MAP) != before
 
 
 async def add_period(year: int, month: int, start_day: int, gid: str) -> int:
