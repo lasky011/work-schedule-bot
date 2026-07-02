@@ -69,6 +69,8 @@ def test_imports():
     assert hasattr(schedule_utils, "format_date")
     assert hasattr(schedule_utils, "detect_shift")
     assert hasattr(keyboards, "compare_kb")
+    from keyboards import admin as admin_keyboards
+    assert hasattr(admin_keyboards, "admin_main_kb")
     assert hasattr(states, "NotificationStates")
     assert hasattr(routers, "salary_router")
     assert hasattr(routers, "schedule_router")

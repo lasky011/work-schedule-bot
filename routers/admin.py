@@ -1,22 +1,47 @@
-"""Админ-команды бота."""
+"""Админ-команды и интерфейс admin-бота."""
 
 import calendar
 import logging
+import re
 from typing import Awaitable, Callable
 
 from aiogram import F, Router
-from aiogram.types import Message
+from aiogram.fsm.context import FSMContext
+from aiogram.types import CallbackQuery, Message
 
 from app_config import APP_TIMEZONE_NAME, is_admin, now_local
 from db import get_db_connection
+from keyboards.admin import (
+    BTN_ADD_PERIOD,
+    BTN_CACHE,
+    BTN_CANCEL,
+    BTN_HELP,
+    BTN_PERIODS,
+    BTN_RELOAD_PERIODS,
+    BTN_RELOAD_SHEETS,
+    BTN_STATUS,
+    CB_EDIT_PERIOD,
+    CB_RELOAD_PERIODS,
+    CB_RELOAD_SHEETS,
+    add_period_half_kb,
+    add_period_month_kb,
+    admin_cancel_kb,
+    admin_main_kb,
+    periods_inline_kb,
+)
 from keyboards import get_available_periods
 from services.sheet_periods_service import SHEET_GID_MAP, add_period, reload_from_db
 from sheets_client import cached_df, cached_time, clear_sheet_cache
+from states import AdminAddPeriodStates, AdminEditPeriodStates
 from ui_utils import month_label
 
 router = Router(name="admin")
 
 _load_full_sheet: Callable[[], Awaitable] | None = None
+
+_MONTH_YEAR_RE = re.compile(r"^(.+?)\s+(\d{4})$")
+_HALF_FIRST_RE = re.compile(r"^1–15\s+")
+_HALF_SECOND_RE = re.compile(r"^16–\d+\s+")
 
 
 def configure_admin_router(load_full_sheet):
@@ -24,30 +49,39 @@ def configure_admin_router(load_full_sheet):
     _load_full_sheet = load_full_sheet
 
 
-@router.message(F.text == "/start")
-async def admin_start(message: Message):
-    user_id = message.from_user.id
-    if not is_admin(user_id):
-        return await message.answer("⛔ Нет доступа. Этот бот только для администраторов.")
-
-    await message.answer(
-        "🛠 Admin-бот расписания\n\n"
-        "Команды:\n"
-        "/health — статус БД и кэша\n"
-        "/periods — список периодов\n"
-        "/add_period год месяц start_day gid — добавить период\n"
-        "/reload_periods — перечитать периоды из БД\n"
-        "/reload_sheets — сбросить кэш Google Sheets\n"
-        "/cache — состояние кэша листов"
-    )
+def _deny(message: Message) -> bool:
+    return not is_admin(message.from_user.id)
 
 
-@router.message(F.text == "/health")
-async def admin_health(message: Message):
-    user_id = message.from_user.id
-    if not is_admin(user_id):
-        return
+async def _deny_callback(callback: CallbackQuery) -> bool:
+    if is_admin(callback.from_user.id):
+        return False
+    await callback.answer("⛔ Нет доступа", show_alert=True)
+    return True
 
+
+def _period_end_day(year: int, month: int, start_day: int) -> int:
+    if start_day == 1:
+        return 15
+    return calendar.monthrange(year, month)[1]
+
+
+def _format_periods_text() -> str:
+    actual = set(get_available_periods())
+    lines = ["📅 Периоды графика\n"]
+    for year, month, start_day in sorted(SHEET_GID_MAP.keys()):
+        end_day = _period_end_day(year, month, start_day)
+        status = "актуален" if (year, month, start_day, end_day) in actual else "прошёл"
+        gid = SHEET_GID_MAP[(year, month, start_day)]
+        lines.append(
+            f"{start_day}–{end_day} {month_label(month)} {year}: gid={gid} ({status})"
+        )
+    if len(lines) == 1:
+        lines.append("Периодов пока нет.")
+    return "\n".join(lines)
+
+
+async def _send_health(message: Message) -> None:
     now = now_local()
     db_status = "unknown"
     notify_count = "?"
@@ -67,52 +101,276 @@ async def admin_health(message: Message):
         db_status = f"error: {e}"
 
     text = (
-        "🛠 Health check\n\n"
-        f"Время бота: {now.strftime('%Y-%m-%d %H:%M:%S')}\n"
+        "🛠 Статус\n\n"
+        f"Время: {now.strftime('%Y-%m-%d %H:%M:%S')}\n"
         f"Таймзона: {APP_TIMEZONE_NAME}\n"
         f"БД: {db_status}\n"
-        f"Пользователей с уведомлениями смен: {notify_count}\n"
-        f"Пользователей с уведомлениями часов: {notify_hours_count}\n"
+        f"Уведомления смен: {notify_count} чел.\n"
+        f"Уведомления часов: {notify_hours_count} чел.\n"
         f"Периодов в БД: {len(SHEET_GID_MAP)}\n"
         f"Кэшированных gid: {len(cached_df)}\n"
     )
-    await message.answer(text)
+    await message.answer(text, reply_markup=admin_main_kb())
 
 
-@router.message(F.text == "/periods")
-async def admin_periods(message: Message):
-    user_id = message.from_user.id
-    if not is_admin(user_id):
-        return
+async def _send_cache(message: Message) -> None:
+    now = now_local()
+    if not cached_df:
+        return await message.answer("🧹 Кэш Google Sheets пуст.", reply_markup=admin_main_kb())
 
-    actual = set(get_available_periods())
-    lines = ["📅 Периоды графика\n"]
-    for year, month, start_day in sorted(SHEET_GID_MAP.keys()):
-        if start_day == 1:
-            end_day = 15
-        else:
-            end_day = calendar.monthrange(year, month)[1]
-        status = "актуален" if (year, month, start_day, end_day) in actual else "прошёл"
-        gid = SHEET_GID_MAP[(year, month, start_day)]
-        lines.append(
-            f"{start_day}–{end_day} {month_label(month)} {year}: gid={gid} ({status})"
+    lines = ["🧠 Кэш Google Sheets\n"]
+    for gid, df in cached_df.items():
+        ts = cached_time.get(gid)
+        age = "?"
+        if ts:
+            try:
+                age = f"{int((now - ts).total_seconds())} сек."
+            except Exception:
+                age = "?"
+        shape = getattr(df, "shape", None)
+        lines.append(f"gid={gid}: age={age}, shape={shape}")
+
+    await message.answer("\n".join(lines), reply_markup=admin_main_kb())
+
+
+async def _reload_periods(message: Message) -> None:
+    try:
+        count = await reload_from_db()
+    except Exception as e:
+        logging.exception("admin_reload_periods error: %s", e)
+        return await message.answer(f"⚠️ Не удалось перезагрузить периоды: {e}")
+    await message.answer(f"✅ Периоды перезагружены из БД: {count}", reply_markup=admin_main_kb())
+
+
+async def _reload_sheets(message: Message) -> None:
+    if _load_full_sheet is None:
+        return await message.answer("⚠️ admin router не настроен.")
+
+    clear_sheet_cache()
+    try:
+        await reload_from_db()
+        await _load_full_sheet()
+        await message.answer(
+            "✅ Периоды и кэш Google Sheets сброшены, данные загружены заново.",
+            reply_markup=admin_main_kb(),
+        )
+    except Exception as e:
+        logging.exception("admin_reload_sheets error: %s", e)
+        await message.answer(
+            f"⚠️ Кэш сброшен, но загрузка таблиц завершилась ошибкой: {e}",
+            reply_markup=admin_main_kb(),
         )
 
-    await message.answer("\n".join(lines))
+
+def _parse_month_button(text: str) -> tuple[int, int] | None:
+    match = _MONTH_YEAR_RE.match(text.strip())
+    if not match:
+        return None
+    month_name, year_str = match.group(1), match.group(2)
+    for month in range(1, 13):
+        if month_label(month) == month_name:
+            return int(year_str), month
+    return None
+
+
+def _parse_half_button(text: str, year: int, month: int) -> int | None:
+    if _HALF_FIRST_RE.match(text):
+        return 1
+    if _HALF_SECOND_RE.match(text):
+        return 16
+    return None
+
+
+async def _save_period(
+    message: Message,
+    state: FSMContext,
+    year: int,
+    month: int,
+    start_day: int,
+    gid: str,
+) -> None:
+    try:
+        count = await add_period(year, month, start_day, gid)
+    except Exception as e:
+        logging.exception("admin save period error: %s", e)
+        await state.clear()
+        return await message.answer(f"⚠️ Не удалось сохранить период: {e}", reply_markup=admin_main_kb())
+
+    end_day = _period_end_day(year, month, start_day)
+    await state.clear()
+    await message.answer(
+        f"✅ Период {start_day}–{end_day} {month_label(month)} {year} сохранён.\n"
+        f"gid={gid}\n"
+        f"Всего периодов: {count}\n\n"
+        "Prod и test подхватят в течение ~5 мин.",
+        reply_markup=admin_main_kb(),
+    )
+
+
+@router.message(F.text == "/start")
+@router.message(F.text == BTN_HELP)
+@router.message(F.text == "/help")
+async def admin_start(message: Message, state: FSMContext):
+    if _deny(message):
+        return await message.answer("⛔ Нет доступа. Этот бот только для администраторов.")
+    await state.clear()
+    await message.answer(
+        "🛠 Admin-бот расписания\n\n"
+        "Используй кнопки ниже или команды:\n"
+        "/periods /health /cache\n"
+        "/add_period год месяц start_day gid",
+        reply_markup=admin_main_kb(),
+    )
+
+
+@router.message(F.text == BTN_CANCEL)
+async def admin_cancel(message: Message, state: FSMContext):
+    if _deny(message):
+        return
+    await state.clear()
+    await message.answer("Отменено.", reply_markup=admin_main_kb())
+
+
+@router.message(F.text == BTN_STATUS)
+@router.message(F.text == "/health")
+async def admin_health(message: Message, state: FSMContext):
+    if _deny(message):
+        return
+    await state.clear()
+    await _send_health(message)
+
+
+@router.message(F.text == BTN_CACHE)
+@router.message(F.text == "/cache")
+async def admin_cache(message: Message, state: FSMContext):
+    if _deny(message):
+        return
+    await state.clear()
+    await _send_cache(message)
+
+
+@router.message(F.text == BTN_RELOAD_PERIODS)
+@router.message(F.text == "/reload_periods")
+async def admin_reload_periods(message: Message, state: FSMContext):
+    if _deny(message):
+        return
+    await state.clear()
+    await _reload_periods(message)
+
+
+@router.message(F.text == BTN_RELOAD_SHEETS)
+@router.message(F.text == "/reload_sheets")
+async def admin_reload_sheets(message: Message, state: FSMContext):
+    if _deny(message):
+        return
+    await state.clear()
+    await _reload_sheets(message)
+
+
+@router.message(F.text == BTN_PERIODS)
+@router.message(F.text == "/periods")
+async def admin_periods(message: Message, state: FSMContext):
+    if _deny(message):
+        return
+    await state.clear()
+    keys = sorted(SHEET_GID_MAP.keys())
+    await message.answer(
+        _format_periods_text(),
+        reply_markup=periods_inline_kb(keys) if keys else admin_main_kb(),
+    )
+
+
+@router.message(F.text == BTN_ADD_PERIOD)
+async def admin_add_period_start(message: Message, state: FSMContext):
+    if _deny(message):
+        return
+    await state.set_state(AdminAddPeriodStates.choosing_month)
+    await message.answer(
+        "Выбери месяц для нового периода:",
+        reply_markup=add_period_month_kb(),
+    )
+
+
+@router.message(AdminAddPeriodStates.choosing_month)
+async def admin_add_period_month(message: Message, state: FSMContext):
+    if _deny(message):
+        return
+    if message.text == BTN_CANCEL:
+        await state.clear()
+        return await message.answer("Отменено.", reply_markup=admin_main_kb())
+
+    parsed = _parse_month_button(message.text or "")
+    if not parsed:
+        return await message.answer("Выбери месяц кнопкой ниже.", reply_markup=add_period_month_kb())
+
+    year, month = parsed
+    await state.update_data(year=year, month=month)
+    await state.set_state(AdminAddPeriodStates.choosing_half)
+    await message.answer(
+        f"Выбери половину месяца ({month_label(month)} {year}):",
+        reply_markup=add_period_half_kb(year, month),
+    )
+
+
+@router.message(AdminAddPeriodStates.choosing_half)
+async def admin_add_period_half(message: Message, state: FSMContext):
+    if _deny(message):
+        return
+    if message.text == BTN_CANCEL:
+        await state.clear()
+        return await message.answer("Отменено.", reply_markup=admin_main_kb())
+
+    data = await state.get_data()
+    year, month = data["year"], data["month"]
+    start_day = _parse_half_button(message.text or "", year, month)
+    if start_day is None:
+        return await message.answer(
+            "Выбери период кнопкой ниже.",
+            reply_markup=add_period_half_kb(year, month),
+        )
+
+    existing = SHEET_GID_MAP.get((year, month, start_day))
+    await state.update_data(start_day=start_day)
+    await state.set_state(AdminAddPeriodStates.waiting_gid)
+
+    end_day = _period_end_day(year, month, start_day)
+    hint = ""
+    if existing:
+        hint = f"\n\n⚠️ Период уже есть (gid={existing}) — новый gid заменит старый."
+    await message.answer(
+        f"Введи gid Google Sheets для {start_day}–{end_day} {month_label(month)} {year}:{hint}",
+        reply_markup=admin_cancel_kb(),
+    )
+
+
+@router.message(AdminAddPeriodStates.waiting_gid)
+async def admin_add_period_gid(message: Message, state: FSMContext):
+    if _deny(message):
+        return
+    if message.text == BTN_CANCEL:
+        await state.clear()
+        return await message.answer("Отменено.", reply_markup=admin_main_kb())
+
+    gid = (message.text or "").strip()
+    if not gid.isdigit():
+        return await message.answer("⚠️ gid должен содержать только цифры.", reply_markup=admin_cancel_kb())
+
+    data = await state.get_data()
+    await _save_period(message, state, data["year"], data["month"], data["start_day"], gid)
 
 
 @router.message(F.text.regexp(r"^/add_period(\s|$)"))
-async def admin_add_period(message: Message):
-    user_id = message.from_user.id
-    if not is_admin(user_id):
+async def admin_add_period_command(message: Message, state: FSMContext):
+    if _deny(message):
         return
+    await state.clear()
 
     parts = (message.text or "").split()
     if len(parts) != 5:
         return await message.answer(
             "Формат: /add_period год месяц start_day gid\n"
-            "Пример: /add_period 2026 8 1 1234567890\n"
-            "start_day: 1 (1–15) или 16 (16–конец месяца)"
+            "Или нажми «➕ Добавить период».",
+            reply_markup=admin_main_kb(),
         )
 
     try:
@@ -130,76 +388,62 @@ async def admin_add_period(message: Message):
     if not gid.isdigit():
         return await message.answer("⚠️ gid должен содержать только цифры.")
 
-    try:
-        count = await add_period(year, month, start_day, gid)
-    except Exception as e:
-        logging.exception("admin_add_period error: %s", e)
-        return await message.answer(f"⚠️ Не удалось сохранить период: {e}")
+    await _save_period(message, state, year, month, start_day, gid)
 
-    end_day = 15 if start_day == 1 else calendar.monthrange(year, month)[1]
-    await message.answer(
-        f"✅ Период {start_day}–{end_day} {month_label(month)} {year} сохранён.\n"
-        f"gid={gid}\n"
-        f"Всего периодов: {count}"
+
+@router.callback_query(F.data.startswith(f"{CB_EDIT_PERIOD}:"))
+async def admin_edit_period_start(callback: CallbackQuery, state: FSMContext):
+    if await _deny_callback(callback):
+        return
+
+    parts = callback.data.split(":")
+    if len(parts) != 4:
+        return await callback.answer("Некорректные данные", show_alert=True)
+
+    year, month, start_day = int(parts[1]), int(parts[2]), int(parts[3])
+    gid = SHEET_GID_MAP.get((year, month, start_day), "?")
+    end_day = _period_end_day(year, month, start_day)
+
+    await state.set_state(AdminEditPeriodStates.waiting_gid)
+    await state.update_data(year=year, month=month, start_day=start_day)
+    await callback.answer()
+    await callback.message.answer(
+        f"✏️ Редактирование: {start_day}–{end_day} {month_label(month)} {year}\n"
+        f"Текущий gid: {gid}\n\n"
+        "Отправь новый gid (только цифры):",
+        reply_markup=admin_cancel_kb(),
     )
 
 
-@router.message(F.text == "/reload_periods")
-async def admin_reload_periods(message: Message):
-    user_id = message.from_user.id
-    if not is_admin(user_id):
+@router.message(AdminEditPeriodStates.waiting_gid)
+async def admin_edit_period_gid(message: Message, state: FSMContext):
+    if _deny(message):
         return
+    if message.text == BTN_CANCEL:
+        await state.clear()
+        return await message.answer("Отменено.", reply_markup=admin_main_kb())
 
-    try:
-        count = await reload_from_db()
-    except Exception as e:
-        logging.exception("admin_reload_periods error: %s", e)
-        return await message.answer(f"⚠️ Не удалось перезагрузить периоды: {e}")
+    gid = (message.text or "").strip()
+    if not gid.isdigit():
+        return await message.answer("⚠️ gid должен содержать только цифры.", reply_markup=admin_cancel_kb())
 
-    await message.answer(f"✅ Периоды перезагружены из БД: {count}")
+    data = await state.get_data()
+    await _save_period(message, state, data["year"], data["month"], data["start_day"], gid)
 
 
-@router.message(F.text == "/cache")
-async def admin_cache(message: Message):
-    user_id = message.from_user.id
-    if not is_admin(user_id):
+@router.callback_query(F.data == CB_RELOAD_SHEETS)
+async def admin_reload_sheets_callback(callback: CallbackQuery, state: FSMContext):
+    if await _deny_callback(callback):
         return
-
-    now = now_local()
-    if not cached_df:
-        return await message.answer("🧹 Кэш Google Sheets пуст.")
-
-    lines = ["🧠 Кэш Google Sheets\n"]
-    for gid, df in cached_df.items():
-        ts = cached_time.get(gid)
-        age = "?"
-        if ts:
-            try:
-                age = f"{int((now - ts).total_seconds())} сек."
-            except Exception:
-                age = "?"
-        shape = getattr(df, "shape", None)
-        lines.append(f"gid={gid}: age={age}, shape={shape}")
-
-    await message.answer("\n".join(lines))
+    await state.clear()
+    await callback.answer()
+    await _reload_sheets(callback.message)
 
 
-@router.message(F.text == "/reload_sheets")
-async def admin_reload_sheets(message: Message):
-    user_id = message.from_user.id
-    if not is_admin(user_id):
+@router.callback_query(F.data == CB_RELOAD_PERIODS)
+async def admin_reload_periods_callback(callback: CallbackQuery, state: FSMContext):
+    if await _deny_callback(callback):
         return
-
-    if _load_full_sheet is None:
-        return await message.answer("⚠️ admin router не настроен.")
-
-    clear_sheet_cache()
-    try:
-        await reload_from_db()
-        await _load_full_sheet()
-        await message.answer(
-            "✅ Периоды и кэш Google Sheets сброшены, данные загружены заново."
-        )
-    except Exception as e:
-        logging.exception("admin_reload_sheets error: %s", e)
-        await message.answer(f"⚠️ Кэш сброшен, но загрузка таблиц завершилась ошибкой: {e}")
+    await state.clear()
+    await callback.answer()
+    await _reload_periods(callback.message)

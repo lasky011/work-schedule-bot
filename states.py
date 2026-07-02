@@ -38,3 +38,13 @@ class ShiftHistoryStates(StatesGroup):
     selecting_month = State()
     selecting_period = State()
     viewing_period = State()
+
+
+class AdminAddPeriodStates(StatesGroup):
+    choosing_month = State()
+    choosing_half = State()
+    waiting_gid = State()
+
+
+class AdminEditPeriodStates(StatesGroup):
+    waiting_gid = State()
