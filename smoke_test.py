@@ -257,8 +257,8 @@ def test_message_format():
     assert "<b>" in card
     assert "Виталий" in card
     assert mf.money(86400) == "86 400 ₽"
-    row = mf.week_table_row("Пн", 15, "✅", "16:00", 8)
-    assert "Пн" in row and "15" in row
+    row = mf.week_day_line("Вт", 30, "июл", True, "11:00–23:00")
+    assert "Вт" in row and "11:00" in row
 
 
 def main():

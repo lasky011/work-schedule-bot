@@ -6,8 +6,8 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
 from fsm_context import reset_modes
-from keyboards import main_kb_async
-from message_format import onboarding_step, welcome_card
+from keyboards import dep_kb, main_kb_async
+from message_format import welcome_card
 from repositories.users_repo import get_user, get_user_name
 from states import NameFlowStates
 from ui_utils import answer_html, with_loading
@@ -27,13 +27,12 @@ async def start(message: Message, state: FSMContext):
         text = welcome_card(f", {user[1]}", "Выбери раздел 👇")
         await answer_html(message, text, reply_markup=await main_kb_async(user_id))
     else:
-        text = welcome_card("", "Для начала пройди короткую настройку 👇")
-        await answer_html(message, text, reply_markup=await main_kb_async(user_id))
         await state.set_state(NameFlowStates.choosing_own_department)
         await answer_html(
             message,
-            onboarding_step(1, 3, "<b>Шаг 1:</b> выбери своё подразделение"),
-            reply_markup=await main_kb_async(user_id),
+            "Привет 👋\n\n"
+            "Я бот расписания. Для начала выбери <b>подразделение</b>:",
+            reply_markup=dep_kb(),
         )
 
 

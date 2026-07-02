@@ -97,14 +97,25 @@ def day_off_together(people: list[str]) -> str:
     return "\n".join(lines)
 
 
-def week_table_row(day_short: str, day_num: int, icon: str, shift_short: str, on_shift: int) -> str:
-    shift_cell = shift_short if shift_short else "—"
-    return f"{day_short:2} {day_num:2}  {icon}  {shift_cell:8}  ({on_shift})"
+def week_day_line(
+    day_short: str,
+    day_num: int,
+    month_short: str,
+    working: bool,
+    shift_text: str | None,
+) -> str:
+    if working and shift_text:
+        status = f"✅ {esc(shift_text)}"
+    elif working:
+        status = "✅ смена"
+    else:
+        status = "🏖 выходной"
+    return f"{esc(day_short)} {day_num} {esc(month_short)} · {status}"
 
 
-def week_pre_block(header: str, table_lines: list[str]) -> str:
-    table = "\n".join(table_lines)
-    return f"<b>{esc(header)}</b>\n\n<pre>{table}</pre>"
+def week_list_block(header: str, lines: list[str]) -> str:
+    body = "\n".join(lines)
+    return f"🗓 <b>{esc(header)}</b>\n\n{body}"
 
 
 def salary_dashboard(

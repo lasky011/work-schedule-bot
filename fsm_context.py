@@ -216,7 +216,7 @@ async def prompt_choose_own_name(message: Message, state: FSMContext):
     await state.set_state(NameFlowStates.choosing_own_department)
     from ui_utils import answer_html
 
-    text = onboarding_step(1, 3, "Сначала выбери своё имя.\n\n<b>Шаг 1:</b> подразделение")
+    text = onboarding_step(1, 3, "Выбери <b>подразделение</b>")
     return await answer_html(message, text, reply_markup=dep_kb())
 
 
