@@ -182,11 +182,11 @@ async def _show_week_schedule(
         )
 
     day_lines = []
-    today = now_local().date()
+    today_date = now_local().date()
     for dt in week_days:
         day_short = weekdays_short[dt.weekday()]
         month_short = ru_months_short[dt.month]
-        is_today = dt.date() == today
+        is_today = dt.date() == today_date
         try:
             row, _ = await schedule.find_row(name, dt.day, dt.month, dt.year, target_role=role)
             if row:
@@ -203,18 +203,13 @@ async def _show_week_schedule(
                     )
             else:
                 line = f"{day_short} {dt.day} {month_short} · 📋 нет данных"
-                if is_today:
-                    line = f"<b>📍 {line}</b>"
-                day_lines.append(line)
+                day_lines.append(f"👉 <b>{line}</b>" if is_today else line)
         except (ValueError, ConnectionError):
-            line = f"{day_short} {dt.day} {month_short} · ⚠️ таблица недоступна"
-            if is_today:
-                line = f"<b>📍 {line}</b>"
-            day_lines.append(line)
+            day_lines.append(f"{day_short} {dt.day} {month_short} · ⚠️ таблица недоступна")
 
     body = mf.week_list_block(header, day_lines)
     text = await with_viewing_context(state, body)
-    inline = week_inline_kb(week_days, today=today)
+    inline = week_inline_kb(week_days)
 
     elapsed = asyncio.get_event_loop().time() - t0
     if elapsed < MIN_LOADING_SEC:

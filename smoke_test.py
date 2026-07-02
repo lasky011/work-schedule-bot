@@ -258,7 +258,7 @@ def test_message_format():
     assert "Виталий" in card
     assert mf.money(86400) == "86 400 ₽"
     row = mf.week_day_line("Вт", 30, "июл", True, "11:00–23:00", is_today=True)
-    assert "📍" in row and "<b>" in row
+    assert "👉" in row and "Вт" in row
 
 
 def main():

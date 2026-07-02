@@ -7,7 +7,7 @@ from datetime import timedelta
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
-from aiogram_calendar import SimpleCalendar, SimpleCalendarCallback
+from aiogram_calendar import SimpleCalendarCallback
 
 from app_config import now_local
 from departments_manager import DEPT_EMOJIS
@@ -40,6 +40,7 @@ from repositories.users_repo import get_user, save_user
 from services import salary_service
 from states import ShiftEntryStates, ShiftHistoryStates
 from message_format import card
+from ui_calendar import shift_calendar
 from ui_utils import answer_html, fmt_hours, with_loading
 
 router = Router(name="salary")
@@ -237,23 +238,24 @@ async def enter_shift_start(message: Message):
     )
     await message.answer(
         "📅 Календарь:",
-        reply_markup=await SimpleCalendar(
-            cancel_btn="Отмена", today_btn="Сегодня",
-        ).start_calendar(year=now.year, month=now.month),
+        reply_markup=await shift_calendar().start_calendar(year=now.year, month=now.month),
     )
 
 
 @router.callback_query(SimpleCalendarCallback.filter())
-@with_loading("⏳ Проверяю график...")
 async def process_calendar(callback: CallbackQuery, callback_data: SimpleCalendarCallback, state: FSMContext):
+    cal = shift_calendar()
+    selected, dt = await cal.process_selection(callback, callback_data)
+    if not selected:
+        try:
+            await callback.answer()
+        except Exception:
+            pass
+        return
+
+    await callback.answer()
     user_id = callback.from_user.id
     user = await get_user(user_id)
-
-    selected, dt = await SimpleCalendar(
-        cancel_btn="Отмена", today_btn="Сегодня",
-    ).process_selection(callback, callback_data)
-    if not selected:
-        return
 
     if not user or not user[1]:
         await callback.message.answer("Сначала выбери своё имя.", reply_markup=dep_kb())

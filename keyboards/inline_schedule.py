@@ -9,15 +9,13 @@ CB_WEEK_NEXT = "wk:next"
 CB_WEEK_DAY = "wk:day:"
 
 
-def week_inline_kb(week_days, today=None) -> InlineKeyboardMarkup:
+def week_inline_kb(week_days) -> InlineKeyboardMarkup:
     weekdays_short = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
     rows = []
     day_row = []
 
     for dt in week_days:
         label = f"{weekdays_short[dt.weekday()]} {dt.day}"
-        if today is not None and dt.date() == today:
-            label = f"📍 {label}"
         day_row.append(
             InlineKeyboardButton(
                 text=label,
