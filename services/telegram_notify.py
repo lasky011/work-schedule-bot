@@ -8,9 +8,10 @@ import requests
 from app_config import BOT_TOKEN
 
 
-def _send_sync(chat_id: int, text: str, reply_markup: dict | None = None) -> None:
+def _send_sync(chat_id: int, text: str, reply_markup: dict | None = None) -> bool:
     if not BOT_TOKEN:
-        return
+        logging.warning("telegram_notify: BOT_TOKEN is missing")
+        return False
     try:
         payload = {"chat_id": chat_id, "text": text}
         if reply_markup:
@@ -22,13 +23,16 @@ def _send_sync(chat_id: int, text: str, reply_markup: dict | None = None) -> Non
         )
         if not resp.ok:
             logging.warning("telegram_notify: %s %s", resp.status_code, resp.text[:200])
+            return False
+        return True
     except Exception as e:
         logging.warning("telegram_notify failed: %s", e)
+        return False
 
 
 async def send_user_message(
     chat_id: int,
     text: str,
     reply_markup: dict | None = None,
-) -> None:
-    await asyncio.to_thread(_send_sync, chat_id, text, reply_markup)
+) -> bool:
+    return await asyncio.to_thread(_send_sync, chat_id, text, reply_markup)

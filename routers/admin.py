@@ -10,7 +10,7 @@ from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
-from app_config import APP_TIMEZONE_NAME, is_admin, now_local
+from app_config import APP_TIMEZONE_NAME, BOT_TOKEN, is_admin, now_local
 from db import get_db_connection
 from keyboards.admin import (
     BTN_ADD_PERIOD,
@@ -48,6 +48,7 @@ from keyboards.admin import (
 from keyboards import get_available_periods
 from repositories.admin_log_repo import list_recent_logs, record_action
 from repositories.admin_repo import get_broadcast_recipients, get_dashboard_stats, get_shift_stats, list_users
+from services.telegram_notify import send_user_message
 from services.sheet_periods_service import SHEET_GID_MAP, add_period, reload_from_db, remove_period
 from sheets_client import cached_df, cached_time, clear_sheet_cache
 from states import AdminAddPeriodStates, AdminBroadcastStates, AdminEditPeriodStates, AdminStatsStates
@@ -638,14 +639,28 @@ async def admin_broadcast_send(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await callback.message.edit_reply_markup(reply_markup=None)
 
+    if not BOT_TOKEN:
+        await state.clear()
+        return await callback.message.answer(
+            "⚠️ У основного бота не настроен `BOT_TOKEN`, рассылка недоступна.",
+            reply_markup=admin_main_kb(),
+        )
+
     sent, failed = 0, 0
+    failed_names: list[str] = []
     for user_id, name in recipients:
         try:
-            await callback.bot.send_message(user_id, text)
-            sent += 1
+            ok = await send_user_message(user_id, text)
+            if ok:
+                sent += 1
+            else:
+                failed += 1
+                failed_names.append(name or str(user_id))
+                logging.warning("broadcast failed user_id=%s name=%s", user_id, name)
         except Exception as e:
             logging.warning("broadcast failed user_id=%s name=%s: %s", user_id, name, e)
             failed += 1
+            failed_names.append(name or str(user_id))
         await asyncio.sleep(0.05)
 
     await state.clear()
@@ -654,8 +669,13 @@ async def admin_broadcast_send(callback: CallbackQuery, state: FSMContext):
         "broadcast",
         f"audience={audience}, sent={sent}, failed={failed}, len={len(text)}",
     )
+    failed_hint = ""
+    if failed_names:
+        preview = ", ".join(failed_names[:6])
+        extra = "" if len(failed_names) <= 6 else f" и ещё {len(failed_names) - 6}"
+        failed_hint = f"\nНе дошло: {preview}{extra}"
     await callback.message.answer(
-        f"✅ Рассылка завершена.\nОтправлено: {sent}\nОшибок: {failed}",
+        f"✅ Рассылка завершена.\nОтправлено: {sent}\nОшибок: {failed}{failed_hint}",
         reply_markup=admin_main_kb(),
     )
 
