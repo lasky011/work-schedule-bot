@@ -90,6 +90,8 @@ async def own_name_selected(message: Message, state: FSMContext):
                 break
 
     await save_user(user_id, name=message.text, notify=0, notify_time='', role=user_role)
+    from services.schedule_watch_service import reset_user_snapshot
+    await reset_user_snapshot(user_id)
     await reset_modes(user_id, state)
 
     await answer_html(

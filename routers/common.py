@@ -24,7 +24,10 @@ async def start(message: Message, state: FSMContext):
     user = await get_user(user_id)
 
     if user and user[1]:
-        text = welcome_card(f", {user[1]}", "Выбери раздел 👇")
+        text = welcome_card(
+            f", {user[1]}",
+            "Краткий график — кнопка «Сегодня».\nВсё остальное — TNG Alice (кнопка меню внизу чата) ✨",
+        )
         await answer_html(message, text, reply_markup=await main_kb_async(user_id))
     else:
         await state.set_state(NameFlowStates.choosing_own_department)

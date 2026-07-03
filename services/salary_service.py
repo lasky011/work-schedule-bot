@@ -70,22 +70,20 @@ def parse_shift_history_period_button(text: str) -> tuple[int, int, int, int] | 
     return None
 
 
-async def build_salary_stats_text(
+async def build_salary_stats_data(
     user_id: int,
     user: tuple,
     year: int,
     month: int,
     period_start: int,
     period_end: int,
-) -> str:
+) -> dict:
     if _find_row is None or _get_day_value is None:
         raise RuntimeError("salary_service не настроен: вызови configure_salary_service()")
 
     name = user[1]
     role = user[4] if len(user) > 4 else None
     track_hours = user[5] if len(user) > 5 else 0
-
-    period_name = str(period_start) + "-" + str(period_end)
 
     schedule_shifts = 0
     schedule_hours = 0.0
@@ -122,17 +120,61 @@ async def build_salary_stats_text(
 
     approx_salary = round(schedule_hours * rate) if rate and not no_data else None
 
+    history = []
+    if track_hours:
+        for row in await get_shift_history_period_shifts(user_id, year, month, period_start, period_end):
+            date_str, hours, shift_type, is_standard, note = row
+            history.append({
+                "date": date_str,
+                "hours": float(hours),
+                "shift_type": shift_type,
+                "is_standard": bool(is_standard),
+                "note": note,
+            })
+
+    return {
+        "period": {
+            "year": year,
+            "month": month,
+            "start": period_start,
+            "end": period_end,
+            "title": period_title,
+        },
+        "schedule_shifts": schedule_shifts,
+        "schedule_hours": round(schedule_hours, 1),
+        "approx_salary": approx_salary,
+        "rate": rate or None,
+        "track_hours": bool(track_hours),
+        "actual_shifts": actual_shifts,
+        "actual_hours": round(actual_hours, 1),
+        "actual_salary": actual_salary,
+        "no_data": no_data,
+        "history": history,
+    }
+
+
+async def build_salary_stats_text(
+    user_id: int,
+    user: tuple,
+    year: int,
+    month: int,
+    period_start: int,
+    period_end: int,
+) -> str:
+    data = await build_salary_stats_data(
+        user_id, user, year, month, period_start, period_end,
+    )
     return mf.salary_dashboard(
-        period_title,
-        schedule_shifts,
-        schedule_hours,
-        approx_salary,
-        rate or None,
-        bool(track_hours),
-        actual_shifts,
-        actual_hours,
-        actual_salary,
-        no_data,
+        data["period"]["title"],
+        data["schedule_shifts"],
+        data["schedule_hours"],
+        data["approx_salary"],
+        data["rate"],
+        data["track_hours"],
+        data["actual_shifts"],
+        data["actual_hours"],
+        data["actual_salary"],
+        data["no_data"],
     )
 
 

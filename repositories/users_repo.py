@@ -128,3 +128,19 @@ def _get_notify_users_sync():
 
 async def get_notify_users():
     return await asyncio.to_thread(_get_notify_users_sync)
+
+
+def _get_registered_users_sync():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT user_id, name, role FROM users WHERE name IS NOT NULL AND name != ''"
+    )
+    users = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return users
+
+
+async def get_registered_users():
+    return await asyncio.to_thread(_get_registered_users_sync)

@@ -242,6 +242,24 @@ def test_keyboards():
     assert isinstance(periods, list)
 
 
+def test_miniapp_auth():
+    import hashlib
+    import hmac
+    import json
+    from urllib.parse import urlencode
+
+    from api.auth import validate_init_data
+
+    bot_token = "smoke-test-token"
+    user = json.dumps({"id": 42, "first_name": "Smoke"})
+    payload = {"user": user, "auth_date": "1700000000"}
+    check_string = "\n".join(f"{k}={v}" for k, v in sorted(payload.items()))
+    secret = hmac.new(b"WebAppData", bot_token.encode(), hashlib.sha256).digest()
+    payload["hash"] = hmac.new(secret, check_string.encode(), hashlib.sha256).hexdigest()
+    result = validate_init_data(urlencode(payload), bot_token)
+    assert result["user_id"] == 42
+
+
 def test_message_format():
     import message_format as mf
 
@@ -272,6 +290,7 @@ def main():
         ("ui_utils", test_ui_utils),
         ("departments_manager", test_departments_manager),
         ("message_format", test_message_format),
+        ("miniapp_auth", test_miniapp_auth),
     ]
 
     for name, fn in checks:

@@ -1,4 +1,4 @@
-app = "work-schedule-bot"
+app = "work-schedule-bot-test"
 primary_region = "fra"
 
 [build]

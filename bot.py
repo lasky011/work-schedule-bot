@@ -10,6 +10,8 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 from app_config import (
     BOT_TOKEN,
+    MINIAPP_ENABLED,
+    MINIAPP_PORT,
     SHEET_PERIODS_REFRESH_SECONDS,
     now_local,
     validate_required_env,
@@ -19,7 +21,7 @@ from departments_manager import refresh_departments
 from departments_manager import configure_departments_manager
 from db import USE_POSTGRES, get_db_connection, init_pg_pool
 from keyboards import configure_keyboard_context
-from keyboards.inline_salary import shift_entry_kb
+from keyboards.inline_miniapp import daily_notify_kb, hours_notify_kb
 from repositories.shifts_repo import get_shift_for_date
 from repositories.users_repo import get_notify_users
 from routers.colleagues import router as colleagues_router
@@ -40,6 +42,7 @@ from services.compare_service import configure_compare_service
 from services.salary_service import configure_salary_service
 from services.sheet_loader import load_full_sheet, load_sheet
 from services.sheet_periods_service import load_from_db_sync, sync_from_db
+from services.schedule_watch_service import check_all_registered_users, configure_schedule_watch
 from ui_utils import configure_ui_utils
 
 validate_required_env()
@@ -133,6 +136,23 @@ def init_db():
         )
         """)
 
+    if USE_POSTGRES:
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS schedule_snapshots (
+            user_id     BIGINT PRIMARY KEY,
+            snapshot    TEXT NOT NULL,
+            updated_at  TIMESTAMP DEFAULT NOW()
+        )
+        """)
+    else:
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS schedule_snapshots (
+            user_id     INTEGER PRIMARY KEY,
+            snapshot    TEXT NOT NULL,
+            updated_at  TEXT DEFAULT (datetime('now'))
+        )
+        """)
+
     conn.commit()
     cursor.close()
     conn.close()
@@ -142,6 +162,9 @@ schedule.configure_schedule_service(load_sheet, MONTHS, RU_HOLIDAYS)
 configure_departments_manager(schedule.clean_person_name, load_sheet)
 configure_salary_service(find_row=schedule.find_row, get_day_value=schedule.get_day_value)
 configure_compare_service(find_row=schedule.find_row, get_day_value=schedule.get_day_value)
+configure_schedule_watch(MONTHS)
+
+SCHEDULE_WATCH_SECONDS = 180
 
 
 async def hours_notification_loop(bot) -> None:
@@ -231,7 +254,7 @@ async def hours_notification_loop(bot) -> None:
                         lines.append(line)
 
                     await bot.send_message(
-                        user_id, "\n".join(lines), reply_markup=shift_entry_kb(shift_key),
+                        user_id, "\n".join(lines), reply_markup=hours_notify_kb(shift_key),
                     )
                     sent[key] = True
 
@@ -295,7 +318,7 @@ async def notification_loop(bot):
             try:
                 text = await schedule.get_notification_text(name, target_role=nr_role)
                 if text:
-                    await bot.send_message(user_id, text)
+                    await bot.send_message(user_id, text, reply_markup=daily_notify_kb())
                     sent[key] = True
                 else:
                     logging.warning(
@@ -310,6 +333,19 @@ async def notification_loop(bot):
 
         try:
             await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            break
+
+
+async def schedule_watch_loop() -> None:
+    await asyncio.sleep(30)
+    while True:
+        try:
+            await check_all_registered_users()
+        except Exception:
+            logging.exception("schedule_watch_loop: критическая ошибка цикла")
+        try:
+            await asyncio.sleep(SCHEDULE_WATCH_SECONDS)
         except asyncio.CancelledError:
             break
 
@@ -342,6 +378,20 @@ async def global_error_handler(event) -> bool:
     return True
 
 
+async def start_miniapp_server() -> None:
+    import uvicorn
+    from api.app import create_app
+
+    config = uvicorn.Config(
+        create_app(),
+        host="0.0.0.0",
+        port=MINIAPP_PORT,
+        log_level="warning",
+    )
+    server = uvicorn.Server(config)
+    await server.serve()
+
+
 async def main():
     await asyncio.to_thread(init_db)
     init_pg_pool()
@@ -352,6 +402,18 @@ async def main():
         return
 
     bot = Bot(token=BOT_TOKEN)
+
+    miniapp_task = None
+    if MINIAPP_ENABLED:
+        miniapp_task = asyncio.create_task(start_miniapp_server())
+        miniapp_task.add_done_callback(
+            lambda t: logging.exception(
+                "miniapp_server: фоновая задача завершилась с ошибкой",
+                exc_info=t.exception(),
+            ) if not t.cancelled() and t.exception() else None
+        )
+        logging.info("Mini App HTTP на порту %s", MINIAPP_PORT)
+
     await load_full_sheet()
 
     notification_task = asyncio.create_task(notification_loop(bot))
@@ -365,6 +427,13 @@ async def main():
     hours_task.add_done_callback(
         lambda t: logging.exception(
             "hours_notification_loop: фоновая задача завершилась с ошибкой",
+            exc_info=t.exception(),
+        ) if not t.cancelled() and t.exception() else None
+    )
+    schedule_watch_task = asyncio.create_task(schedule_watch_loop())
+    schedule_watch_task.add_done_callback(
+        lambda t: logging.exception(
+            "schedule_watch_loop: фоновая задача завершилась с ошибкой",
             exc_info=t.exception(),
         ) if not t.cancelled() and t.exception() else None
     )
