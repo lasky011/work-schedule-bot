@@ -26,7 +26,7 @@ async def start(message: Message, state: FSMContext):
     if user and user[1]:
         text = welcome_card(
             f", {user[1]}",
-            "Краткий график — кнопка «Сегодня».\nВсё остальное — TNG Alice (кнопка меню внизу чата) ✨",
+            "Открывай TNG Alice через кнопку меню внизу чата ✨",
         )
         await answer_html(message, text, reply_markup=await main_kb_async(user_id))
     else:

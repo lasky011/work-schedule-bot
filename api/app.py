@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -12,6 +12,14 @@ from app_config import BOT_TOKEN
 from services import miniapp_service
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "miniapp" / "static"
+
+
+def _asset_version(name: str) -> str:
+    path = STATIC_DIR / name
+    try:
+        return str(int(path.stat().st_mtime))
+    except OSError:
+        return "1"
 
 
 class ShiftLogBody(BaseModel):
@@ -38,6 +46,7 @@ class SettingsPatch(BaseModel):
     notify_time: str | None = None
     track_hours: bool | None = None
     notify_hours: bool | None = None
+    theme: str | None = None
 
 
 class ProfilePatch(BaseModel):
@@ -74,6 +83,7 @@ def create_app() -> FastAPI:
             notify_time=body.notify_time,
             track_hours=body.track_hours,
             notify_hours=body.notify_hours,
+            theme=body.theme,
         )
         if data.get("error") == "not_registered":
             raise HTTPException(status_code=403, detail="Сначала выбери имя в боте")
@@ -81,6 +91,8 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=400, detail="Неверный формат времени (ЧЧ:ММ)")
         if data.get("error") == "need_time":
             raise HTTPException(status_code=400, detail="Сначала задай время уведомления")
+        if data.get("error") == "bad_theme":
+            raise HTTPException(status_code=400, detail="Неизвестная тема")
         return data
 
     @app.get("/api/departments")
@@ -245,6 +257,9 @@ def create_app() -> FastAPI:
 
         @app.get("/")
         async def index():
-            return FileResponse(STATIC_DIR / "index.html")
+            html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+            html = html.replace("/assets/app.css", f"/assets/app.css?v={_asset_version('app.css')}")
+            html = html.replace("/assets/app.js", f"/assets/app.js?v={_asset_version('app.js')}")
+            return HTMLResponse(html, headers={"Cache-Control": "no-store, max-age=0"})
 
     return app

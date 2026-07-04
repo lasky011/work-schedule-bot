@@ -40,6 +40,64 @@ const TITLES = {
   analytics: "аналитика",
 };
 
+const THEMES = {
+  alice_dark: {
+    title: "alice dark",
+    note: "бархат, золото, рубин",
+    bg: "#0f0f0f",
+  },
+  ruby_smoke: {
+    title: "red queen",
+    note: "вино, крем, черви",
+    bg: "#140f12",
+  },
+  ivory_noir: {
+    title: "ivory cards",
+    note: "фарфор, карты, свет",
+    bg: "#12110f",
+  },
+  emerald_lounge: {
+    title: "emerald lounge",
+    note: "изумруд, стекло, дым",
+    bg: "#0e1413",
+  },
+  white_classic: {
+    title: "white classic",
+    note: "светлая стандартная",
+    bg: "#f5f0e8",
+  },
+  alice_cinema: {
+    title: "alice cinema",
+    note: "ночь, зеркала, лунный сад",
+    bg: "#07080a",
+  },
+  ivory_palace: {
+    title: "ivory palace",
+    note: "фарфор, золото, дворец",
+    bg: "#14100b",
+  },
+  white_cinema: {
+    title: "white cinema",
+    note: "белый дворец, золото, свет",
+    bg: "#f5f0e8",
+  },
+  white_rabbit: {
+    title: "white rabbit",
+    note: "часы, синий сюртук, дым",
+    bg: "#110606",
+  },
+  red_queen_portrait: {
+    title: "red queen portrait",
+    note: "королева, розы, тени",
+    bg: "#120406",
+  },
+  caterpillar_cinema: {
+    title: "caterpillar cinema",
+    note: "грибы, дым, синий лес",
+    bg: "#051018",
+  },
+};
+
 let tab = "schedule";
 let weekOffset = 0;
 let monthOffset = 0;
@@ -145,6 +203,16 @@ function hapticSuccess() {
   try { tg?.HapticFeedback?.notificationOccurred("success"); } catch (_) { /* noop */ }
 }
 
+function applyTheme(themeId) {
+  const nextTheme = THEMES[themeId] ? themeId : "alice_dark";
+  document.body.dataset.theme = nextTheme;
+  const bg = THEMES[nextTheme]?.bg || "#0f0f0f";
+  try {
+    tg?.setHeaderColor?.(bg);
+    tg?.setBackgroundColor?.(bg);
+  } catch (_) { /* noop */ }
+}
+
 function setNavHoursBadge(show) {
   document.querySelector('.nav-btn[data-tab="analytics"]')?.classList.toggle("has-badge", !!show);
 }
@@ -173,6 +241,7 @@ async function refreshNavBadges() {
 async function loadProfile() {
   profile = await api("/api/me");
   if (!profile.registered) {
+    applyTheme("alice_dark");
     hideSplash();
     document.getElementById("nav")?.classList.add("hidden");
     document.getElementById("screen-title").textContent = "кто ты?";
@@ -180,6 +249,7 @@ async function loadProfile() {
     await renderNamePicker("main", { onboarding: true });
     return false;
   }
+  applyTheme(profile.theme || "alice_dark");
   refreshNavBadges();
   return true;
 }
@@ -239,6 +309,7 @@ async function renderNamePicker(targetId, { onboarding = false } = {}) {
           body: JSON.stringify({ name: btn.dataset.name, role: namePickRole }),
         });
         namePickRole = null;
+        applyTheme(profile.theme || "alice_dark");
         tg?.HapticFeedback?.notificationOccurred("success");
         if (onboarding) {
           document.getElementById("nav")?.classList.remove("hidden");
@@ -876,13 +947,33 @@ async function patchSettings(body) {
   return profile;
 }
 
+function themeOptionsHtml(activeTheme) {
+  return Object.entries(THEMES).map(([id, theme]) => `
+    <button type="button" class="theme-option${activeTheme === id ? " active" : ""}" data-theme="${id}">
+      <span class="theme-swatch ${id}">
+        <span></span><span></span><span></span>
+      </span>
+      <span class="theme-copy">
+        <span class="theme-name">${theme.title}</span>
+        <span class="theme-note">${theme.note}</span>
+      </span>
+    </button>
+  `).join("");
+}
+
 function renderSettingsContent() {
   const p = profile;
   const content = document.getElementById("settings-content");
   if (!content || !p) return;
 
   content.innerHTML = `
-    <div class="hours-title">настройки</div>
+    <div class="sheet-title-row">
+      <div class="hours-title">настройки</div>
+      <div class="sheet-title-actions">
+        <button type="button" class="sheet-jump-btn" id="jump-settings-theme">тема</button>
+        <button type="button" class="sheet-close-btn" id="close-settings-sheet" aria-label="закрыть">✕</button>
+      </div>
+    </div>
     <div class="card" style="margin-top:12px">
       <div class="profile-name">${p.name}</div>
       ${p.role_label ? `<div class="setting-desc">${p.role_label}</div>` : ""}
@@ -922,11 +1013,42 @@ function renderSettingsContent() {
         <button type="button" class="btn toggle-btn${p.notify_hours ? " on" : ""}" id="toggle-notify-hours">${p.notify_hours ? "вкл" : "выкл"}</button>
       </div>
     </div>
+    <div class="card" id="settings-theme-card">
+      <div class="card-label">тема</div>
+      <div class="theme-grid">
+        ${themeOptionsHtml(p.theme || "alice_dark")}
+      </div>
+    </div>
   `;
+
+  document.getElementById("close-settings-sheet")?.addEventListener("click", () => {
+    hapticLight();
+    closeSettingsSheet();
+  });
+
+  document.getElementById("jump-settings-theme")?.addEventListener("click", () => {
+    hapticLight();
+    document.getElementById("settings-theme-card")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
 
   document.getElementById("change-name")?.addEventListener("click", () => {
     namePickRole = null;
     renderNamePicker("settings-content");
+  });
+
+  content.querySelectorAll(".theme-option").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const nextTheme = btn.dataset.theme;
+      if (!nextTheme || nextTheme === p.theme) return;
+      try {
+        hapticLight();
+        await patchSettings({ theme: nextTheme });
+        applyTheme(profile.theme || nextTheme);
+        renderSettingsContent();
+      } catch (e) {
+        tg?.showAlert?.(e.message);
+      }
+    });
   });
 
   document.getElementById("toggle-notify")?.addEventListener("click", async () => {

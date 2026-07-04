@@ -1,5 +1,11 @@
 :root {
   --bg: #0f0f0f;
+  --bg-scene:
+    radial-gradient(65% 46% at 14% 0%, rgba(134, 92, 103, 0.34), transparent 64%),
+    radial-gradient(52% 34% at 92% 8%, rgba(154, 138, 106, 0.2), transparent 68%),
+    linear-gradient(180deg, #161113 0%, #0f0f0f 42%, #0a0a0a 100%);
+  --bg-pattern-svg: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='34' height='34'%3E%3Cpath d='M17 3l10 14-10 14L7 17 17 3z' fill='none' stroke='%239a8a6a' stroke-width='0.6' opacity='0.7'/%3E%3C/svg%3E");
+  --bg-pattern-opacity: 0.18;
   --text: #d4d4d4;
   --text-muted: #7a7a7a;
   --gold: #9a8a6a;
@@ -8,11 +14,639 @@
   --love: #c48890;
   --love-dim: rgba(196, 136, 144, 0.52);
   --border: rgba(212, 212, 212, 0.08);
-  --card: rgba(255, 255, 255, 0.025);
+  --card: rgba(20, 16, 18, 0.72);
+  --card-shadow: 0 18px 40px rgba(0, 0, 0, 0.28);
+  --btn-bg: rgba(255, 255, 255, 0.035);
+  --btn-text: #bfb8b5;
+  --btn-border: rgba(212, 212, 212, 0.12);
+  --btn-active-bg: rgba(255, 255, 255, 0.06);
+  --btn-active-border: rgba(212, 212, 212, 0.2);
+  --btn-primary-bg: rgba(154, 138, 106, 0.12);
+  --btn-primary-text: #f1e8dc;
+  --btn-primary-border: rgba(154, 138, 106, 0.3);
+  --toggle-on-bg: rgba(154, 138, 106, 0.1);
+  --toggle-on-border: rgba(154, 138, 106, 0.45);
+  --toggle-on-text: var(--gold);
+  --nav-bg: rgba(8, 8, 9, 0.92);
+  --nav-border: rgba(212, 212, 212, 0.14);
+  --nav-btn-color: #b8b8b8;
+  --nav-active-bg: rgba(154, 138, 106, 0.18);
+  --nav-active-text: #f0e8dc;
+  --nav-active-icon: #c9b896;
+  --settings-btn-bg: rgba(255, 255, 255, 0.03);
+  --settings-btn-border: rgba(212, 212, 212, 0.1);
+  --settings-btn-color: #b8b8b8;
+  --settings-btn-active-bg: rgba(154, 138, 106, 0.14);
+  --settings-btn-active-border: rgba(154, 138, 106, 0.28);
+  --settings-btn-active-color: #c9b896;
+  --cta-bg: linear-gradient(180deg, rgba(154, 138, 106, 0.22), rgba(154, 138, 106, 0.12));
+  --cta-border: rgba(154, 138, 106, 0.35);
+  --cta-text: #f0e8dc;
+  --cta-icon: #d2bf98;
+  --cta-active-bg: linear-gradient(180deg, rgba(154, 138, 106, 0.3), rgba(154, 138, 106, 0.18));
+  --cta-active-border: rgba(154, 138, 106, 0.48);
+  --input-bg: rgba(255, 255, 255, 0.04);
+  --input-focus: rgba(154, 138, 106, 0.45);
+  --sheet-bg: rgba(20, 20, 20, 0.96);
+  --sheet-handle: rgba(255, 255, 255, 0.22);
+  --today-border: rgba(154, 138, 106, 0.6);
+  --today-bg: rgba(154, 138, 106, 0.12);
+  --today-glow: 0 0 12px rgba(154, 138, 106, 0.12);
+  --theme-active-bg: rgba(154, 138, 106, 0.12);
+  --theme-active-border: rgba(154, 138, 106, 0.38);
   --nav-h: 68px;
   --compare-dock-h: 58px;
   --font-display: "Cormorant Garamond", Georgia, serif;
   --font-ui: "Jost", system-ui, sans-serif;
+}
+
+body[data-theme="ruby_smoke"] {
+  --bg: #140b10;
+  --bg-scene:
+    radial-gradient(60% 48% at 18% 4%, rgba(219, 71, 108, 0.34), transparent 62%),
+    radial-gradient(42% 28% at 88% 12%, rgba(255, 209, 176, 0.18), transparent 72%),
+    linear-gradient(180deg, #250910 0%, #140b10 40%, #090406 100%);
+  --bg-pattern-svg: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='30' height='30'%3E%3Cpath d='M15 5c1.8-3 7-1.2 7 2.8 0 5.1-7 9.6-7 9.6S8 12.9 8 7.8C8 3.8 13.2 2 15 5z' fill='none' stroke='%23d96b83' stroke-width='0.7' opacity='0.75'/%3E%3C/svg%3E");
+  --bg-pattern-opacity: 0.22;
+  --text: #f5d9df;
+  --text-muted: #b18b95;
+  --gold: #ffbf96;
+  --accent: #ff6f8d;
+  --heart: #ff5e7f;
+  --love: #ff93aa;
+  --love-dim: rgba(255, 147, 170, 0.58);
+  --border: rgba(255, 186, 202, 0.16);
+  --card: rgba(44, 13, 24, 0.78);
+  --card-shadow: 0 22px 46px rgba(0, 0, 0, 0.36);
+  --btn-bg: rgba(255, 110, 141, 0.08);
+  --btn-text: #f4c6d0;
+  --btn-border: rgba(255, 154, 177, 0.22);
+  --btn-active-bg: rgba(255, 110, 141, 0.14);
+  --btn-active-border: rgba(255, 154, 177, 0.34);
+  --btn-primary-bg: linear-gradient(180deg, rgba(255, 111, 141, 0.28), rgba(255, 111, 141, 0.18));
+  --btn-primary-text: #fff2f5;
+  --btn-primary-border: rgba(255, 154, 177, 0.42);
+  --toggle-on-bg: rgba(255, 111, 141, 0.12);
+  --toggle-on-border: rgba(255, 154, 177, 0.44);
+  --toggle-on-text: #ffb3c2;
+  --nav-bg: rgba(33, 8, 15, 0.94);
+  --nav-border: rgba(255, 186, 202, 0.16);
+  --nav-btn-color: #cfb0b7;
+  --nav-active-bg: linear-gradient(180deg, rgba(255, 111, 141, 0.2), rgba(255, 191, 150, 0.12));
+  --nav-active-text: #fff4f6;
+  --nav-active-icon: #ffb8c6;
+  --settings-btn-bg: rgba(255, 110, 141, 0.09);
+  --settings-btn-border: rgba(255, 154, 177, 0.22);
+  --settings-btn-color: #e9bcc6;
+  --settings-btn-active-bg: rgba(255, 111, 141, 0.18);
+  --settings-btn-active-border: rgba(255, 154, 177, 0.38);
+  --settings-btn-active-color: #fff4f6;
+  --cta-bg: linear-gradient(180deg, rgba(255, 111, 141, 0.34), rgba(255, 191, 150, 0.18));
+  --cta-border: rgba(255, 154, 177, 0.5);
+  --cta-text: #fff6f8;
+  --cta-icon: #ffd4dd;
+  --cta-active-bg: linear-gradient(180deg, rgba(255, 111, 141, 0.42), rgba(255, 191, 150, 0.24));
+  --cta-active-border: rgba(255, 154, 177, 0.62);
+  --input-bg: rgba(255, 255, 255, 0.06);
+  --input-focus: rgba(255, 154, 177, 0.52);
+  --sheet-bg: rgba(36, 10, 20, 0.97);
+  --sheet-handle: rgba(255, 193, 208, 0.34);
+  --today-border: rgba(255, 154, 177, 0.55);
+  --today-bg: rgba(255, 111, 141, 0.14);
+  --today-glow: 0 0 18px rgba(255, 111, 141, 0.16);
+  --theme-active-bg: rgba(255, 111, 141, 0.12);
+  --theme-active-border: rgba(255, 154, 177, 0.45);
+}
+
+body[data-theme="ivory_noir"] {
+  --bg: #161310;
+  --bg-scene:
+    radial-gradient(68% 56% at 22% -4%, rgba(247, 230, 193, 0.18), transparent 60%),
+    radial-gradient(42% 30% at 82% 18%, rgba(204, 171, 112, 0.16), transparent 66%),
+    linear-gradient(180deg, #221d18 0%, #161310 44%, #0b0908 100%);
+  --bg-pattern-svg: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='34' height='34'%3E%3Crect x='5' y='5' width='10' height='14' rx='1.4' fill='none' stroke='%23f0dfba' stroke-width='0.6' opacity='0.7'/%3E%3Crect x='19' y='15' width='10' height='14' rx='1.4' fill='none' stroke='%23c0aa7b' stroke-width='0.6' opacity='0.6'/%3E%3C/svg%3E");
+  --bg-pattern-opacity: 0.16;
+  --text: #f3ead7;
+  --text-muted: #b2a488;
+  --gold: #e5c37a;
+  --accent: #7f6953;
+  --heart: #b38562;
+  --love: #e0ba92;
+  --love-dim: rgba(224, 186, 146, 0.58);
+  --border: rgba(243, 234, 215, 0.18);
+  --card: rgba(252, 243, 224, 0.09);
+  --card-shadow: 0 22px 48px rgba(0, 0, 0, 0.34);
+  --btn-bg: rgba(255, 248, 234, 0.08);
+  --btn-text: #efe4cf;
+  --btn-border: rgba(243, 234, 215, 0.22);
+  --btn-active-bg: rgba(255, 248, 234, 0.14);
+  --btn-active-border: rgba(243, 234, 215, 0.36);
+  --btn-primary-bg: linear-gradient(180deg, rgba(243, 234, 215, 0.22), rgba(229, 195, 122, 0.16));
+  --btn-primary-text: #fffaf0;
+  --btn-primary-border: rgba(243, 234, 215, 0.4);
+  --toggle-on-bg: rgba(229, 195, 122, 0.14);
+  --toggle-on-border: rgba(229, 195, 122, 0.42);
+  --toggle-on-text: #f2d79e;
+  --nav-bg: rgba(27, 23, 18, 0.94);
+  --nav-border: rgba(243, 234, 215, 0.2);
+  --nav-btn-color: #d8ccb8;
+  --nav-active-bg: linear-gradient(180deg, rgba(243, 234, 215, 0.22), rgba(229, 195, 122, 0.12));
+  --nav-active-text: #fff8eb;
+  --nav-active-icon: #f1d697;
+  --settings-btn-bg: rgba(255, 248, 234, 0.08);
+  --settings-btn-border: rgba(243, 234, 215, 0.2);
+  --settings-btn-color: #eadfcf;
+  --settings-btn-active-bg: rgba(243, 234, 215, 0.16);
+  --settings-btn-active-border: rgba(229, 195, 122, 0.42);
+  --settings-btn-active-color: #fff8eb;
+  --cta-bg: linear-gradient(180deg, rgba(243, 234, 215, 0.24), rgba(229, 195, 122, 0.18));
+  --cta-border: rgba(243, 234, 215, 0.44);
+  --cta-text: #fffaf1;
+  --cta-icon: #f3d79f;
+  --cta-active-bg: linear-gradient(180deg, rgba(243, 234, 215, 0.32), rgba(229, 195, 122, 0.22));
+  --cta-active-border: rgba(243, 234, 215, 0.56);
+  --input-bg: rgba(255, 248, 234, 0.08);
+  --input-focus: rgba(229, 195, 122, 0.52);
+  --sheet-bg: rgba(32, 27, 22, 0.97);
+  --sheet-handle: rgba(243, 234, 215, 0.34);
+  --today-border: rgba(229, 195, 122, 0.6);
+  --today-bg: rgba(229, 195, 122, 0.16);
+  --today-glow: 0 0 18px rgba(229, 195, 122, 0.16);
+  --theme-active-bg: rgba(243, 234, 215, 0.12);
+  --theme-active-border: rgba(229, 195, 122, 0.44);
+}
+
+body[data-theme="emerald_lounge"] {
+  --bg: #07110f;
+  --bg-scene:
+    radial-gradient(64% 54% at 18% 4%, rgba(87, 186, 158, 0.26), transparent 58%),
+    radial-gradient(38% 28% at 88% 14%, rgba(145, 215, 193, 0.16), transparent 64%),
+    linear-gradient(180deg, #0b1d19 0%, #07110f 42%, #030707 100%);
+  --bg-pattern-svg: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='34' height='34'%3E%3Cpath d='M6 10h22M10 6v22M24 6v22' stroke='%2390b5aa' stroke-width='0.55' opacity='0.55'/%3E%3C/svg%3E");
+  --bg-pattern-opacity: 0.16;
+  --text: #dbf1ea;
+  --text-muted: #8bb2a8;
+  --gold: #8cf0cd;
+  --accent: #58d1b0;
+  --heart: #4fa48f;
+  --love: #7fd6bf;
+  --love-dim: rgba(127, 214, 191, 0.54);
+  --border: rgba(173, 255, 227, 0.14);
+  --card: rgba(10, 35, 30, 0.76);
+  --card-shadow: 0 22px 48px rgba(0, 0, 0, 0.36);
+  --btn-bg: rgba(88, 209, 176, 0.08);
+  --btn-text: #c5ebe0;
+  --btn-border: rgba(127, 214, 191, 0.22);
+  --btn-active-bg: rgba(88, 209, 176, 0.14);
+  --btn-active-border: rgba(127, 214, 191, 0.34);
+  --btn-primary-bg: linear-gradient(180deg, rgba(88, 209, 176, 0.24), rgba(140, 240, 205, 0.14));
+  --btn-primary-text: #effff9;
+  --btn-primary-border: rgba(127, 214, 191, 0.42);
+  --toggle-on-bg: rgba(88, 209, 176, 0.14);
+  --toggle-on-border: rgba(127, 214, 191, 0.44);
+  --toggle-on-text: #9cf3d7;
+  --nav-bg: rgba(6, 20, 17, 0.94);
+  --nav-border: rgba(173, 255, 227, 0.16);
+  --nav-btn-color: #accdc4;
+  --nav-active-bg: linear-gradient(180deg, rgba(88, 209, 176, 0.18), rgba(140, 240, 205, 0.12));
+  --nav-active-text: #f0fffb;
+  --nav-active-icon: #98f2d8;
+  --settings-btn-bg: rgba(88, 209, 176, 0.08);
+  --settings-btn-border: rgba(127, 214, 191, 0.22);
+  --settings-btn-color: #b9e3d7;
+  --settings-btn-active-bg: rgba(88, 209, 176, 0.18);
+  --settings-btn-active-border: rgba(127, 214, 191, 0.38);
+  --settings-btn-active-color: #effff9;
+  --cta-bg: linear-gradient(180deg, rgba(88, 209, 176, 0.28), rgba(140, 240, 205, 0.16));
+  --cta-border: rgba(127, 214, 191, 0.5);
+  --cta-text: #effff9;
+  --cta-icon: #a8ffe6;
+  --cta-active-bg: linear-gradient(180deg, rgba(88, 209, 176, 0.36), rgba(140, 240, 205, 0.22));
+  --cta-active-border: rgba(127, 214, 191, 0.6);
+  --input-bg: rgba(255, 255, 255, 0.05);
+  --input-focus: rgba(127, 214, 191, 0.5);
+  --sheet-bg: rgba(10, 29, 25, 0.97);
+  --sheet-handle: rgba(173, 255, 227, 0.3);
+  --today-border: rgba(127, 214, 191, 0.56);
+  --today-bg: rgba(88, 209, 176, 0.14);
+  --today-glow: 0 0 18px rgba(88, 209, 176, 0.16);
+  --theme-active-bg: rgba(88, 209, 176, 0.12);
+  --theme-active-border: rgba(127, 214, 191, 0.44);
+}
+
+body[data-theme="alice_cinema"] {
+  --bg: #07080a;
+  --bg-scene:
+    radial-gradient(70% 42% at 50% 6%, rgba(112, 145, 166, 0.24), transparent 64%),
+    radial-gradient(58% 42% at 12% 18%, rgba(101, 20, 29, 0.34), transparent 70%),
+    linear-gradient(180deg, #07080a 0%, #0b0b0f 42%, #030405 100%);
+  --bg-pattern-svg: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='38' height='38'%3E%3Cpath d='M19 4l10 15-10 15L9 19 19 4z' fill='none' stroke='%23c7a96b' stroke-width='0.55' opacity='0.6'/%3E%3Ccircle cx='19' cy='19' r='2' fill='%237f1f2b' opacity='0.45'/%3E%3C/svg%3E");
+  --bg-pattern-opacity: 0.2;
+  --text: #ece7df;
+  --text-muted: #9c9ba2;
+  --gold: #d9b76c;
+  --accent: #9d2938;
+  --heart: #b13a48;
+  --love: #d77986;
+  --love-dim: rgba(215, 121, 134, 0.58);
+  --border: rgba(236, 231, 223, 0.14);
+  --card: rgba(8, 9, 12, 0.72);
+  --card-shadow: 0 24px 56px rgba(0, 0, 0, 0.48);
+  --btn-bg: rgba(236, 231, 223, 0.06);
+  --btn-text: #d8d0c7;
+  --btn-border: rgba(236, 231, 223, 0.16);
+  --btn-active-bg: rgba(217, 183, 108, 0.13);
+  --btn-active-border: rgba(217, 183, 108, 0.36);
+  --btn-primary-bg: linear-gradient(180deg, rgba(217, 183, 108, 0.24), rgba(121, 35, 45, 0.2));
+  --btn-primary-text: #fff6e4;
+  --btn-primary-border: rgba(217, 183, 108, 0.44);
+  --toggle-on-bg: rgba(217, 183, 108, 0.13);
+  --toggle-on-border: rgba(217, 183, 108, 0.42);
+  --toggle-on-text: #f1cf85;
+  --nav-bg: rgba(4, 5, 8, 0.94);
+  --nav-border: rgba(236, 231, 223, 0.16);
+  --nav-btn-color: #beb9b6;
+  --nav-active-bg: linear-gradient(180deg, rgba(217, 183, 108, 0.18), rgba(121, 35, 45, 0.16));
+  --nav-active-text: #fff4df;
+  --nav-active-icon: #e3bf75;
+  --settings-btn-bg: rgba(236, 231, 223, 0.06);
+  --settings-btn-border: rgba(236, 231, 223, 0.16);
+  --settings-btn-color: #d1cbc7;
+  --settings-btn-active-bg: rgba(217, 183, 108, 0.16);
+  --settings-btn-active-border: rgba(217, 183, 108, 0.4);
+  --settings-btn-active-color: #fff4df;
+  --cta-bg: linear-gradient(180deg, rgba(217, 183, 108, 0.28), rgba(121, 35, 45, 0.22));
+  --cta-border: rgba(217, 183, 108, 0.52);
+  --cta-text: #fff6e4;
+  --cta-icon: #f0ce84;
+  --cta-active-bg: linear-gradient(180deg, rgba(217, 183, 108, 0.36), rgba(121, 35, 45, 0.3));
+  --cta-active-border: rgba(217, 183, 108, 0.66);
+  --input-bg: rgba(255, 255, 255, 0.055);
+  --input-focus: rgba(217, 183, 108, 0.54);
+  --sheet-bg: rgba(7, 8, 11, 0.98);
+  --sheet-handle: rgba(236, 231, 223, 0.28);
+  --today-border: rgba(217, 183, 108, 0.68);
+  --today-bg: rgba(217, 183, 108, 0.13);
+  --today-glow: 0 0 22px rgba(217, 183, 108, 0.18);
+  --theme-active-bg: rgba(217, 183, 108, 0.12);
+  --theme-active-border: rgba(217, 183, 108, 0.48);
+}
+
+body[data-theme="alice_cinema"] .bg-pattern {
+  opacity: 1;
+  background-image:
+    linear-gradient(180deg, rgba(3, 4, 6, 0.32), rgba(3, 4, 6, 0.64)),
+    radial-gradient(70% 48% at 50% 16%, rgba(127, 154, 175, 0.2), transparent 64%),
+    url("/assets/theme-bg/alice-cinema.png"),
+    var(--bg-pattern-svg);
+  background-size: cover, cover, cover, 38px 38px;
+  background-position: center, center, center, center;
+}
+
+body[data-theme="ivory_palace"] {
+  --bg: #14100b;
+  --bg-scene:
+    radial-gradient(68% 46% at 52% 4%, rgba(241, 205, 134, 0.24), transparent 64%),
+    radial-gradient(42% 28% at 14% 18%, rgba(242, 231, 211, 0.2), transparent 66%),
+    linear-gradient(180deg, #211911 0%, #0d0a08 100%);
+  --bg-pattern-svg: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='36' height='36'%3E%3Crect x='8' y='6' width='12' height='16' rx='1.5' fill='none' stroke='%23e6c47b' stroke-width='0.55' opacity='0.62'/%3E%3Cpath d='M14 10l3 4-3 4-3-4 3-4z' fill='none' stroke='%23f2e7d3' stroke-width='0.5' opacity='0.45'/%3E%3C/svg%3E");
+  --bg-pattern-opacity: 0.14;
+  --text: #f4ead8;
+  --text-muted: #b8aa90;
+  --gold: #e6c47b;
+  --accent: #b68a52;
+  --heart: #b77558;
+  --love: #e0b989;
+  --love-dim: rgba(224, 185, 137, 0.58);
+  --border: rgba(244, 234, 216, 0.18);
+  --card: rgba(20, 15, 10, 0.7);
+  --card-shadow: 0 24px 56px rgba(0, 0, 0, 0.42);
+  --btn-bg: rgba(244, 234, 216, 0.07);
+  --btn-text: #ebddc5;
+  --btn-border: rgba(244, 234, 216, 0.2);
+  --btn-active-bg: rgba(230, 196, 123, 0.14);
+  --btn-active-border: rgba(230, 196, 123, 0.38);
+  --btn-primary-bg: linear-gradient(180deg, rgba(244, 234, 216, 0.22), rgba(230, 196, 123, 0.18));
+  --btn-primary-text: #fff8ea;
+  --btn-primary-border: rgba(230, 196, 123, 0.46);
+  --toggle-on-bg: rgba(230, 196, 123, 0.14);
+  --toggle-on-border: rgba(230, 196, 123, 0.44);
+  --toggle-on-text: #f0d492;
+  --nav-bg: rgba(13, 10, 7, 0.94);
+  --nav-border: rgba(244, 234, 216, 0.18);
+  --nav-btn-color: #d4c5ad;
+  --nav-active-bg: linear-gradient(180deg, rgba(244, 234, 216, 0.18), rgba(230, 196, 123, 0.14));
+  --nav-active-text: #fff7e8;
+  --nav-active-icon: #e8c879;
+  --settings-btn-bg: rgba(244, 234, 216, 0.08);
+  --settings-btn-border: rgba(244, 234, 216, 0.2);
+  --settings-btn-color: #eadcc7;
+  --settings-btn-active-bg: rgba(230, 196, 123, 0.16);
+  --settings-btn-active-border: rgba(230, 196, 123, 0.42);
+  --settings-btn-active-color: #fff7e8;
+  --cta-bg: linear-gradient(180deg, rgba(244, 234, 216, 0.24), rgba(230, 196, 123, 0.2));
+  --cta-border: rgba(230, 196, 123, 0.54);
+  --cta-text: #fff8ea;
+  --cta-icon: #efcf85;
+  --cta-active-bg: linear-gradient(180deg, rgba(244, 234, 216, 0.32), rgba(230, 196, 123, 0.28));
+  --cta-active-border: rgba(230, 196, 123, 0.68);
+  --input-bg: rgba(255, 255, 255, 0.065);
+  --input-focus: rgba(230, 196, 123, 0.56);
+  --sheet-bg: rgba(17, 13, 9, 0.98);
+  --sheet-handle: rgba(244, 234, 216, 0.32);
+  --today-border: rgba(230, 196, 123, 0.68);
+  --today-bg: rgba(230, 196, 123, 0.14);
+  --today-glow: 0 0 22px rgba(230, 196, 123, 0.18);
+  --theme-active-bg: rgba(230, 196, 123, 0.14);
+  --theme-active-border: rgba(230, 196, 123, 0.5);
+}
+
+body[data-theme="ivory_palace"] .bg-pattern {
+  opacity: 1;
+  background-image:
+    linear-gradient(180deg, rgba(8, 6, 4, 0.18), rgba(8, 6, 4, 0.62)),
+    radial-gradient(70% 46% at 52% 8%, rgba(244, 234, 216, 0.16), transparent 66%),
+    url("/assets/theme-bg/ivory-palace.png"),
+    var(--bg-pattern-svg);
+  background-size: cover, cover, cover, 36px 36px;
+  background-position: center, center, center, center;
+}
+
+body[data-theme="white_classic"],
+body[data-theme="white_cinema"] {
+  --bg: #f5f0e8;
+  --bg-scene:
+    radial-gradient(68% 46% at 22% -4%, rgba(226, 198, 139, 0.22), transparent 60%),
+    radial-gradient(48% 32% at 88% 12%, rgba(255, 255, 255, 0.7), transparent 66%),
+    linear-gradient(180deg, #fbf8f1 0%, #f5f0e8 46%, #e8dfd2 100%);
+  --bg-pattern-svg: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='36' height='36'%3E%3Crect x='8' y='7' width='12' height='16' rx='1.5' fill='none' stroke='%23b59a5f' stroke-width='0.55' opacity='0.45'/%3E%3Cpath d='M14 11l3 4-3 4-3-4 3-4z' fill='none' stroke='%23b59a5f' stroke-width='0.5' opacity='0.38'/%3E%3C/svg%3E");
+  --bg-pattern-opacity: 0.18;
+  --text: #221b14;
+  --text-muted: #7e7162;
+  --gold: #9a7540;
+  --accent: #b08a55;
+  --heart: #9b4a4f;
+  --love: #b2646b;
+  --love-dim: rgba(178, 100, 107, 0.52);
+  --border: rgba(55, 43, 31, 0.12);
+  --card: rgba(255, 252, 246, 0.78);
+  --card-shadow: 0 18px 42px rgba(90, 72, 52, 0.14);
+  --btn-bg: rgba(255, 255, 255, 0.68);
+  --btn-text: #4a3c2d;
+  --btn-border: rgba(74, 60, 45, 0.16);
+  --btn-active-bg: rgba(226, 198, 139, 0.28);
+  --btn-active-border: rgba(154, 117, 64, 0.34);
+  --btn-primary-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(226, 198, 139, 0.24));
+  --btn-primary-text: #2b2117;
+  --btn-primary-border: rgba(154, 117, 64, 0.34);
+  --toggle-on-bg: rgba(226, 198, 139, 0.28);
+  --toggle-on-border: rgba(154, 117, 64, 0.38);
+  --toggle-on-text: #7f5f32;
+  --nav-bg: rgba(250, 247, 240, 0.94);
+  --nav-border: rgba(55, 43, 31, 0.14);
+  --nav-btn-color: #6c5d4d;
+  --nav-active-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.84), rgba(226, 198, 139, 0.25));
+  --nav-active-text: #2b2117;
+  --nav-active-icon: #9a7540;
+  --settings-btn-bg: rgba(255, 255, 255, 0.72);
+  --settings-btn-border: rgba(74, 60, 45, 0.16);
+  --settings-btn-color: #5a4b3b;
+  --settings-btn-active-bg: rgba(226, 198, 139, 0.28);
+  --settings-btn-active-border: rgba(154, 117, 64, 0.34);
+  --settings-btn-active-color: #2b2117;
+  --cta-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.86), rgba(226, 198, 139, 0.28));
+  --cta-border: rgba(154, 117, 64, 0.38);
+  --cta-text: #2b2117;
+  --cta-icon: #9a7540;
+  --cta-active-bg: linear-gradient(180deg, rgba(226, 198, 139, 0.36), rgba(255, 255, 255, 0.78));
+  --cta-active-border: rgba(154, 117, 64, 0.48);
+  --input-bg: rgba(255, 255, 255, 0.74);
+  --input-focus: rgba(154, 117, 64, 0.44);
+  --sheet-bg: rgba(250, 247, 240, 0.98);
+  --sheet-handle: rgba(55, 43, 31, 0.24);
+  --today-border: rgba(154, 117, 64, 0.5);
+  --today-bg: rgba(226, 198, 139, 0.22);
+  --today-glow: 0 0 18px rgba(154, 117, 64, 0.14);
+  --theme-active-bg: rgba(226, 198, 139, 0.24);
+  --theme-active-border: rgba(154, 117, 64, 0.42);
+}
+
+body[data-theme="white_cinema"] .bg-pattern {
+  opacity: 1;
+  background-image:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.36), rgba(245, 240, 232, 0.66)),
+    radial-gradient(70% 48% at 50% 10%, rgba(255, 255, 255, 0.28), transparent 66%),
+    url("/assets/theme-bg/white-cinema.png"),
+    var(--bg-pattern-svg);
+  background-size: cover, cover, cover, 36px 36px;
+  background-position: center, center, center, center;
+}
+
+body[data-theme="white_rabbit"] {
+  --bg: #110606;
+  --bg-scene:
+    radial-gradient(66% 44% at 74% 8%, rgba(213, 188, 143, 0.2), transparent 64%),
+    radial-gradient(52% 36% at 18% 14%, rgba(141, 24, 31, 0.32), transparent 66%),
+    linear-gradient(180deg, #180707 0%, #090303 100%);
+  --bg-pattern-svg: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='36' height='36'%3E%3Ccircle cx='18' cy='18' r='10' fill='none' stroke='%23cda56f' stroke-width='0.55' opacity='0.55'/%3E%3Cpath d='M18 10v8l5 3' fill='none' stroke='%23b93d45' stroke-width='0.65' opacity='0.55'/%3E%3C/svg%3E");
+  --bg-pattern-opacity: 0.18;
+  --text: #f1e5da;
+  --text-muted: #a88e86;
+  --gold: #d4a86d;
+  --accent: #8f2630;
+  --heart: #c84652;
+  --love: #de8189;
+  --love-dim: rgba(222, 129, 137, 0.56);
+  --border: rgba(241, 229, 218, 0.14);
+  --card: rgba(18, 6, 7, 0.72);
+  --card-shadow: 0 24px 56px rgba(0, 0, 0, 0.48);
+  --btn-bg: rgba(241, 229, 218, 0.055);
+  --btn-text: #dfcbc0;
+  --btn-border: rgba(241, 229, 218, 0.16);
+  --btn-active-bg: rgba(212, 168, 109, 0.13);
+  --btn-active-border: rgba(212, 168, 109, 0.36);
+  --btn-primary-bg: linear-gradient(180deg, rgba(212, 168, 109, 0.24), rgba(143, 38, 48, 0.2));
+  --btn-primary-text: #fff3e8;
+  --btn-primary-border: rgba(212, 168, 109, 0.46);
+  --toggle-on-bg: rgba(212, 168, 109, 0.13);
+  --toggle-on-border: rgba(212, 168, 109, 0.42);
+  --toggle-on-text: #e6bd82;
+  --nav-bg: rgba(10, 3, 4, 0.94);
+  --nav-border: rgba(241, 229, 218, 0.15);
+  --nav-btn-color: #c6b5ae;
+  --nav-active-bg: linear-gradient(180deg, rgba(212, 168, 109, 0.18), rgba(143, 38, 48, 0.16));
+  --nav-active-text: #fff2e7;
+  --nav-active-icon: #e1b475;
+  --settings-btn-bg: rgba(241, 229, 218, 0.055);
+  --settings-btn-border: rgba(241, 229, 218, 0.16);
+  --settings-btn-color: #d5c1b8;
+  --settings-btn-active-bg: rgba(212, 168, 109, 0.16);
+  --settings-btn-active-border: rgba(212, 168, 109, 0.4);
+  --settings-btn-active-color: #fff2e7;
+  --cta-bg: linear-gradient(180deg, rgba(212, 168, 109, 0.28), rgba(143, 38, 48, 0.22));
+  --cta-border: rgba(212, 168, 109, 0.52);
+  --cta-text: #fff3e8;
+  --cta-icon: #e8bc7b;
+  --cta-active-bg: linear-gradient(180deg, rgba(212, 168, 109, 0.36), rgba(143, 38, 48, 0.3));
+  --cta-active-border: rgba(212, 168, 109, 0.66);
+  --input-bg: rgba(255, 255, 255, 0.055);
+  --input-focus: rgba(212, 168, 109, 0.54);
+  --sheet-bg: rgba(14, 4, 5, 0.98);
+  --sheet-handle: rgba(241, 229, 218, 0.28);
+  --today-border: rgba(212, 168, 109, 0.66);
+  --today-bg: rgba(212, 168, 109, 0.13);
+  --today-glow: 0 0 22px rgba(212, 168, 109, 0.18);
+  --theme-active-bg: rgba(212, 168, 109, 0.12);
+  --theme-active-border: rgba(212, 168, 109, 0.48);
+}
+
+body[data-theme="white_rabbit"] .bg-pattern {
+  opacity: 1;
+  background-image:
+    linear-gradient(180deg, rgba(5, 1, 1, 0.24), rgba(5, 1, 1, 0.66)),
+    radial-gradient(70% 46% at 76% 8%, rgba(224, 198, 155, 0.14), transparent 66%),
+    url("/assets/theme-bg/white-rabbit.png"),
+    var(--bg-pattern-svg);
+  background-size: cover, cover, cover, 36px 36px;
+  background-position: center, center, right center, center;
+}
+
+body[data-theme="red_queen_portrait"] {
+  --bg: #120406;
+  --bg-scene:
+    radial-gradient(64% 42% at 82% 10%, rgba(129, 14, 28, 0.38), transparent 64%),
+    radial-gradient(48% 34% at 18% 12%, rgba(200, 129, 72, 0.18), transparent 66%),
+    linear-gradient(180deg, #170507 0%, #070203 100%);
+  --bg-pattern-svg: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='34' height='34'%3E%3Cpath d='M17 6l3 6 6 .8-4.4 4.2 1 6-5.6-3-5.6 3 1-6L8 12.8l6-.8 3-6z' fill='none' stroke='%23d09a5b' stroke-width='0.55' opacity='0.58'/%3E%3C/svg%3E");
+  --bg-pattern-opacity: 0.18;
+  --text: #f2ddd8;
+  --text-muted: #ae8c87;
+  --gold: #d09a5b;
+  --accent: #a51d30;
+  --heart: #d64b58;
+  --love: #e6848d;
+  --love-dim: rgba(230, 132, 141, 0.58);
+  --border: rgba(242, 221, 216, 0.15);
+  --card: rgba(20, 4, 8, 0.73);
+  --card-shadow: 0 24px 56px rgba(0, 0, 0, 0.48);
+  --btn-bg: rgba(230, 132, 141, 0.075);
+  --btn-text: #e9cbc6;
+  --btn-border: rgba(230, 132, 141, 0.2);
+  --btn-active-bg: rgba(208, 154, 91, 0.14);
+  --btn-active-border: rgba(208, 154, 91, 0.36);
+  --btn-primary-bg: linear-gradient(180deg, rgba(165, 29, 48, 0.32), rgba(208, 154, 91, 0.16));
+  --btn-primary-text: #fff2e9;
+  --btn-primary-border: rgba(208, 154, 91, 0.46);
+  --toggle-on-bg: rgba(165, 29, 48, 0.18);
+  --toggle-on-border: rgba(230, 132, 141, 0.46);
+  --toggle-on-text: #efa0a8;
+  --nav-bg: rgba(12, 3, 5, 0.94);
+  --nav-border: rgba(242, 221, 216, 0.16);
+  --nav-btn-color: #caada9;
+  --nav-active-bg: linear-gradient(180deg, rgba(165, 29, 48, 0.24), rgba(208, 154, 91, 0.14));
+  --nav-active-text: #fff1e9;
+  --nav-active-icon: #e2aa69;
+  --settings-btn-bg: rgba(230, 132, 141, 0.08);
+  --settings-btn-border: rgba(230, 132, 141, 0.2);
+  --settings-btn-color: #e5c5c0;
+  --settings-btn-active-bg: rgba(208, 154, 91, 0.16);
+  --settings-btn-active-border: rgba(208, 154, 91, 0.42);
+  --settings-btn-active-color: #fff1e9;
+  --cta-bg: linear-gradient(180deg, rgba(165, 29, 48, 0.36), rgba(208, 154, 91, 0.2));
+  --cta-border: rgba(208, 154, 91, 0.54);
+  --cta-text: #fff2e9;
+  --cta-icon: #e5ad6e;
+  --cta-active-bg: linear-gradient(180deg, rgba(165, 29, 48, 0.46), rgba(208, 154, 91, 0.28));
+  --cta-active-border: rgba(208, 154, 91, 0.68);
+  --input-bg: rgba(255, 255, 255, 0.055);
+  --input-focus: rgba(208, 154, 91, 0.54);
+  --sheet-bg: rgba(15, 3, 6, 0.98);
+  --sheet-handle: rgba(242, 221, 216, 0.28);
+  --today-border: rgba(208, 154, 91, 0.68);
+  --today-bg: rgba(165, 29, 48, 0.16);
+  --today-glow: 0 0 22px rgba(165, 29, 48, 0.2);
+  --theme-active-bg: rgba(165, 29, 48, 0.16);
+  --theme-active-border: rgba(208, 154, 91, 0.5);
+}
+
+body[data-theme="red_queen_portrait"] .bg-pattern {
+  opacity: 1;
+  background-image:
+    linear-gradient(180deg, rgba(5, 1, 2, 0.28), rgba(5, 1, 2, 0.68)),
+    radial-gradient(70% 46% at 78% 10%, rgba(165, 29, 48, 0.16), transparent 66%),
+    url("/assets/theme-bg/red-queen-portrait.png"),
+    var(--bg-pattern-svg);
+  background-size: cover, cover, cover, 34px 34px;
+  background-position: center, center, center, center;
+}
+
+body[data-theme="caterpillar_cinema"] {
+  --bg: #051018;
+  --bg-scene:
+    radial-gradient(68% 46% at 18% 4%, rgba(32, 178, 194, 0.24), transparent 62%),
+    radial-gradient(46% 34% at 86% 14%, rgba(118, 69, 205, 0.22), transparent 66%),
+    linear-gradient(180deg, #071824 0%, #041016 48%, #020608 100%);
+  --bg-pattern-svg: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='38' height='38'%3E%3Cpath d='M10 25c0-5 4-9 9-9s9 4 9 9' fill='none' stroke='%235fd6e2' stroke-width='0.55' opacity='0.52'/%3E%3Cpath d='M13 25h12' stroke='%237c62dc' stroke-width='0.55' opacity='0.46'/%3E%3C/svg%3E");
+  --bg-pattern-opacity: 0.16;
+  --text: #dff4f1;
+  --text-muted: #8eb2b5;
+  --gold: #7bd7d6;
+  --accent: #8265df;
+  --heart: #9b78ef;
+  --love: #9bd7e2;
+  --love-dim: rgba(155, 215, 226, 0.56);
+  --border: rgba(196, 244, 244, 0.14);
+  --card: rgba(5, 18, 25, 0.74);
+  --card-shadow: 0 24px 56px rgba(0, 0, 0, 0.48);
+  --btn-bg: rgba(123, 215, 214, 0.07);
+  --btn-text: #c7e3e1;
+  --btn-border: rgba(123, 215, 214, 0.2);
+  --btn-active-bg: rgba(130, 101, 223, 0.16);
+  --btn-active-border: rgba(123, 215, 214, 0.38);
+  --btn-primary-bg: linear-gradient(180deg, rgba(123, 215, 214, 0.24), rgba(130, 101, 223, 0.18));
+  --btn-primary-text: #effffb;
+  --btn-primary-border: rgba(123, 215, 214, 0.46);
+  --toggle-on-bg: rgba(123, 215, 214, 0.14);
+  --toggle-on-border: rgba(123, 215, 214, 0.44);
+  --toggle-on-text: #9df1ec;
+  --nav-bg: rgba(4, 12, 18, 0.94);
+  --nav-border: rgba(196, 244, 244, 0.16);
+  --nav-btn-color: #a9c6c7;
+  --nav-active-bg: linear-gradient(180deg, rgba(123, 215, 214, 0.18), rgba(130, 101, 223, 0.14));
+  --nav-active-text: #effffb;
+  --nav-active-icon: #9debe8;
+  --settings-btn-bg: rgba(123, 215, 214, 0.08);
+  --settings-btn-border: rgba(123, 215, 214, 0.22);
+  --settings-btn-color: #c0dddc;
+  --settings-btn-active-bg: rgba(130, 101, 223, 0.18);
+  --settings-btn-active-border: rgba(123, 215, 214, 0.4);
+  --settings-btn-active-color: #effffb;
+  --cta-bg: linear-gradient(180deg, rgba(123, 215, 214, 0.28), rgba(130, 101, 223, 0.2));
+  --cta-border: rgba(123, 215, 214, 0.54);
+  --cta-text: #effffb;
+  --cta-icon: #9df1ec;
+  --cta-active-bg: linear-gradient(180deg, rgba(123, 215, 214, 0.36), rgba(130, 101, 223, 0.28));
+  --cta-active-border: rgba(123, 215, 214, 0.68);
+  --input-bg: rgba(255, 255, 255, 0.055);
+  --input-focus: rgba(123, 215, 214, 0.54);
+  --sheet-bg: rgba(5, 16, 23, 0.98);
+  --sheet-handle: rgba(196, 244, 244, 0.28);
+  --today-border: rgba(123, 215, 214, 0.66);
+  --today-bg: rgba(123, 215, 214, 0.13);
+  --today-glow: 0 0 22px rgba(123, 215, 214, 0.18);
+  --theme-active-bg: rgba(123, 215, 214, 0.12);
+  --theme-active-border: rgba(123, 215, 214, 0.48);
+}
+
+body[data-theme="caterpillar_cinema"] .bg-pattern {
+  opacity: 1;
+  background-image:
+    linear-gradient(180deg, rgba(2, 7, 10, 0.2), rgba(2, 7, 10, 0.68)),
+    radial-gradient(70% 48% at 22% 10%, rgba(93, 214, 226, 0.16), transparent 66%),
+    url("/assets/theme-bg/caterpillar-cinema.png"),
+    var(--bg-pattern-svg);
+  background-size: cover, cover, cover, 38px 38px;
+  background-position: center, center, 35% center, center;
 }
 
 * {
@@ -31,6 +665,7 @@ html, body {
 
 body {
   overflow-x: hidden;
+  background: var(--bg);
 }
 
 .hidden {
@@ -40,8 +675,10 @@ body {
 .bg-pattern {
   position: fixed;
   inset: 0;
-  opacity: 0.035;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28'%3E%3Crect x='3' y='3' width='10' height='14' fill='none' stroke='%23d4d4d4' stroke-width='0.5'/%3E%3Crect x='15' y='11' width='10' height='14' fill='none' stroke='%23d4d4d4' stroke-width='0.5'/%3E%3C/svg%3E");
+  opacity: var(--bg-pattern-opacity);
+  background-image: var(--bg-scene), var(--bg-pattern-svg);
+  background-size: cover, 34px 34px;
+  background-position: center, center;
   pointer-events: none;
   z-index: 0;
 }
@@ -164,12 +801,12 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(212, 212, 212, 0.1);
+  background: var(--settings-btn-bg);
+  border: 1px solid var(--settings-btn-border);
   border-radius: 10px;
-  color: #b8b8b8;
-  width: 36px;
-  height: 36px;
+  color: var(--settings-btn-color);
+  width: 32px;
+  height: 32px;
   cursor: pointer;
   line-height: 1;
   flex-shrink: 0;
@@ -177,14 +814,70 @@ body {
 }
 
 .settings-btn svg {
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
 }
 
 .settings-btn:active {
-  color: #c9b896;
-  background: rgba(154, 138, 106, 0.14);
-  border-color: rgba(154, 138, 106, 0.28);
+  color: var(--settings-btn-active-color);
+  background: var(--settings-btn-active-bg);
+  border-color: var(--settings-btn-active-border);
+}
+
+.sheet-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--sheet-bg);
+  padding-bottom: 8px;
+}
+
+.sheet-title-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.sheet-jump-btn {
+  height: 30px;
+  padding: 0 11px;
+  border-radius: 999px;
+  border: 1px solid var(--btn-border);
+  background: var(--btn-bg);
+  color: var(--btn-text);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.sheet-jump-btn:active {
+  background: var(--btn-active-bg);
+  border-color: var(--btn-active-border);
+  color: var(--text);
+}
+
+.sheet-close-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  border: 1px solid var(--btn-border);
+  background: var(--btn-bg);
+  color: var(--btn-text);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.sheet-close-btn:active {
+  background: var(--btn-active-bg);
+  border-color: var(--btn-active-border);
+  color: var(--text);
 }
 
 .setting-row {
@@ -214,6 +907,167 @@ body {
   margin-top: 3px;
 }
 
+#settings-content {
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+  padding-bottom: calc(28px + env(safe-area-inset-bottom, 0px));
+  -webkit-overflow-scrolling: touch;
+}
+
+#settings-theme-card {
+  scroll-margin-top: 52px;
+}
+
+.theme-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.theme-option {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text);
+  padding: 10px 12px;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s, transform 0.2s;
+}
+
+.theme-option:active {
+  transform: scale(0.99);
+}
+
+.theme-option.active {
+  border-color: var(--theme-active-border);
+  background: var(--theme-active-bg);
+}
+
+.theme-swatch {
+  display: inline-flex;
+  align-items: stretch;
+  gap: 0;
+  width: 58px;
+  height: 38px;
+  padding: 0;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.theme-swatch span {
+  display: none;
+}
+
+.theme-swatch.alice_dark {
+  background:
+    radial-gradient(75% 70% at 20% 10%, rgba(196, 136, 144, 0.36), transparent 56%),
+    radial-gradient(55% 40% at 86% 14%, rgba(154, 138, 106, 0.22), transparent 58%),
+    linear-gradient(180deg, #161113 0%, #090909 100%);
+}
+
+.theme-swatch.ruby_smoke {
+  background:
+    radial-gradient(72% 72% at 22% 8%, rgba(255, 111, 141, 0.52), transparent 54%),
+    radial-gradient(48% 34% at 88% 14%, rgba(255, 191, 150, 0.28), transparent 58%),
+    linear-gradient(180deg, #330a14 0%, #13070a 100%);
+}
+
+.theme-swatch.ivory_noir {
+  background:
+    radial-gradient(72% 68% at 22% 0%, rgba(243, 234, 215, 0.38), transparent 56%),
+    radial-gradient(44% 32% at 84% 18%, rgba(229, 195, 122, 0.26), transparent 58%),
+    linear-gradient(180deg, #2a241d 0%, #14110f 100%);
+}
+
+.theme-swatch.emerald_lounge {
+  background:
+    radial-gradient(76% 74% at 18% 6%, rgba(88, 209, 176, 0.42), transparent 54%),
+    radial-gradient(42% 28% at 86% 16%, rgba(140, 240, 205, 0.22), transparent 56%),
+    linear-gradient(180deg, #0b241f 0%, #081110 100%);
+}
+
+.theme-swatch.alice_cinema {
+  background:
+    linear-gradient(180deg, rgba(3, 4, 6, 0.2), rgba(3, 4, 6, 0.48)),
+    radial-gradient(72% 64% at 50% 10%, rgba(116, 143, 163, 0.46), transparent 58%),
+    radial-gradient(58% 46% at 10% 22%, rgba(121, 35, 45, 0.46), transparent 64%),
+    linear-gradient(180deg, #08090c 0%, #030405 100%);
+}
+
+.theme-swatch.ivory_palace {
+  background:
+    linear-gradient(180deg, rgba(8, 6, 4, 0.12), rgba(8, 6, 4, 0.48)),
+    radial-gradient(72% 64% at 52% 10%, rgba(244, 234, 216, 0.46), transparent 58%),
+    radial-gradient(52% 38% at 86% 18%, rgba(230, 196, 123, 0.4), transparent 58%),
+    linear-gradient(180deg, #2a2117 0%, #0b0806 100%);
+}
+
+.theme-swatch.white_classic {
+  background:
+    radial-gradient(70% 62% at 24% 8%, rgba(226, 198, 139, 0.36), transparent 58%),
+    radial-gradient(54% 42% at 86% 16%, rgba(255, 255, 255, 0.86), transparent 60%),
+    linear-gradient(180deg, #fffdf7 0%, #ebe2d4 100%);
+}
+
+.theme-swatch.white_cinema {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.32), rgba(232, 223, 210, 0.42)),
+    radial-gradient(72% 64% at 50% 8%, rgba(255, 255, 255, 0.9), transparent 58%),
+    radial-gradient(52% 38% at 86% 18%, rgba(226, 198, 139, 0.44), transparent 58%),
+    linear-gradient(180deg, #fffdfa 0%, #d8cdbd 100%);
+}
+
+.theme-swatch.white_rabbit {
+  background:
+    linear-gradient(180deg, rgba(5, 1, 1, 0.18), rgba(5, 1, 1, 0.56)),
+    radial-gradient(68% 60% at 80% 12%, rgba(213, 188, 143, 0.48), transparent 56%),
+    radial-gradient(54% 44% at 18% 18%, rgba(141, 24, 31, 0.46), transparent 62%),
+    linear-gradient(180deg, #1b0708 0%, #060202 100%);
+}
+
+.theme-swatch.red_queen_portrait {
+  background:
+    linear-gradient(180deg, rgba(5, 1, 2, 0.18), rgba(5, 1, 2, 0.56)),
+    radial-gradient(70% 60% at 78% 12%, rgba(165, 29, 48, 0.52), transparent 58%),
+    radial-gradient(46% 34% at 20% 16%, rgba(208, 154, 91, 0.3), transparent 58%),
+    linear-gradient(180deg, #1a0508 0%, #060102 100%);
+}
+
+.theme-swatch.caterpillar_cinema {
+  background:
+    linear-gradient(180deg, rgba(2, 7, 10, 0.18), rgba(2, 7, 10, 0.58)),
+    radial-gradient(70% 60% at 20% 12%, rgba(93, 214, 226, 0.48), transparent 58%),
+    radial-gradient(52% 40% at 84% 20%, rgba(130, 101, 223, 0.46), transparent 60%),
+    linear-gradient(180deg, #071824 0%, #020608 100%);
+}
+
+.theme-copy {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+}
+
+.theme-name {
+  font-size: 12px;
+  color: var(--text);
+  text-transform: lowercase;
+}
+
+.theme-note {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
 .toggle-btn {
   min-width: 52px;
   padding: 7px 10px;
@@ -221,8 +1075,9 @@ body {
 }
 
 .toggle-btn.on {
-  color: var(--gold);
-  border-color: rgba(154, 138, 106, 0.45);
+  color: var(--toggle-on-text);
+  border-color: var(--toggle-on-border);
+  background: var(--toggle-on-bg);
 }
 
 .brand {
@@ -289,8 +1144,8 @@ body {
   display: grid;
   grid-template-columns: repeat(5, 1fr);
   gap: 2px;
-  border-top: 1px solid rgba(212, 212, 212, 0.14);
-  background: rgba(10, 10, 10, 0.97);
+  border-top: 1px solid var(--nav-border);
+  background: var(--nav-bg);
   backdrop-filter: blur(12px);
   z-index: 100;
   padding: 6px 6px calc(6px + env(safe-area-inset-bottom, 0px));
@@ -306,7 +1161,7 @@ body {
   background: none;
   border: none;
   border-radius: 10px;
-  color: #b8b8b8;
+  color: var(--nav-btn-color);
   font-family: var(--font-ui);
   font-size: 10px;
   font-weight: 500;
@@ -343,13 +1198,13 @@ body {
 }
 
 .nav-btn.active {
-  color: #f0e8dc;
-  background: rgba(154, 138, 106, 0.16);
-  box-shadow: inset 0 1px 0 rgba(212, 196, 168, 0.2);
+  color: var(--nav-active-text);
+  background: var(--nav-active-bg);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
 }
 
 .nav-btn.active .nav-icon {
-  color: #c9b896;
+  color: var(--nav-active-icon);
   opacity: 1;
 }
 
@@ -367,8 +1222,8 @@ body {
 }
 
 .nav-btn.has-salary-badge::after {
-  background: #c9b896;
-  box-shadow: 0 0 10px rgba(201, 184, 150, 0.45);
+  background: var(--gold);
+  box-shadow: 0 0 10px var(--gold);
 }
 
 @keyframes nav-badge-pulse {
@@ -381,6 +1236,8 @@ body {
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--card);
+  box-shadow: var(--card-shadow);
+  backdrop-filter: blur(10px);
   padding: 14px;
   margin-bottom: 12px;
 }
@@ -425,9 +1282,9 @@ body {
 }
 
 .day-cell.today {
-  border-color: rgba(154, 138, 106, 0.6);
-  background: rgba(154, 138, 106, 0.12);
-  box-shadow: 0 0 12px rgba(154, 138, 106, 0.12);
+  border-color: var(--today-border);
+  background: var(--today-bg);
+  box-shadow: var(--today-glow);
 }
 
 .day-cell.today .day-num {
@@ -435,7 +1292,7 @@ body {
 }
 
 .day-cell.today .day-wd {
-  color: rgba(154, 138, 106, 0.85);
+  color: var(--gold);
 }
 
 .day-wd {
@@ -475,8 +1332,8 @@ body {
 
 .schedule-toggle .btn.active {
   color: var(--text);
-  border-color: rgba(154, 138, 106, 0.4);
-  background: rgba(154, 138, 106, 0.08);
+  border-color: var(--btn-primary-border);
+  background: var(--btn-primary-bg);
 }
 
 .month-legend {
@@ -517,9 +1374,9 @@ body {
 }
 
 .month-cell.today {
-  border-color: rgba(154, 138, 106, 0.6);
-  background: rgba(154, 138, 106, 0.12);
-  box-shadow: 0 0 10px rgba(154, 138, 106, 0.1);
+  border-color: var(--today-border);
+  background: var(--today-bg);
+  box-shadow: var(--today-glow);
 }
 
 .month-cell.today .month-num {
@@ -557,21 +1414,23 @@ body {
   font-size: 12px;
   padding: 9px 14px;
   border-radius: 999px;
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--text-muted);
+  border: 1px solid var(--btn-border);
+  background: var(--btn-bg);
+  color: var(--btn-text);
   cursor: pointer;
-  transition: color 0.2s, border-color 0.2s;
+  transition: color 0.2s, border-color 0.2s, background 0.2s;
 }
 
 .btn:hover, .btn:active {
   color: var(--text);
-  border-color: rgba(212, 212, 212, 0.18);
+  border-color: var(--btn-active-border);
+  background: var(--btn-active-bg);
 }
 
 .btn-primary {
-  color: var(--text);
-  border-color: rgba(212, 212, 212, 0.2);
+  color: var(--btn-primary-text);
+  border-color: var(--btn-primary-border);
+  background: var(--btn-primary-bg);
 }
 
 .stats-grid {
@@ -1042,8 +1901,9 @@ body {
   right: 0;
   bottom: 0;
   max-width: 480px;
+  max-height: 85dvh;
   margin: 0 auto;
-  background: #141414;
+  background: var(--sheet-bg);
   border-top: 1px solid var(--border);
   border-radius: 16px 16px 0 0;
   padding: 8px 18px calc(18px + env(safe-area-inset-bottom, 0px));
@@ -1052,6 +1912,13 @@ body {
   display: flex;
   flex-direction: column;
   touch-action: pan-y;
+}
+
+.sheet-panel > :last-child:not(.sheet-drag-zone) {
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+  -webkit-overflow-scrolling: touch;
 }
 
 .sheet.open .sheet-panel {
@@ -1074,7 +1941,7 @@ body {
 .sheet-handle {
   width: 40px;
   height: 5px;
-  background: rgba(255, 255, 255, 0.2);
+  background: var(--sheet-handle);
   border-radius: 3px;
   margin: 0 auto;
   pointer-events: none;
@@ -1114,9 +1981,9 @@ body {
   margin-bottom: 12px;
   padding: 12px 16px;
   border-radius: 12px;
-  border: 1px solid rgba(154, 138, 106, 0.22);
-  background: rgba(154, 138, 106, 0.1);
-  color: #e8ddd0;
+  border: 1px solid var(--cta-border);
+  background: var(--cta-bg);
+  color: var(--cta-text);
   font-size: 13px;
   font-weight: 500;
   letter-spacing: 0.02em;
@@ -1127,7 +1994,7 @@ body {
   display: flex;
   width: 18px;
   height: 18px;
-  color: #c9b896;
+  color: var(--cta-icon);
   flex-shrink: 0;
 }
 
@@ -1137,9 +2004,9 @@ body {
 }
 
 .hours-entry-btn:active {
-  background: rgba(154, 138, 106, 0.18);
-  border-color: rgba(154, 138, 106, 0.35);
-  color: #f0e8dc;
+  background: var(--cta-active-bg);
+  border-color: var(--cta-active-border);
+  color: var(--cta-text);
 }
 
 .hours-input {
@@ -1147,7 +2014,7 @@ body {
   padding: 11px 14px;
   border-radius: 10px;
   border: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--input-bg);
   color: var(--text);
   font-family: var(--font-ui);
   font-size: 14px;
@@ -1156,7 +2023,7 @@ body {
 
 .hours-input:focus {
   outline: none;
-  border-color: rgba(154, 138, 106, 0.45);
+  border-color: var(--input-focus);
 }
 
 .shift-row-action {

@@ -24,6 +24,19 @@ from services.telegram_notify import send_user_message
 
 
 WEEKDAYS_SHORT = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]
+THEMES = {
+    "alice_dark",
+    "ruby_smoke",
+    "ivory_noir",
+    "emerald_lounge",
+    "alice_cinema",
+    "ivory_palace",
+    "white_classic",
+    "white_cinema",
+    "white_rabbit",
+    "red_queen_portrait",
+    "caterpillar_cinema",
+}
 
 
 def current_period() -> tuple[int, int, int, int]:
@@ -45,6 +58,7 @@ async def get_profile(user_id: int) -> dict:
     notify_hours = bool(user[6]) if len(user) > 6 else False
     notify = bool(user[2]) if len(user) > 2 else False
     notify_time = user[3] if len(user) > 3 else None
+    theme = user[8] if len(user) > 8 and user[8] else "alice_dark"
     role_label = DEPT_EMOJIS.get(role, role) if role else None
 
     return {
@@ -57,6 +71,7 @@ async def get_profile(user_id: int) -> dict:
         "notify": notify,
         "notify_time": notify_time,
         "notify_hours": notify_hours,
+        "theme": theme,
     }
 
 
@@ -67,6 +82,7 @@ async def update_user_settings(
     notify_time: str | None = None,
     track_hours: bool | None = None,
     notify_hours: bool | None = None,
+    theme: str | None = None,
 ) -> dict:
     user = await get_user(user_id)
     if not user or not user[1]:
@@ -74,6 +90,8 @@ async def update_user_settings(
 
     if notify_time is not None and not is_valid_time(notify_time):
         return {"error": "bad_time"}
+    if theme is not None and theme not in THEMES:
+        return {"error": "bad_theme"}
 
     chat_msgs: list[str] = []
 
@@ -97,6 +115,8 @@ async def update_user_settings(
         await save_user(user_id, track_hours=1 if track_hours else 0)
     if notify_hours is not None:
         await save_user(user_id, notify_hours=1 if notify_hours else 0)
+    if theme is not None:
+        await save_user(user_id, theme=theme)
 
     for msg in chat_msgs:
         await send_user_message(user_id, msg)

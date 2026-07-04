@@ -5,7 +5,8 @@ from db import USE_POSTGRES, get_db_connection, db_placeholder
 
 def _save_user_sync(
     user_id, name=None, notify=None, notify_time=None,
-    role=None, track_hours=None, notify_hours=None, notify_hours_time=None
+    role=None, track_hours=None, notify_hours=None, notify_hours_time=None,
+    theme=None,
 ):
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -26,6 +27,8 @@ def _save_user_sync(
             updates["notify_hours"] = notify_hours
         if notify_hours_time is not None:
             updates["notify_hours_time"] = notify_hours_time
+        if theme is not None:
+            updates["theme"] = theme
 
         if updates:
             set_clause = ", ".join(f"{k} = EXCLUDED.{k}" for k in updates)
@@ -66,6 +69,8 @@ def _save_user_sync(
                 cursor.execute("UPDATE users SET notify_hours=? WHERE user_id=?", (notify_hours, user_id))
             if notify_hours_time is not None:
                 cursor.execute("UPDATE users SET notify_hours_time=? WHERE user_id=?", (notify_hours_time, user_id))
+            if theme is not None:
+                cursor.execute("UPDATE users SET theme=? WHERE user_id=?", (theme, user_id))
 
     conn.commit()
     cursor.close()
@@ -74,11 +79,12 @@ def _save_user_sync(
 
 async def save_user(
     user_id, name=None, notify=None, notify_time=None,
-    role=None, track_hours=None, notify_hours=None, notify_hours_time=None
+    role=None, track_hours=None, notify_hours=None, notify_hours_time=None,
+    theme=None,
 ):
     await asyncio.to_thread(
         _save_user_sync, user_id, name, notify, notify_time,
-        role, track_hours, notify_hours, notify_hours_time
+        role, track_hours, notify_hours, notify_hours_time, theme
     )
 
 
@@ -89,7 +95,7 @@ def _get_user_sync(user_id):
     ph = db_placeholder()
 
     cursor.execute(
-        f"SELECT user_id, name, notify, notify_time, role, track_hours, notify_hours, notify_hours_time FROM users WHERE user_id={ph}",
+        f"SELECT user_id, name, notify, notify_time, role, track_hours, notify_hours, notify_hours_time, theme FROM users WHERE user_id={ph}",
         (user_id,)
     )
 
