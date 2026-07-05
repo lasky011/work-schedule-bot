@@ -1403,6 +1403,7 @@ async function renderColleagueSchedule() {
 
 function backToPeopleList() {
   peopleScreen = "list";
+  colleagueView = null;
   document.getElementById("screen-title").textContent = TITLES.people;
   updateSubtitle();
   renderPeople();
@@ -1541,6 +1542,12 @@ function updateSubtitle() {
 
 function setTab(next) {
   const main = document.getElementById("main");
+  if (tab === next && next === "people" && peopleScreen !== "list") {
+    hapticLight();
+    backToPeopleList();
+    return;
+  }
+
   const changed = tab !== next;
   if (changed) hapticLight();
   if (changed && main) main.classList.add("tab-fade");
