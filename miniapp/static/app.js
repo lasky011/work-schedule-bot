@@ -9,6 +9,7 @@ let colleagueView = null;
 let colleagueWeekOffset = 0;
 let colleagueScheduleMode = "week";
 let colleagueMonthOffset = 0;
+let colleagueReturnTab = null;
 let comparePick = [];
 let comparePeriods = null;
 let comparePeriodIndex = 0;
@@ -300,7 +301,7 @@ async function openDaySheet(dateStr) {
       <div class="role-block">
         <div class="role-title">${escapeHtml(dep.role_label)} · ${dep.people.length}</div>
         <div class="people-list">
-          ${dep.people.map((n) => `<span class="person-chip">${escapeHtml(n)}</span>`).join("")}
+          ${dep.people.map((n) => personChipBtnHtml(n, dep.role, dep.role_label)).join("")}
         </div>
       </div>
     `).join("") || `<div class="empty-team">никого на смене</div>`;
@@ -324,6 +325,7 @@ async function openDaySheet(dateStr) {
         ${offRows}
       </div>
     `;
+    bindColleagueChipButtons(content, "schedule");
   } catch (e) {
     content.innerHTML = `<div class="error-box">${escapeHtml(e.message)}</div>`;
   }
@@ -564,7 +566,7 @@ async function renderTeam() {
         <div class="role-block">
           <div class="role-title">${escapeHtml(dep.role_label)} · ${dep.people.length}</div>
           <div class="people-list">
-            ${dep.people.map((name) => `<span class="person-chip">${escapeHtml(name)}</span>`).join("")}
+            ${dep.people.map((name) => personChipBtnHtml(name, dep.role, dep.role_label)).join("")}
           </div>
         </div>
       `).join("");
@@ -581,6 +583,7 @@ async function renderTeam() {
           ${data.published ? `<div class="team-total">${data.total} чел.</div>` : ""}
         </div>
         <div class="my-shift-line ${myClass}">ты · ${myLine}</div>
+        <div class="card-meta" style="margin-bottom:8px">тап по имени — график коллеги</div>
         ${body}
       </div>
       <p class="quote">we're all mad here</p>
@@ -588,6 +591,7 @@ async function renderTeam() {
 
     document.getElementById("team-today").onclick = () => { teamDayOffset = 0; renderTeam(); };
     document.getElementById("team-tomorrow").onclick = () => { teamDayOffset = 1; renderTeam(); };
+    bindColleagueChipButtons(document.getElementById("main"), "team");
   } catch (e) {
     renderError(e.message);
   }
@@ -1238,6 +1242,66 @@ async function renderPeopleList() {
   }
 }
 
+function personChipBtnHtml(name, role, roleLabel) {
+  return `
+    <button type="button" class="person-chip person-chip-btn"
+      data-name="${escapeAttr(name)}"
+      data-role="${escapeAttr(role || "")}"
+      data-role-label="${escapeAttr(roleLabel || "")}">
+      ${escapeHtml(name)}
+    </button>
+  `;
+}
+
+function openColleagueSchedule(name, role, roleLabel, returnTab = null) {
+  closeDaySheet();
+  colleagueView = {
+    name,
+    role: role || null,
+    role_label: roleLabel || null,
+  };
+  colleagueWeekOffset = 0;
+  colleagueMonthOffset = 0;
+  colleagueScheduleMode = "week";
+  peopleScreen = "person";
+  colleagueReturnTab = returnTab;
+  document.getElementById("screen-title").textContent = colleagueView.name;
+  hapticLight();
+  setTab("people");
+}
+
+function bindColleagueChipButtons(root, returnTab = null) {
+  if (!root) return;
+  root.querySelectorAll(".person-chip-btn[data-name]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      openColleagueSchedule(
+        btn.dataset.name,
+        btn.dataset.role || null,
+        btn.dataset.roleLabel || null,
+        returnTab,
+      );
+    });
+  });
+}
+
+function colleagueBackLabel() {
+  if (colleagueReturnTab === "team") return "← на смене";
+  if (colleagueReturnTab === "schedule") return "← к графику";
+  return "← к списку";
+}
+
+function backFromColleagueView() {
+  const returnTab = colleagueReturnTab;
+  colleagueReturnTab = null;
+  if (returnTab && returnTab !== "people") {
+    peopleScreen = "list";
+    colleagueView = null;
+    setTab(returnTab);
+    return;
+  }
+  backToPeopleList();
+}
+
 function bindPersonChip(btn) {
   let pressTimer = null;
   let longPressed = false;
@@ -1285,6 +1349,7 @@ function bindPersonChip(btn) {
     colleagueMonthOffset = 0;
     colleagueScheduleMode = "week";
     peopleScreen = "person";
+    colleagueReturnTab = null;
     document.getElementById("screen-title").textContent = colleagueView.name;
     renderPeople();
   });
@@ -1332,7 +1397,7 @@ async function renderColleagueSchedule() {
         : "";
 
       document.getElementById("main").innerHTML = `
-        <button type="button" class="btn back-btn" id="people-back">← к списку</button>
+        <button type="button" class="btn back-btn" id="people-back">${colleagueBackLabel()}</button>
         ${roleLine}
         ${colleagueScheduleToggleHtml()}
         <div class="card-label">${data.header}</div>
@@ -1351,7 +1416,7 @@ async function renderColleagueSchedule() {
 
       bindColleagueScheduleToggle();
       bindDayPickers();
-      document.getElementById("people-back").onclick = backToPeopleList;
+      document.getElementById("people-back").onclick = backFromColleagueView;
       document.getElementById("col-month-prev").onclick = () => {
         colleagueMonthOffset -= 1;
         renderColleagueSchedule();
@@ -1374,7 +1439,7 @@ async function renderColleagueSchedule() {
       : "";
 
     document.getElementById("main").innerHTML = `
-      <button type="button" class="btn back-btn" id="people-back">← к списку</button>
+      <button type="button" class="btn back-btn" id="people-back">${colleagueBackLabel()}</button>
       ${roleLine}
       ${colleagueScheduleToggleHtml()}
       <div class="card-label">неделя · ${data.header}</div>
@@ -1387,7 +1452,7 @@ async function renderColleagueSchedule() {
 
     bindColleagueScheduleToggle();
     bindDayPickers();
-    document.getElementById("people-back").onclick = backToPeopleList;
+    document.getElementById("people-back").onclick = backFromColleagueView;
     document.getElementById("col-prev").onclick = () => {
       colleagueWeekOffset -= 1;
       renderColleagueSchedule();
@@ -1404,6 +1469,7 @@ async function renderColleagueSchedule() {
 function backToPeopleList() {
   peopleScreen = "list";
   colleagueView = null;
+  colleagueReturnTab = null;
   document.getElementById("screen-title").textContent = TITLES.people;
   updateSubtitle();
   renderPeople();
@@ -1556,6 +1622,7 @@ function setTab(next) {
   if (tab !== "people") {
     peopleScreen = "list";
     colleagueView = null;
+    colleagueReturnTab = null;
     renderCompareDock();
   }
   document.querySelectorAll(".nav-btn").forEach((btn) => {

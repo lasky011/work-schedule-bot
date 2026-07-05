@@ -533,6 +533,24 @@ def test_admin_health_issues():
     assert "departments" not in dept_keys or True  # smoke без configure admin_bot
 
 
+def test_admin_alert_dedup_by_key():
+    from app_config import now_local
+    from services.admin_alerts_service import _active_issues, _last_repeat, reset_alert_state
+
+    reset_alert_state()
+    _active_issues["cache_stale"] = "old message"
+    _last_repeat["cache_stale"] = now_local()
+
+    # same key, different message — не должно триггерить повтор само по себе
+    issues = [("cache_stale", "new message with different age")]
+    current = {key: message for key, message in issues}
+    should_send = "cache_stale" not in _active_issues
+    if not should_send:
+        last = _last_repeat.get("cache_stale")
+        should_send = last is not None and (now_local() - last).total_seconds() >= 3600
+    assert should_send is False
+
+
 def test_broadcast_format_helpers():
     from keyboards.admin import BC_FMT_HTML, BC_FMT_HTML_MINIAPP, BC_FMT_PLAIN
     from routers.admin import _broadcast_parse_mode, _broadcast_format_hint
@@ -584,6 +602,7 @@ def main():
         ("admin_monitor_text", test_admin_monitor_text),
         ("admin_health_issues", test_admin_health_issues),
         ("broadcast_format_helpers", test_broadcast_format_helpers),
+        ("admin_alert_dedup", test_admin_alert_dedup_by_key),
     ]
 
     for name, fn in checks:

@@ -9,12 +9,22 @@ from services.sheet_periods_service import SHEET_GID_MAP
 from sheets_client import cached_df, cached_time
 
 CACHE_STALE_SECONDS = 3600
+CACHE_REFRESH_SECONDS = 1800
+
+
+def oldest_cache_age_seconds() -> int | None:
+    if not cached_time:
+        return None
+    now = now_local()
+    try:
+        return max(int((now - ts).total_seconds()) for ts in cached_time.values())
+    except Exception:
+        return None
 
 
 def collect_health_issues() -> list[tuple[str, str]]:
     """Возвращает список (ключ, описание) активных проблем."""
     issues: list[tuple[str, str]] = []
-    now = now_local()
 
     try:
         conn = get_db_connection()
@@ -34,15 +44,12 @@ def collect_health_issues() -> list[tuple[str, str]]:
         issues.append(("cache_empty", "Кэш Google Sheets пуст при наличии периодов"))
 
     if cached_time:
-        try:
-            oldest = max(int((now - ts).total_seconds()) for ts in cached_time.values())
-            if oldest > CACHE_STALE_SECONDS:
-                issues.append((
-                    "cache_stale",
-                    f"Кэш листов устарел: {oldest // 60} мин. (порог {CACHE_STALE_SECONDS // 60} мин.)",
-                ))
-        except Exception:
-            pass
+        oldest = oldest_cache_age_seconds()
+        if oldest is not None and oldest > CACHE_STALE_SECONDS:
+            issues.append((
+                "cache_stale",
+                f"Кэш листов устарел (порог {CACHE_STALE_SECONDS // 60} мин., сейчас {oldest // 60} мин.)",
+            ))
 
     if unique_gids:
         probe_gid = unique_gids[0]

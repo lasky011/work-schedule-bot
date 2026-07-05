@@ -19,7 +19,8 @@ from routers.admin import configure_admin_router, router as admin_router
 from schedule_utils import configure_schedule_utils
 from services import schedule_service as schedule
 from services.admin_alerts_service import run_health_alerts
-from services.sheet_loader import load_full_sheet
+from services.admin_health_service import CACHE_REFRESH_SECONDS, oldest_cache_age_seconds
+from services.sheet_loader import load_all_sheet_gids, load_full_sheet
 from services.sheet_periods_service import load_from_db_sync, sync_from_db
 from services.schedule_watch_service import configure_schedule_watch
 from ui_utils import configure_ui_utils
@@ -96,10 +97,44 @@ async def periods_sync_loop() -> None:
                 logging.exception("health alert after periods_sync failure")
 
 
+async def maybe_refresh_sheet_cache() -> None:
+    age = oldest_cache_age_seconds()
+    if age is None or age < CACHE_REFRESH_SECONDS:
+        return
+    try:
+        loaded, failed, errors = await load_all_sheet_gids()
+        logging.info(
+            "admin sheet cache refresh: age=%ss loaded=%s failed=%s",
+            age,
+            loaded,
+            failed,
+        )
+        if failed and errors:
+            logging.warning("admin sheet cache refresh errors: %s", "; ".join(errors[:3]))
+    except Exception:
+        logging.exception("admin sheet cache refresh failed")
+
+
+async def sheet_cache_refresh_loop() -> None:
+    await asyncio.sleep(120)
+    while True:
+        try:
+            await maybe_refresh_sheet_cache()
+        except asyncio.CancelledError:
+            break
+        except Exception:
+            logging.exception("sheet_cache_refresh_loop")
+        try:
+            await asyncio.sleep(CACHE_REFRESH_SECONDS)
+        except asyncio.CancelledError:
+            break
+
+
 async def health_alert_loop() -> None:
     await asyncio.sleep(60)
     while True:
         try:
+            await maybe_refresh_sheet_cache()
             await run_health_alerts()
         except asyncio.CancelledError:
             break
@@ -134,6 +169,13 @@ async def main():
     alert_task.add_done_callback(
         lambda t: logging.exception(
             "health_alert_loop crashed",
+            exc_info=t.exception(),
+        ) if not t.cancelled() and t.exception() else None
+    )
+    cache_task = asyncio.create_task(sheet_cache_refresh_loop())
+    cache_task.add_done_callback(
+        lambda t: logging.exception(
+            "sheet_cache_refresh_loop crashed",
             exc_info=t.exception(),
         ) if not t.cancelled() and t.exception() else None
     )

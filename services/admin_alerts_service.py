@@ -36,11 +36,9 @@ async def run_health_alerts() -> dict:
         should_send = False
         if key not in _active_issues:
             should_send = True
-        elif _active_issues[key] != message:
-            should_send = True
         else:
             last = _last_repeat.get(key)
-            if last is None or (now - last).total_seconds() >= _repeat_after_seconds:
+            if last is not None and (now - last).total_seconds() >= _repeat_after_seconds:
                 should_send = True
 
         if should_send:
@@ -48,9 +46,9 @@ async def run_health_alerts() -> dict:
             count = await notify_admins(text)
             if count:
                 sent_new += count
-                _active_issues[key] = message
                 _last_repeat[key] = now
                 logging.warning("admin alert sent: %s", message)
+        _active_issues[key] = message
 
     return {
         "issues": issues,
