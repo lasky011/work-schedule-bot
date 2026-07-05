@@ -1623,6 +1623,34 @@ body {
   background: rgba(154, 138, 106, 0.04);
 }
 
+.today-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.today-action-btn {
+  width: 100%;
+  padding: 8px 10px;
+  font-size: 12px;
+}
+
+.week-view-hint,
+.week-preview-card .card-title {
+  font-size: 12px;
+}
+
+.week-view-hint {
+  margin: -4px 0 12px;
+  color: var(--text-muted);
+  letter-spacing: 0.04em;
+}
+
+.week-preview-card {
+  border-style: dashed;
+  opacity: 0.92;
+}
+
 .team-header {
   display: flex;
   justify-content: space-between;

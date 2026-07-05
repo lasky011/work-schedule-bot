@@ -1,13 +1,13 @@
 """Данные для Telegram Mini App."""
 
 import calendar
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from app_config import now_local
 from departments_manager import (
     DEPARTMENTS,
-    DEPT_EMOJIS,
     is_person_name,
+    normalize_role_name,
     ordered_role_keys,
     person_has_ambiguous_role,
     role_display_label,
@@ -59,7 +59,7 @@ async def get_profile(user_id: int) -> dict:
     notify = bool(user[2]) if len(user) > 2 else False
     notify_time = user[3] if len(user) > 3 else None
     theme = user[8] if len(user) > 8 and user[8] else "alice_dark"
-    role_label = DEPT_EMOJIS.get(role, role) if role else None
+    role_label = role_display_label(role) if role else None
 
     return {
         "registered": True,
@@ -140,9 +140,12 @@ async def update_profile(user_id: int, name: str, role: str) -> dict:
     if not is_person_name(name):
         return {"error": "bad_name"}
     valid_roles = roles_for_person(name)
-    if role not in valid_roles:
+    normalized_role = normalize_role_name(role)
+    normalized_valid_roles = [normalize_role_name(item) for item in valid_roles]
+    if normalized_role not in normalized_valid_roles:
         return {"error": "bad_role"}
-    await save_user(user_id, name=name, role=role)
+    role_to_save = valid_roles[normalized_valid_roles.index(normalized_role)]
+    await save_user(user_id, name=name, role=role_to_save)
     from services.schedule_watch_service import reset_user_snapshot
     await reset_user_snapshot(user_id)
     return await get_profile(user_id)
@@ -190,27 +193,36 @@ async def _shift_for_person(name: str, role: str | None, dt: datetime) -> dict:
         return {"working": False, "shift_type": None, "label": None, "hours": None, "error": True}
 
 
+async def _day_schedule_entry(
+    name: str,
+    role: str | None,
+    dt: datetime,
+    today: date,
+) -> dict:
+    shift = await _shift_for_person(name, role, dt)
+    published = schedule.is_day_published(dt.day, dt.month, dt.year)
+    return {
+        "date": dt.strftime("%Y-%m-%d"),
+        "weekday": WEEKDAYS_SHORT[dt.weekday()],
+        "day": dt.day,
+        "month": dt.month,
+        "is_today": dt.date() == today,
+        "published": published,
+        **shift,
+    }
+
+
 async def _week_schedule_for(name: str, role: str | None, week_offset: int = 0) -> dict:
     now = now_local()
     week_start = (now - timedelta(days=now.weekday())).replace(
         hour=0, minute=0, second=0, microsecond=0,
     ) + timedelta(weeks=week_offset)
 
-    days = []
     today = now.date()
+    days = []
     for i in range(7):
         dt = week_start + timedelta(days=i)
-        shift = await _shift_for_person(name, role, dt)
-        published = schedule.is_day_published(dt.day, dt.month, dt.year)
-        days.append({
-            "date": dt.strftime("%Y-%m-%d"),
-            "weekday": WEEKDAYS_SHORT[dt.weekday()],
-            "day": dt.day,
-            "month": dt.month,
-            "is_today": dt.date() == today,
-            "published": published,
-            **shift,
-        })
+        days.append(await _day_schedule_entry(name, role, dt, today))
 
     first, last = days[0], days[-1]
     if first["month"] == last["month"]:
@@ -218,8 +230,10 @@ async def _week_schedule_for(name: str, role: str | None, week_offset: int = 0) 
     else:
         header = f"{first['day']}–{last['day']}"
 
-    today_entry = next((d for d in days if d["is_today"]), days[0])
-    tomorrow = next((d for d in days if d["date"] > today_entry["date"]), None)
+    today_dt = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    tomorrow_dt = today_dt + timedelta(days=1)
+    today_entry = await _day_schedule_entry(name, role, today_dt, today)
+    tomorrow_entry = await _day_schedule_entry(name, role, tomorrow_dt, today)
 
     return {
         "name": name,
@@ -228,7 +242,7 @@ async def _week_schedule_for(name: str, role: str | None, week_offset: int = 0) 
         "header": header,
         "week_offset": week_offset,
         "today": today_entry,
-        "tomorrow": tomorrow,
+        "tomorrow": tomorrow_entry,
         "days": days,
     }
 

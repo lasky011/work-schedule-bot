@@ -74,7 +74,22 @@ def _apply_departments(new_departments: dict[str, list[str]]) -> None:
 
 
 def is_department_label(text: str | None) -> bool:
-    return text is not None and text in DEPARTMENTS
+    return resolve_department_label(text) is not None
+
+
+def resolve_department_label(text: str | None) -> str | None:
+    if text is None:
+        return None
+    if text in DEPARTMENTS:
+        return text
+
+    target_role = normalize_role_name(_role_from_department_label(text))
+    if not target_role:
+        return None
+    for dep_label in DEPARTMENTS:
+        if normalize_role_name(_role_from_department_label(dep_label)) == target_role:
+            return dep_label
+    return None
 
 
 def is_person_name(text: str | None) -> bool:
@@ -133,12 +148,7 @@ def role_display_label(role: str) -> str:
         return ""
 
     role = str(role).strip()
-
-    aliases = {
-        "Менеджер": "Менеджеры",
-        "Кальянщик": "Кальян",
-    }
-    display_role = aliases.get(role, role)
+    display_role = normalize_role_name(role) or role
 
     emoji_map = {
         "Менеджеры": "👔 Менеджеры",
@@ -148,7 +158,26 @@ def role_display_label(role: str) -> str:
         "Хостес": "🙋 Хостес",
     }
 
-    return emoji_map.get(display_role, DEPT_EMOJIS.get(role, role))
+    return emoji_map.get(display_role, DEPT_EMOJIS.get(display_role, DEPT_EMOJIS.get(role, role)))
+
+
+def get_departments_status() -> dict[str, object]:
+    updated_at = _departments_updated_at.isoformat() if _departments_updated_at else None
+    age_seconds = None
+    if _departments_updated_at is not None:
+        try:
+            age_seconds = max(0, int((now_local() - _departments_updated_at).total_seconds()))
+        except Exception:
+            age_seconds = None
+
+    return {
+        "loaded": bool(DEPARTMENTS),
+        "department_count": len(DEPARTMENTS),
+        "person_count": len(ALL_NAMES),
+        "fallback_active": _departments_updated_at is None,
+        "updated_at": updated_at,
+        "age_seconds": age_seconds,
+    }
 
 
 def ordered_role_keys(people_by_role: dict) -> list:

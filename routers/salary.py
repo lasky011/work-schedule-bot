@@ -10,7 +10,7 @@ from aiogram.types import CallbackQuery, Message
 from aiogram_calendar import SimpleCalendarCallback
 
 from app_config import now_local
-from departments_manager import DEPT_EMOJIS
+from departments_manager import role_display_label
 from fsm_context import (
     clear_shift_entry_state,
     finish_shift_entry,
@@ -80,7 +80,7 @@ async def salary_menu(message: Message):
         return await message.answer("Сначала выбери своё имя.", reply_markup=dep_kb())
     track_hours = user[5] if user and len(user) > 5 else 0
     role = user[4] if user and len(user) > 4 else None
-    role_line = f"\n{DEPT_EMOJIS.get(role, role)}" if role else ""
+    role_line = f"\n{role_display_label(role)}" if role else ""
     await answer_html(
         message,
         f"💰 <b>Зарплата</b>\n<b>{user[1]}</b>{role_line}",

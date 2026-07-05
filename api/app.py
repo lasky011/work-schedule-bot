@@ -1,5 +1,7 @@
 """FastAPI приложение Mini App."""
 
+import os
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, HTTPException
@@ -8,10 +10,31 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from api.auth import InitDataError, validate_init_data
-from app_config import BOT_TOKEN
+from app_config import (
+    APP_TIMEZONE_NAME,
+    BOT_TOKEN,
+    MINIAPP_ENABLED,
+    MINIAPP_PORT,
+    SHEET_PERIODS_REFRESH_SECONDS,
+    now_local,
+)
+from db import USE_POSTGRES, get_db_connection
+from departments_manager import get_departments_status
 from services import miniapp_service
+from services.schedule_watch_service import WATCH_DAYS
+from services.sheet_periods_service import SHEET_GID_MAP
+from sheets_client import cache_locks, cached_df, cached_time
 
+APP_ROOT = Path(__file__).resolve().parent.parent
 STATIC_DIR = Path(__file__).resolve().parent.parent / "miniapp" / "static"
+MINIAPP_ASSETS = (
+    "app.css",
+    "core/config.js",
+    "core/telegram.js",
+    "core/api.js",
+    "core/dom.js",
+    "app.js",
+)
 
 
 def _asset_version(name: str) -> str:
@@ -20,6 +43,110 @@ def _asset_version(name: str) -> str:
         return str(int(path.stat().st_mtime))
     except OSError:
         return "1"
+
+
+def _safe_mtime_iso(path: Path) -> str | None:
+    try:
+        return datetime.fromtimestamp(path.stat().st_mtime, tz=now_local().tzinfo).isoformat()
+    except OSError:
+        return None
+
+
+def _revision_hint() -> str | None:
+    for env_name in ("RELEASE_VERSION", "SOURCE_VERSION", "GIT_SHA", "COMMIT_SHA", "FLY_IMAGE_REF"):
+        value = (os.getenv(env_name) or "").strip()
+        if value:
+            if env_name == "FLY_IMAGE_REF":
+                value = value.rsplit("@", 1)[0]
+                value = value.rsplit(":", 1)[-1]
+            return value[:40]
+
+    git_dir = APP_ROOT / ".git"
+    head_file = git_dir / "HEAD"
+    try:
+        head_value = head_file.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+
+    if head_value.startswith("ref: "):
+        ref_path = git_dir / head_value[5:]
+        try:
+            return ref_path.read_text(encoding="utf-8").strip()[:12]
+        except OSError:
+            return None
+    return head_value[:12] or None
+
+
+def _query_count(cursor, query: str) -> int | None:
+    try:
+        cursor.execute(query)
+        row = cursor.fetchone()
+        return int(row[0]) if row and row[0] is not None else 0
+    except Exception:
+        return None
+
+
+def _db_health() -> dict[str, object]:
+    backend = "postgres" if USE_POSTGRES else "sqlite"
+    result: dict[str, object] = {
+        "backend": backend,
+        "ok": False,
+        "registered_users": None,
+        "notify_enabled": None,
+        "notify_hours_enabled": None,
+        "schedule_snapshots": None,
+    }
+
+    conn = None
+    cursor = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1")
+        cursor.fetchone()
+        result["ok"] = True
+        result["registered_users"] = _query_count(
+            cursor,
+            "SELECT COUNT(*) FROM users WHERE name IS NOT NULL AND name != ''",
+        )
+        result["notify_enabled"] = _query_count(cursor, "SELECT COUNT(*) FROM users WHERE notify=1")
+        result["notify_hours_enabled"] = _query_count(
+            cursor,
+            "SELECT COUNT(*) FROM users WHERE notify_hours=1",
+        )
+        result["schedule_snapshots"] = _query_count(cursor, "SELECT COUNT(*) FROM schedule_snapshots")
+    except Exception as e:
+        result["error"] = f"{type(e).__name__}: {e}"
+    finally:
+        if cursor is not None:
+            try:
+                cursor.close()
+            except Exception:
+                pass
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    return result
+
+
+def _sheets_health() -> dict[str, object]:
+    ages: list[int] = []
+    now = now_local()
+    for ts in cached_time.values():
+        try:
+            ages.append(max(0, int((now - ts).total_seconds())))
+        except Exception:
+            continue
+
+    return {
+        "configured_periods": len(SHEET_GID_MAP),
+        "cache_entries": len(cached_df),
+        "cache_locks": len(cache_locks),
+        "oldest_cache_age_seconds": max(ages) if ages else None,
+    }
 
 
 class ShiftLogBody(BaseModel):
@@ -69,7 +196,50 @@ def create_app() -> FastAPI:
 
     @app.get("/api/health")
     async def health():
-        return {"ok": True}
+        db = _db_health()
+        departments = get_departments_status()
+        sheets = _sheets_health()
+        static_ready = STATIC_DIR.is_dir()
+
+        ready = {
+            "db": bool(db["ok"]),
+            "sheet_periods": sheets["configured_periods"] > 0,
+            "departments": bool(departments["loaded"]),
+            "static": static_ready,
+        }
+
+        return {
+            "ok": True,
+            "status": "ok" if all(ready.values()) else "degraded",
+            "runtime": {
+                "service": app.title,
+                "fly_app": os.getenv("FLY_APP_NAME"),
+                "fly_region": os.getenv("FLY_REGION"),
+                "timezone": APP_TIMEZONE_NAME,
+                "port_env": os.getenv("PORT"),
+                "configured_port": MINIAPP_PORT,
+            },
+            "build": {
+                "revision": _revision_hint(),
+                "checked_at": now_local().isoformat(),
+                "app_mtime": _safe_mtime_iso(APP_ROOT / "bot.py"),
+                "miniapp_index_mtime": _safe_mtime_iso(STATIC_DIR / "index.html"),
+            },
+            "flags": {
+                "miniapp_enabled": MINIAPP_ENABLED,
+                "sheet_periods_refresh_seconds": SHEET_PERIODS_REFRESH_SECONDS,
+            },
+            "ready": ready,
+            "deps": {
+                "db": db,
+                "sheets": sheets,
+                "departments": departments,
+                "schedule_watch": {
+                    "watch_days": WATCH_DAYS,
+                    "tracked_users": db.get("schedule_snapshots"),
+                },
+            },
+        }
 
     @app.get("/api/me")
     async def me(user_id: int = Depends(get_user_id)):
@@ -258,8 +428,11 @@ def create_app() -> FastAPI:
         @app.get("/")
         async def index():
             html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
-            html = html.replace("/assets/app.css", f"/assets/app.css?v={_asset_version('app.css')}")
-            html = html.replace("/assets/app.js", f"/assets/app.js?v={_asset_version('app.js')}")
+            for asset in MINIAPP_ASSETS:
+                html = html.replace(
+                    f"/assets/{asset}",
+                    f"/assets/{asset}?v={_asset_version(asset)}",
+                )
             return HTMLResponse(html, headers={"Cache-Control": "no-store, max-age=0"})
 
     return app

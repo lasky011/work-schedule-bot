@@ -1,103 +1,3 @@
-const tg = window.Telegram?.WebApp;
-if (tg) {
-  tg.ready();
-  tg.expand();
-  tg.setHeaderColor("#0f0f0f");
-  tg.setBackgroundColor("#0f0f0f");
-}
-
-const SUBTITLES = {
-  team: "кто работает в этот день",
-  people: "коллеги и совпадения графиков",
-  salary: "примерный расчёт за период",
-  analytics: "смены и часы за период",
-};
-
-const SCHEDULE_WHISPERS = [
-  "кто ты сегодня на смене?",
-  "белый кролик уже бежит — ты готов?",
-  "гусеница спрашивает: кто ты?",
-  "королева не любит опозданий",
-  "чеширский кот видел твой график",
-  "зазеркалье открыто — выходи на смену",
-  "сначала чай — потом смена",
-  "куда идёт эта дорога? на работу",
-  "мы все здесь немного сумасшедшие",
-  "время — странная штука до начала смены",
-  "шляпник ждёт тебя за столом",
-  "off with their heads? лучше on with your shift",
-];
-
-function pickScheduleWhisper() {
-  return SCHEDULE_WHISPERS[Math.floor(Math.random() * SCHEDULE_WHISPERS.length)];
-}
-
-const TITLES = {
-  schedule: "мой график",
-  team: "на смене",
-  people: "коллеги",
-  salary: "зарплата",
-  analytics: "аналитика",
-};
-
-const THEMES = {
-  alice_dark: {
-    title: "alice dark",
-    note: "бархат, золото, рубин",
-    bg: "#0f0f0f",
-  },
-  ruby_smoke: {
-    title: "red queen",
-    note: "вино, крем, черви",
-    bg: "#140f12",
-  },
-  ivory_noir: {
-    title: "ivory cards",
-    note: "фарфор, карты, свет",
-    bg: "#12110f",
-  },
-  emerald_lounge: {
-    title: "emerald lounge",
-    note: "изумруд, стекло, дым",
-    bg: "#0e1413",
-  },
-  white_classic: {
-    title: "white classic",
-    note: "светлая стандартная",
-    bg: "#f5f0e8",
-  },
-  alice_cinema: {
-    title: "alice cinema",
-    note: "ночь, зеркала, лунный сад",
-    bg: "#07080a",
-  },
-  ivory_palace: {
-    title: "ivory palace",
-    note: "фарфор, золото, дворец",
-    bg: "#14100b",
-  },
-  white_cinema: {
-    title: "white cinema",
-    note: "белый дворец, золото, свет",
-    bg: "#f5f0e8",
-  },
-  white_rabbit: {
-    title: "white rabbit",
-    note: "часы, синий сюртук, дым",
-    bg: "#110606",
-  },
-  red_queen_portrait: {
-    title: "red queen portrait",
-    note: "королева, розы, тени",
-    bg: "#120406",
-  },
-  caterpillar_cinema: {
-    title: "caterpillar cinema",
-    note: "грибы, дым, синий лес",
-    bg: "#051018",
-  },
-};
-
 let tab = "schedule";
 let weekOffset = 0;
 let monthOffset = 0;
@@ -115,13 +15,6 @@ let comparePeriodIndex = 0;
 let salaryPeriods = null;
 let salaryPeriodIndex = 0;
 let namePickRole = null;
-
-function tgConfirm(msg) {
-  return new Promise((resolve) => {
-    if (tg?.showConfirm) tg.showConfirm(msg, resolve);
-    else resolve(window.confirm(msg));
-  });
-}
 
 function parseStartParams() {
   const p = new URLSearchParams(window.location.search);
@@ -149,68 +42,6 @@ function logShiftLabel(entry) {
   if (entry.shift_type === "morning") return "♠ утро";
   if (entry.shift_type === "evening") return "♥ вечер";
   return entry.label || "смена";
-}
-
-function cardLoaderHtml() {
-  return `
-    <div class="card-loader" aria-hidden="true">
-      <div class="card-stack">
-        <span class="playing-card c1">♠</span>
-        <span class="playing-card c2">♥</span>
-        <span class="playing-card c3">♦</span>
-      </div>
-    </div>
-  `;
-}
-
-async function api(path, options = {}) {
-  const headers = { ...(options.headers || {}) };
-  if (tg?.initData) headers["X-Telegram-Init-Data"] = tg.initData;
-  if (options.body && !headers["Content-Type"]) {
-    headers["Content-Type"] = "application/json";
-  }
-  const res = await fetch(path, { ...options, headers });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.detail || "Ошибка загрузки");
-  return data;
-}
-
-function renderLoading() {
-  document.getElementById("main").innerHTML = `
-    <div class="loading-wrap">
-      ${cardLoaderHtml()}
-    </div>
-  `;
-}
-
-function renderError(msg) {
-  document.getElementById("main").innerHTML = `<div class="error-box">${msg}</div>`;
-}
-
-function hideSplash() {
-  const splash = document.getElementById("splash");
-  const app = document.getElementById("app");
-  splash?.classList.add("done");
-  app?.classList.remove("hidden");
-  app?.classList.add("ready");
-}
-
-function hapticLight() {
-  try { tg?.HapticFeedback?.impactOccurred("light"); } catch (_) { /* noop */ }
-}
-
-function hapticSuccess() {
-  try { tg?.HapticFeedback?.notificationOccurred("success"); } catch (_) { /* noop */ }
-}
-
-function applyTheme(themeId) {
-  const nextTheme = THEMES[themeId] ? themeId : "alice_dark";
-  document.body.dataset.theme = nextTheme;
-  const bg = THEMES[nextTheme]?.bg || "#0f0f0f";
-  try {
-    tg?.setHeaderColor?.(bg);
-    tg?.setBackgroundColor?.(bg);
-  } catch (_) { /* noop */ }
 }
 
 function setNavHoursBadge(show) {
@@ -263,7 +94,7 @@ async function renderNamePicker(targetId, { onboarding = false } = {}) {
 
   if (!namePickRole) {
     const depts = data.departments.map((d) => `
-      <button type="button" class="name-pick-dept" data-role="${d.role}">${d.role_label}</button>
+      <button type="button" class="name-pick-dept" data-role="${escapeAttr(d.role)}">${escapeHtml(d.role_label)}</button>
     `).join("");
     el.innerHTML = `
       <div class="hours-title">${onboarding ? "привет в зазеркалье" : "сменить имя"}</div>
@@ -286,11 +117,11 @@ async function renderNamePicker(targetId, { onboarding = false } = {}) {
 
   const dept = data.departments.find((d) => d.role === namePickRole);
   const names = (dept?.names || []).map((n) => `
-    <button type="button" class="name-pick-btn" data-name="${n}">${n}</button>
+    <button type="button" class="name-pick-btn" data-name="${escapeAttr(n)}">${escapeHtml(n)}</button>
   `).join("");
 
   el.innerHTML = `
-    <div class="hours-title">${dept?.role_label || namePickRole}</div>
+    <div class="hours-title">${escapeHtml(dept?.role_label || namePickRole)}</div>
     <div class="setting-desc" style="margin-bottom:8px">выбери имя</div>
     <div class="name-pick-names">${names}</div>
     <button type="button" class="btn name-pick-back" id="name-pick-back">← отдел</button>
@@ -346,13 +177,14 @@ function bindScheduleModeToggle() {
 function todayCardHtml(today, tomorrow) {
   let todayLine = "нет данных";
   if (today) {
+    const dayLabel = formatScheduleDay(today);
     if (today.working) {
-      todayLine = `${today.weekday} · ${today.day} · ${shiftLabel(today)}`;
+      todayLine = `${dayLabel} · ${shiftLabel(today)}`;
       if (today.hours) todayLine += ` · ${today.hours} ч`;
     } else if (today.published === false) {
-      todayLine = `${today.weekday} · график не опубликован`;
+      todayLine = `${dayLabel} · график не опубликован`;
     } else {
-      todayLine = `${today.weekday} · выходной`;
+      todayLine = `${dayLabel} · выходной`;
     }
   }
 
@@ -368,13 +200,32 @@ function todayCardHtml(today, tomorrow) {
     }
   }
 
+  const actions = today?.date
+    ? `<div class="today-actions">
+        <button type="button" class="btn today-action-btn" id="today-open-team">кто на смене</button>
+      </div>`
+    : "";
+
   return `
     <div class="card today-card">
       <div class="card-label">сегодня</div>
-      <div class="card-title">${todayLine}</div>
-      ${tomorrowLine ? `<div class="card-divider"></div><div class="card-meta">${tomorrowLine}</div>` : ""}
+      <div class="card-title">${escapeHtml(todayLine)}</div>
+      ${tomorrowLine ? `<div class="card-divider"></div><div class="card-meta">${escapeHtml(tomorrowLine)}</div>` : ""}
+      ${actions}
     </div>
   `;
+}
+
+function bindTodayCard() {
+  document.getElementById("today-open-team")?.addEventListener("click", () => {
+    hapticLight();
+    teamDayOffset = 0;
+    setTab("team");
+  });
+}
+
+function weekViewHintHtml(header) {
+  return `<div class="week-view-hint">ниже — просмотр недели ${escapeHtml(header)}</div>`;
 }
 
 function monthShiftShort(day) {
@@ -447,22 +298,22 @@ async function openDaySheet(dateStr) {
 
     const working = (data.departments || []).map((dep) => `
       <div class="role-block">
-        <div class="role-title">${dep.role_label} · ${dep.people.length}</div>
+        <div class="role-title">${escapeHtml(dep.role_label)} · ${dep.people.length}</div>
         <div class="people-list">
-          ${dep.people.map((n) => `<span class="person-chip">${n}</span>`).join("")}
+          ${dep.people.map((n) => `<span class="person-chip">${escapeHtml(n)}</span>`).join("")}
         </div>
       </div>
     `).join("") || `<div class="empty-team">никого на смене</div>`;
 
     const offRows = (data.off || []).map((p) => `
       <div class="off-row">
-        <span>${p.name}</span>
-        <span class="off-role">${p.role_label || ""}</span>
+        <span>${escapeHtml(p.name)}</span>
+        <span class="off-role">${escapeHtml(p.role_label || "")}</span>
       </div>
     `).join("") || `<div class="hours-meta">все в списке работают или нет данных</div>`;
 
     content.innerHTML = `
-      <div class="hours-title">${data.weekday} · ${data.header}</div>
+      <div class="hours-title">${escapeHtml(data.weekday)} · ${escapeHtml(data.header)}</div>
       <div class="card-meta">${data.total_working} на смене</div>
       <div class="card" style="margin-top:12px">
         <div class="card-label">работают</div>
@@ -474,7 +325,7 @@ async function openDaySheet(dateStr) {
       </div>
     `;
   } catch (e) {
-    content.innerHTML = `<div class="error-box">${e.message}</div>`;
+    content.innerHTML = `<div class="error-box">${escapeHtml(e.message)}</div>`;
   }
 }
 
@@ -492,6 +343,7 @@ async function renderSchedule() {
     document.getElementById("main").innerHTML = `
       ${hoursEntryButtonHtml()}
       ${todayCardHtml(data.today, data.tomorrow)}
+      ${weekOffset !== 0 ? weekViewHintHtml(data.header) : ""}
       ${scheduleModeToggleHtml()}
       <div class="card-label">неделя · ${data.header}</div>
       <div class="week-grid">${daysHtml}</div>
@@ -505,6 +357,7 @@ async function renderSchedule() {
     bindScheduleModeToggle();
     bindDayPickers();
     bindHoursEntryButton();
+    bindTodayCard();
     document.getElementById("prev-week").onclick = () => { weekOffset -= 1; renderSchedule(); };
     document.getElementById("next-week").onclick = () => { weekOffset += 1; renderSchedule(); };
   } catch (e) {
@@ -531,7 +384,7 @@ async function renderScheduleMonth() {
 
   const topCard = monthOffset === 0
     ? todayCardHtml(todayEntry, tomorrowEntry)
-    : `<div class="card"><div class="card-label">просмотр</div><div class="card-title">${data.header}</div></div>`;
+    : `<div class="card week-preview-card"><div class="card-label">просмотр</div><div class="card-title">${escapeHtml(data.header)}</div></div>`;
 
   document.getElementById("main").innerHTML = `
     ${hoursEntryButtonHtml()}
@@ -560,6 +413,7 @@ async function renderScheduleMonth() {
   bindScheduleModeToggle();
   bindDayPickers();
   bindHoursEntryButton();
+  if (monthOffset === 0) bindTodayCard();
   document.getElementById("prev-month").onclick = () => { monthOffset -= 1; renderSchedule(); };
   document.getElementById("next-month").onclick = () => { monthOffset += 1; renderSchedule(); };
 }
@@ -708,9 +562,9 @@ async function renderTeam() {
     } else {
       body = data.departments.map((dep) => `
         <div class="role-block">
-          <div class="role-title">${dep.role_label} · ${dep.people.length}</div>
+          <div class="role-title">${escapeHtml(dep.role_label)} · ${dep.people.length}</div>
           <div class="people-list">
-            ${dep.people.map((name) => `<span class="person-chip">${name}</span>`).join("")}
+            ${dep.people.map((name) => `<span class="person-chip">${escapeHtml(name)}</span>`).join("")}
           </div>
         </div>
       `).join("");
@@ -723,7 +577,7 @@ async function renderTeam() {
       </div>
       <div class="card">
         <div class="team-header">
-          <div class="card-label">${data.weekday} · ${data.header}</div>
+          <div class="card-label">${escapeHtml(data.weekday)} · ${escapeHtml(data.header)}</div>
           ${data.published ? `<div class="team-total">${data.total} чел.</div>` : ""}
         </div>
         <div class="my-shift-line ${myClass}">ты · ${myLine}</div>
@@ -796,7 +650,7 @@ async function openHoursPicker() {
     document.getElementById("hours-pick-today")?.addEventListener("click", () => openHoursSheet(today));
     document.getElementById("hours-pick-yesterday")?.addEventListener("click", () => openHoursSheet(yesterday));
   } catch (e) {
-    content.innerHTML = `<div class="error-box">${e.message}</div>`;
+    content.innerHTML = `<div class="error-box">${escapeHtml(e.message)}</div>`;
   }
 }
 
@@ -975,8 +829,8 @@ function renderSettingsContent() {
       </div>
     </div>
     <div class="card" style="margin-top:12px">
-      <div class="profile-name">${p.name}</div>
-      ${p.role_label ? `<div class="setting-desc">${p.role_label}</div>` : ""}
+      <div class="profile-name">${escapeHtml(p.name)}</div>
+      ${p.role_label ? `<div class="setting-desc">${escapeHtml(p.role_label)}</div>` : ""}
       <button type="button" class="btn" id="change-name" style="width:100%;margin-top:10px">сменить имя</button>
     </div>
     <div class="card">
@@ -1054,6 +908,8 @@ function renderSettingsContent() {
   document.getElementById("toggle-notify")?.addEventListener("click", async () => {
     try {
       if (p.notify) {
+        const ok = await tgConfirm("Выключить ежедневное уведомление о смене?");
+        if (!ok) return;
         await patchSettings({ notify: false });
       } else {
         const t = document.getElementById("notify-time")?.value?.trim() || p.notify_time;
@@ -1181,7 +1037,7 @@ async function openHoursSheet(dateStr) {
       save(val, false);
     };
   } catch (e) {
-    content.innerHTML = `<div class="error-box">${e.message}</div>`;
+    content.innerHTML = `<div class="error-box">${escapeHtml(e.message)}</div>`;
   }
 }
 
@@ -1355,13 +1211,13 @@ async function renderPeopleList() {
     const data = await api("/api/colleagues");
     const blocks = data.departments.map((dep) => `
       <div class="role-block">
-        <div class="role-title">${dep.role_label}</div>
+        <div class="role-title">${escapeHtml(dep.role_label)}</div>
         <div class="people-list">
           ${dep.people.map((p) => {
             const sel = comparePick.some((c) => c.name === p.name);
             return `
-              <button type="button" class="person-chip person-chip-btn${sel ? " selected" : ""}" data-name="${p.name}" data-role="${p.role || ""}" data-role-label="${dep.role_label}">
-                ${p.name}
+              <button type="button" class="person-chip person-chip-btn${sel ? " selected" : ""}" data-name="${escapeAttr(p.name)}" data-role="${escapeAttr(p.role || "")}" data-role-label="${escapeAttr(dep.role_label)}">
+                ${escapeHtml(p.name)}
               </button>
             `;
           }).join("")}
@@ -1472,7 +1328,7 @@ async function renderColleagueSchedule() {
       }
       const cells = data.days.map((d) => monthDayCellHtml(d)).join("");
       const roleLine = colleagueView.role_label
-        ? `<div class="card-meta" style="margin-bottom:10px">${colleagueView.role_label}</div>`
+        ? `<div class="card-meta" style="margin-bottom:10px">${escapeHtml(colleagueView.role_label)}</div>`
         : "";
 
       document.getElementById("main").innerHTML = `
@@ -1514,7 +1370,7 @@ async function renderColleagueSchedule() {
 
     if (data.role_label) colleagueView.role_label = data.role_label;
     const roleLine = colleagueView.role_label
-      ? `<div class="card-meta" style="margin-bottom:10px">${colleagueView.role_label}</div>`
+      ? `<div class="card-meta" style="margin-bottom:10px">${escapeHtml(colleagueView.role_label)}</div>`
       : "";
 
     document.getElementById("main").innerHTML = `

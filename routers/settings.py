@@ -4,7 +4,7 @@ from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
-from departments_manager import DEPARTMENTS, is_department_label, is_person_name
+from departments_manager import DEPARTMENTS, is_department_label, is_person_name, resolve_department_label
 from fsm_context import (
     clear_colleague_view,
     clear_notification_state,
@@ -45,7 +45,7 @@ async def choose_own_name(message: Message, state: FSMContext):
 @router.message(F.text.func(is_department_label))
 async def department_selected(message: Message, state: FSMContext):
     user_id = message.from_user.id
-    department = message.text
+    department = resolve_department_label(message.text) or message.text
 
     parts = department.split(" ", 1)
     dept_role = parts[1] if len(parts) == 2 else department
@@ -76,10 +76,11 @@ async def department_selected(message: Message, state: FSMContext):
         )
 
 
-@router.message(F.text.func(is_person_name))
+@router.message(NameFlowStates.choosing_own_name, F.text.func(is_person_name))
 @with_loading("⏳ Сохраняю...")
 async def own_name_selected(message: Message, state: FSMContext):
     user_id = message.from_user.id
+    user = await get_user(user_id)
 
     user_role = await pop_last_selected_dept(state)
     if not user_role:
@@ -89,7 +90,10 @@ async def own_name_selected(message: Message, state: FSMContext):
                 user_role = parts[1] if len(parts) == 2 else dept_label
                 break
 
-    await save_user(user_id, name=message.text, notify=0, notify_time='', role=user_role)
+    if user and user[1]:
+        await save_user(user_id, name=message.text, role=user_role)
+    else:
+        await save_user(user_id, name=message.text, notify=0, notify_time='', role=user_role)
     from services.schedule_watch_service import reset_user_snapshot
     await reset_user_snapshot(user_id)
     await reset_modes(user_id, state)

@@ -8,7 +8,6 @@ from datetime import date, datetime, timedelta
 from app_config import now_local
 from services.sheet_periods_service import SHEET_GID_MAP
 from departments_manager import (
-    DEPT_EMOJIS,
     SHEET_ROLES,
     normalize_role_name,
     ordered_role_keys,
@@ -466,7 +465,7 @@ async def get_range_schedule(name, start_day, end_day, month=None, year=None, ta
         return mf.empty_state("📭", f"Не нашёл график для {name}")
 
     if saved_role:
-        header = mf.range_schedule_header(name, DEPT_EMOJIS.get(saved_role, saved_role))
+        header = mf.range_schedule_header(name, role_display_label(saved_role))
     else:
         header = mf.range_schedule_header(name, None)
 

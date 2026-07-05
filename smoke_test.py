@@ -10,6 +10,7 @@
 - проверить базовые чистые функции без Telegram API, PostgreSQL и Google Sheets.
 """
 
+import asyncio
 import sys
 import traceback
 
@@ -22,6 +23,43 @@ def check(name, fn):
         print(f"❌ {name}: {type(e).__name__}: {e}")
         traceback.print_exc()
         raise
+
+
+def build_signed_init_data(
+    bot_token: str,
+    *,
+    user_id: int = 42,
+    auth_date: int | str | None = 1_700_000_000,
+    tamper_hash: bool = False,
+):
+    import hashlib
+    import hmac
+    import json
+    from urllib.parse import urlencode
+
+    payload = {
+        "user": json.dumps({"id": user_id, "first_name": "Smoke"}),
+    }
+    if auth_date is not None:
+        payload["auth_date"] = str(auth_date)
+
+    check_string = "\n".join(f"{k}={v}" for k, v in sorted(payload.items()))
+    secret = hmac.new(b"WebAppData", bot_token.encode(), hashlib.sha256).digest()
+    payload["hash"] = hmac.new(secret, check_string.encode(), hashlib.sha256).hexdigest()
+    if tamper_hash:
+        payload["hash"] = "0" * 64
+    return urlencode(payload)
+
+
+def assert_init_data_error(expected_message: str, *args, **kwargs):
+    from api.auth import InitDataError, validate_init_data
+
+    try:
+        validate_init_data(*args, **kwargs)
+    except InitDataError as e:
+        assert str(e) == expected_message
+        return
+    raise AssertionError(f"Ожидали InitDataError: {expected_message}")
 
 
 def test_admin_bot_import():
@@ -158,6 +196,12 @@ def test_departments_manager():
     assert departments_manager.roles_for_person("Дарья") == ["Бармен", "Хостес"]
     assert departments_manager.roles_for_person("Виталий") == ["Официант"]
     assert departments_manager.normalize_role_name("Менеджер") == "Менеджеры"
+    assert departments_manager.resolve_department_label("👔 Менеджеры") == "👔 Менеджер"
+    assert departments_manager.is_department_label("👔 Менеджеры") is True
+    assert departments_manager.role_display_label("Менеджер") == "👔 Менеджеры"
+    assert departments_manager.role_display_label("Официанты") == "🍽 Официант"
+    assert departments_manager.role_display_label("Бармены") == "🍸 Бармен"
+    assert departments_manager.role_display_label("Кальянщики") == "💨 Кальян"
 
 
 def test_schedule_utils():
@@ -200,6 +244,7 @@ def test_schedule_utils():
 
 def test_keyboards():
     import keyboards
+    from keyboards.schedule import own_names_kb
 
     # configure на случай если smoke запускается без bot.py.
     if hasattr(keyboards, "configure_keyboard_context"):
@@ -241,23 +286,187 @@ def test_keyboards():
     periods = keyboards.get_available_periods()
     assert isinstance(periods, list)
 
+    manager_kb = own_names_kb("👔 Менеджеры")
+    assert manager_kb.keyboard[0][0].text == "Рина Евгеньевна"
+    assert manager_kb.keyboard[-1][0].text == "🏠 Главное меню"
+
 
 def test_miniapp_auth():
-    import hashlib
-    import hmac
-    import json
-    from urllib.parse import urlencode
-
     from api.auth import validate_init_data
 
     bot_token = "smoke-test-token"
-    user = json.dumps({"id": 42, "first_name": "Smoke"})
-    payload = {"user": user, "auth_date": "1700000000"}
-    check_string = "\n".join(f"{k}={v}" for k, v in sorted(payload.items()))
-    secret = hmac.new(b"WebAppData", bot_token.encode(), hashlib.sha256).digest()
-    payload["hash"] = hmac.new(secret, check_string.encode(), hashlib.sha256).hexdigest()
-    result = validate_init_data(urlencode(payload), bot_token)
+    now_ts = 1_700_000_000
+
+    result = validate_init_data(
+        build_signed_init_data(bot_token, auth_date=now_ts),
+        bot_token,
+        now_ts=now_ts,
+    )
     assert result["user_id"] == 42
+
+    assert_init_data_error(
+        "Неверная подпись",
+        build_signed_init_data(bot_token, auth_date=now_ts, tamper_hash=True),
+        bot_token,
+        now_ts=now_ts,
+    )
+    assert_init_data_error(
+        "Нет auth_date",
+        build_signed_init_data(bot_token, auth_date=None),
+        bot_token,
+        now_ts=now_ts,
+    )
+    assert_init_data_error(
+        "Некорректный auth_date",
+        build_signed_init_data(bot_token, auth_date="oops"),
+        bot_token,
+        now_ts=now_ts,
+    )
+    assert_init_data_error(
+        "auth_date устарел",
+        build_signed_init_data(bot_token, auth_date=now_ts - 86_401),
+        bot_token,
+        now_ts=now_ts,
+    )
+    assert_init_data_error(
+        "auth_date из будущего",
+        build_signed_init_data(bot_token, auth_date=now_ts + 61),
+        bot_token,
+        now_ts=now_ts,
+    )
+
+
+def test_miniapp_week_today_stays_real_when_offset_changes():
+    from datetime import datetime
+    from unittest.mock import patch
+    from zoneinfo import ZoneInfo
+
+    from services import miniapp_service
+
+    tz = ZoneInfo("Europe/Moscow")
+    now = datetime(2026, 7, 4, 12, 0, tzinfo=tz)
+
+    async def fake_shift(_name, _role, _dt):
+        return {"working": False, "shift_type": None, "label": None, "hours": None}
+
+    with patch.object(miniapp_service, "now_local", return_value=now):
+        with patch.object(miniapp_service, "_shift_for_person", fake_shift):
+            with patch.object(miniapp_service.schedule, "is_day_published", return_value=True):
+                data = asyncio.run(
+                    miniapp_service._week_schedule_for("Виталий", "Официант", week_offset=1),
+                )
+
+    assert data["days"][0]["day"] == 6
+    assert data["today"]["day"] == 4
+    assert data["today"]["is_today"] is True
+    assert data["tomorrow"]["day"] == 5
+
+
+def test_miniapp_profile_role_normalization():
+    import services.schedule_watch_service as schedule_watch_service
+    from services import miniapp_service
+
+    original_get_user = miniapp_service.get_user
+    original_is_person_name = miniapp_service.is_person_name
+    original_roles_for_person = miniapp_service.roles_for_person
+    original_save_user = miniapp_service.save_user
+    original_get_profile = miniapp_service.get_profile
+    original_reset_user_snapshot = schedule_watch_service.reset_user_snapshot
+    saved: dict[str, object] = {}
+
+    async def fake_get_user(user_id: int):
+        return (user_id, "Рина Евгеньевна", 1, "09:30", "Менеджер", 0, 0, None, "alice_dark")
+
+    async def fake_save_user(user_id: int, **kwargs):
+        saved["user_id"] = user_id
+        saved.update(kwargs)
+
+    async def fake_profile(user_id: int):
+        return {
+            "registered": True,
+            "user_id": user_id,
+            "name": "Рина Евгеньевна",
+            "role": saved.get("role"),
+            "role_label": "👔 Менеджеры",
+        }
+
+    async def fake_reset_user_snapshot(user_id: int):
+        saved["reset_user_id"] = user_id
+
+    try:
+        miniapp_service.get_user = fake_get_user
+        profile = asyncio.run(miniapp_service.get_profile(42))
+        assert profile["role"] == "Менеджер"
+        assert profile["role_label"] == "👔 Менеджеры"
+
+        miniapp_service.is_person_name = lambda name: name == "Рина Евгеньевна"
+        miniapp_service.roles_for_person = lambda name: ["Менеджер"]
+        miniapp_service.save_user = fake_save_user
+        miniapp_service.get_profile = fake_profile
+        schedule_watch_service.reset_user_snapshot = fake_reset_user_snapshot
+
+        updated = asyncio.run(miniapp_service.update_profile(42, "Рина Евгеньевна", "Менеджеры"))
+        assert updated["role"] == "Менеджер"
+        assert updated["role_label"] == "👔 Менеджеры"
+        assert saved["user_id"] == 42
+        assert saved["role"] == "Менеджер"
+        assert "notify" not in saved
+        assert "notify_time" not in saved
+        assert saved["reset_user_id"] == 42
+    finally:
+        miniapp_service.get_user = original_get_user
+        miniapp_service.is_person_name = original_is_person_name
+        miniapp_service.roles_for_person = original_roles_for_person
+        miniapp_service.save_user = original_save_user
+        miniapp_service.get_profile = original_get_profile
+        schedule_watch_service.reset_user_snapshot = original_reset_user_snapshot
+
+
+def test_miniapp_static_assets():
+    import api.app as api_app
+
+    static_dir = api_app.STATIC_DIR
+    for asset in api_app.MINIAPP_ASSETS:
+        assert (static_dir / asset).is_file(), asset
+
+    html = (static_dir / "index.html").read_text(encoding="utf-8")
+    for asset in api_app.MINIAPP_ASSETS:
+        assert f"/assets/{asset}" in html
+
+
+def test_miniapp_health_endpoint():
+    import departments_manager
+    import api.app as api_app
+
+    departments_manager.configure_departments_manager(
+        lambda name: str(name).strip(),
+        None,
+    )
+    original_db_health = api_app._db_health
+
+    try:
+        api_app._db_health = lambda: {
+            "backend": "sqlite",
+            "ok": True,
+            "registered_users": 3,
+            "notify_enabled": 2,
+            "notify_hours_enabled": 1,
+            "schedule_snapshots": 2,
+        }
+        app = api_app.create_app()
+        health_route = next(route for route in app.routes if getattr(route, "path", None) == "/api/health")
+        payload = asyncio.run(health_route.endpoint())
+
+        assert payload["ok"] is True
+        assert payload["status"] in {"ok", "degraded"}
+        assert payload["ready"]["departments"] is True
+        assert isinstance(payload["runtime"]["configured_port"], int)
+        assert payload["build"]["checked_at"]
+        assert payload["deps"]["schedule_watch"]["watch_days"] == 45
+        assert payload["deps"]["schedule_watch"]["tracked_users"] == 2
+        assert payload["deps"]["departments"]["department_count"] >= 1
+    finally:
+        api_app._db_health = original_db_health
 
 
 def test_message_format():
@@ -291,6 +500,10 @@ def main():
         ("departments_manager", test_departments_manager),
         ("message_format", test_message_format),
         ("miniapp_auth", test_miniapp_auth),
+        ("miniapp_week_today", test_miniapp_week_today_stays_real_when_offset_changes),
+        ("miniapp_profile_role_normalization", test_miniapp_profile_role_normalization),
+        ("miniapp_static_assets", test_miniapp_static_assets),
+        ("miniapp_health_endpoint", test_miniapp_health_endpoint),
     ]
 
     for name, fn in checks:

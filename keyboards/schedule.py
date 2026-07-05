@@ -1,7 +1,7 @@
 from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
 
 from services.sheet_periods_service import SHEET_GID_MAP
-from departments_manager import DEPARTMENTS
+from departments_manager import DEPARTMENTS, DEPARTMENTS_FALLBACK, resolve_department_label
 from keyboards import context
 from repositories.users_repo import get_user_name
 
@@ -54,18 +54,20 @@ def colleague_kb():
 
 
 def dep_kb():
+    labels = list(DEPARTMENTS.keys()) or list(DEPARTMENTS_FALLBACK.keys())
+    rows = [
+        [KeyboardButton(text=label) for label in labels[i:i + 2]]
+        for i in range(0, len(labels), 2)
+    ]
+    rows.append([KeyboardButton(text="🏠 Главное меню")])
     return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="👔 Менеджер"), KeyboardButton(text="🍽 Официант")],
-            [KeyboardButton(text="🍸 Бармен"), KeyboardButton(text="💨 Кальян")],
-            [KeyboardButton(text="🙋 Хостес")],
-            [KeyboardButton(text="🏠 Главное меню")],
-        ],
+        keyboard=rows,
         resize_keyboard=True,
     )
 
 
 def own_names_kb(department):
+    department = resolve_department_label(department) or department
     return ReplyKeyboardMarkup(
         keyboard=[[KeyboardButton(text=name)] for name in DEPARTMENTS[department]]
         + [[KeyboardButton(text="🏠 Главное меню")]],
@@ -74,6 +76,7 @@ def own_names_kb(department):
 
 
 async def colleague_names_kb(department, user_id):
+    department = resolve_department_label(department) or department
     my_name = await get_user_name(user_id)
     buttons = []
 
@@ -86,6 +89,7 @@ async def colleague_names_kb(department, user_id):
 
 
 async def compare_names_kb(department, user_id, selected: set | None = None):
+    department = resolve_department_label(department) or department
     my_name = await get_user_name(user_id)
     selected = selected or set()
     buttons = []

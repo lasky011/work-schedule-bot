@@ -46,5 +46,10 @@ async def home(message: Message, state: FSMContext):
     await reset_modes(user_id, state)
 
     name = await get_user_name(user_id)
-    greeting = f"Привет, <b>{name}</b> 👋" if name else "🏠 <b>Главное меню</b>"
+    greeting = (
+        f"Привет, <b>{name}</b> 👋\n\n"
+        "Основной интерфейс — Mini App через кнопку меню внизу чата."
+        if name
+        else "🏠 <b>Главное меню</b>\n\nОткрой Mini App через кнопку меню внизу чата."
+    )
     await answer_html(message, greeting, reply_markup=await main_kb_async(user_id))
