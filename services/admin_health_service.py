@@ -6,20 +6,10 @@ from app_config import now_local
 from db import get_db_connection
 from departments_manager import get_departments_status
 from services.sheet_periods_service import SHEET_GID_MAP
+from services.sheet_loader import oldest_cache_age_seconds
 from sheets_client import cached_df, cached_time
 
 CACHE_STALE_SECONDS = 3600
-CACHE_REFRESH_SECONDS = 1800
-
-
-def oldest_cache_age_seconds() -> int | None:
-    if not cached_time:
-        return None
-    now = now_local()
-    try:
-        return max(int((now - ts).total_seconds()) for ts in cached_time.values())
-    except Exception:
-        return None
 
 
 def collect_health_issues() -> list[tuple[str, str]]:

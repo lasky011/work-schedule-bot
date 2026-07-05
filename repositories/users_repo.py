@@ -136,6 +136,24 @@ async def get_notify_users():
     return await asyncio.to_thread(_get_notify_users_sync)
 
 
+def _get_notify_hours_users_sync():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "SELECT user_id, name, role FROM users "
+            "WHERE notify_hours=1 AND name IS NOT NULL"
+        )
+        return cursor.fetchall()
+    finally:
+        cursor.close()
+        conn.close()
+
+
+async def get_notify_hours_users():
+    return await asyncio.to_thread(_get_notify_hours_users_sync)
+
+
 def _get_registered_users_sync():
     conn = get_db_connection()
     cursor = conn.cursor()

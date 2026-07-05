@@ -23,7 +23,7 @@ from db import USE_POSTGRES, get_db_connection, init_pg_pool
 from keyboards import configure_keyboard_context
 from keyboards.inline_miniapp import daily_notify_kb, hours_notify_kb
 from repositories.shifts_repo import get_shift_for_date
-from repositories.users_repo import get_notify_users
+from repositories.users_repo import get_notify_hours_users, get_notify_users
 from routers.colleagues import router as colleagues_router
 from routers.common import router as common_router
 from routers.fallback import router as fallback_router
@@ -40,7 +40,7 @@ from schedule_utils import (
 from services import schedule_service as schedule
 from services.compare_service import configure_compare_service
 from services.salary_service import configure_salary_service
-from services.sheet_loader import load_full_sheet, load_sheet
+from services.sheet_loader import CACHE_REFRESH_SECONDS, load_full_sheet, load_sheet, maybe_refresh_sheet_cache
 from services.sheet_periods_service import load_from_db_sync, sync_from_db
 from services.schedule_watch_service import check_all_registered_users, configure_schedule_watch
 from ui_utils import configure_ui_utils
@@ -197,15 +197,7 @@ async def hours_notification_loop(bot) -> None:
             day_type = get_day_type(shift_dt)
 
             try:
-                conn = get_db_connection()
-                cursor = conn.cursor()
-                cursor.execute(
-                    "SELECT user_id, name, role FROM users "
-                    "WHERE notify_hours=1 AND name IS NOT NULL"
-                )
-                users = cursor.fetchall()
-                cursor.close()
-                conn.close()
+                users = await get_notify_hours_users()
             except Exception as e:
                 logging.error("hours_notification_loop DB error: %s", e)
                 await asyncio.sleep(60)
@@ -343,11 +335,27 @@ async def schedule_watch_loop() -> None:
     await asyncio.sleep(30)
     while True:
         try:
+            await maybe_refresh_sheet_cache()
             await check_all_registered_users()
         except Exception:
             logging.exception("schedule_watch_loop: критическая ошибка цикла")
         try:
             await asyncio.sleep(SCHEDULE_WATCH_SECONDS)
+        except asyncio.CancelledError:
+            break
+
+
+async def sheet_cache_refresh_loop() -> None:
+    await asyncio.sleep(120)
+    while True:
+        try:
+            await maybe_refresh_sheet_cache()
+        except asyncio.CancelledError:
+            break
+        except Exception:
+            logging.exception("sheet_cache_refresh_loop")
+        try:
+            await asyncio.sleep(CACHE_REFRESH_SECONDS)
         except asyncio.CancelledError:
             break
 
@@ -436,6 +444,13 @@ async def main():
     schedule_watch_task.add_done_callback(
         lambda t: logging.exception(
             "schedule_watch_loop: фоновая задача завершилась с ошибкой",
+            exc_info=t.exception(),
+        ) if not t.cancelled() and t.exception() else None
+    )
+    cache_refresh_task = asyncio.create_task(sheet_cache_refresh_loop())
+    cache_refresh_task.add_done_callback(
+        lambda t: logging.exception(
+            "sheet_cache_refresh_loop: фоновая задача завершилась с ошибкой",
             exc_info=t.exception(),
         ) if not t.cancelled() and t.exception() else None
     )

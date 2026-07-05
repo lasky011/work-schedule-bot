@@ -14,6 +14,7 @@ from services.telegram_notify import send_user_message
 
 WATCH_DAYS = 45
 MONTHS = None
+_UNRELIABLE_STATES = frozenset({"error", "missing"})
 
 
 def configure_schedule_watch(months):
@@ -68,27 +69,33 @@ async def build_snapshot(name: str, role: str | None) -> dict[str, str]:
 
 
 def diff_snapshots(old: dict, new: dict) -> list[tuple[str, datetime, str, str]]:
-    """Сравнивает только даты, присутствующие в обоих снимках.
-
-    Окно WATCH_DAYS сдвигается в полночь: вчерашний день выпадает из new,
-    завтрашний на горизонте может появиться только в new. Это не изменение
-    графика в таблице — иначе в 00:00 приходит ложное «снята смена».
-    """
+    """Сравнивает только даты, присутствующие в обоих снимках."""
     changes = []
     common_dates = set(old.keys()) & set(new.keys())
     tz = now_local().tzinfo
+    today = now_local().replace(hour=0, minute=0, second=0, microsecond=0)
+
     for date_str in sorted(common_dates):
         old_val = old[date_str]
         new_val = new[date_str]
         if old_val == new_val:
             continue
+
         dt = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=tz)
+
         if _is_work(old_val) and not _is_work(new_val):
+            if new_val in _UNRELIABLE_STATES:
+                continue
+            if dt < today:
+                continue
             changes.append(("removed", dt, old_val, new_val))
         elif not _is_work(old_val) and _is_work(new_val):
+            if old_val in _UNRELIABLE_STATES:
+                continue
             changes.append(("added", dt, old_val, new_val))
         elif _is_work(old_val) and _is_work(new_val):
             changes.append(("changed", dt, old_val, new_val))
+
     return changes
 
 
@@ -112,8 +119,8 @@ async def check_user_schedule(user_id: int, name: str, role: str | None) -> None
 
     old_snap = json.loads(old_raw)
     changes = diff_snapshots(old_snap, new_snap)
-    await save_snapshot(user_id, new_snap)
     if not changes:
+        await save_snapshot(user_id, new_snap)
         return
 
     lines = ["📋 Изменения в твоём графике:", ""]
@@ -121,11 +128,20 @@ async def check_user_schedule(user_id: int, name: str, role: str | None) -> None
         lines.append(_format_change(*item))
     if len(changes) > 8:
         lines.append(f"\n…и ещё {len(changes) - 8}")
-    await send_user_message(
+
+    ok = await send_user_message(
         user_id,
         "\n".join(lines),
         reply_markup=schedule_change_reply_markup(),
     )
+    if ok:
+        await save_snapshot(user_id, new_snap)
+    else:
+        logging.warning(
+            "schedule_watch: уведомление не доставлено, snapshot сохранён user_id=%s name=%s",
+            user_id,
+            name,
+        )
 
 
 async def check_all_registered_users() -> None:

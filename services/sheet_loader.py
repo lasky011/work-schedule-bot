@@ -9,6 +9,36 @@ from services import schedule_service as schedule
 from services.sheet_periods_service import SHEET_GID_MAP
 from sheets_client import cache_locks, cached_df, cached_time, download_sheet
 
+CACHE_REFRESH_SECONDS = 1800
+
+
+def oldest_cache_age_seconds() -> int | None:
+    if not cached_time:
+        return None
+    now = now_local()
+    try:
+        return max(int((now - ts).total_seconds()) for ts in cached_time.values())
+    except Exception:
+        return None
+
+
+async def maybe_refresh_sheet_cache() -> None:
+    age = oldest_cache_age_seconds()
+    if age is None or age < CACHE_REFRESH_SECONDS:
+        return
+    try:
+        loaded, failed, errors = await load_all_sheet_gids()
+        logging.info(
+            "sheet cache refresh: age=%ss loaded=%s failed=%s",
+            age,
+            loaded,
+            failed,
+        )
+        if failed and errors:
+            logging.warning("sheet cache refresh errors: %s", "; ".join(errors[:3]))
+    except Exception:
+        logging.exception("sheet cache refresh failed")
+
 
 async def _cache_gid(gid: int) -> None:
     if gid not in cache_locks:

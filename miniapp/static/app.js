@@ -1242,10 +1242,17 @@ async function renderPeopleList() {
   }
 }
 
+function rosterDisplayName(entry) {
+  const sep = " — ";
+  const i = entry.indexOf(sep);
+  return i >= 0 ? entry.slice(0, i).trim() : entry.trim();
+}
+
 function personChipBtnHtml(name, role, roleLabel) {
+  const personName = rosterDisplayName(name);
   return `
     <button type="button" class="person-chip person-chip-btn"
-      data-name="${escapeAttr(name)}"
+      data-name="${escapeAttr(personName)}"
       data-role="${escapeAttr(role || "")}"
       data-role-label="${escapeAttr(roleLabel || "")}">
       ${escapeHtml(name)}

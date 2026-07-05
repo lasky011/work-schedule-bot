@@ -24,6 +24,15 @@ from services.telegram_notify import send_user_message
 
 
 WEEKDAYS_SHORT = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]
+
+
+def _roster_person_name(entry: str) -> str:
+    sep = " — "
+    if sep in entry:
+        return entry.split(sep, 1)[0].strip()
+    return entry.strip()
+
+
 THEMES = {
     "alice_dark",
     "ruby_smoke",
@@ -334,14 +343,15 @@ async def get_day_roster(date_str: str) -> dict:
     published = schedule.is_day_published(day, month, year)
 
     departments: list[dict] = []
-    working_names: set[str] = set()
+    working_plain_names: set[str] = set()
     if published:
         by_role = await schedule.get_people_for_day(day, month, year)
         for role_key in ordered_role_keys(by_role):
             people = by_role.get(role_key, [])
             if not people:
                 continue
-            working_names.update(people)
+            for entry in people:
+                working_plain_names.add(_roster_person_name(entry))
             departments.append({
                 "role": role_key,
                 "role_label": role_display_label(role_key),
@@ -353,7 +363,7 @@ async def get_day_roster(date_str: str) -> dict:
         for dep_label, names in DEPARTMENTS.items():
             dep_role = dep_label.split(" ", 1)[-1] if " " in dep_label else dep_label
             for person_name in names:
-                if person_name in working_names:
+                if person_name in working_plain_names:
                     continue
                 shift = await _shift_for_person(person_name, dep_role, dt)
                 if shift.get("error") or shift["working"]:
@@ -373,7 +383,7 @@ async def get_day_roster(date_str: str) -> dict:
         "weekday": WEEKDAYS_SHORT[dt.weekday()],
         "header": f"{day} {schedule.MONTHS[month]}",
         "published": published,
-        "total_working": len(working_names),
+        "total_working": len(working_plain_names),
         "departments": departments,
         "off": off_people,
     }

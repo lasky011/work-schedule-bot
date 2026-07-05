@@ -586,6 +586,59 @@ def test_schedule_watch_midnight_window_slide():
     assert changes[0][1].day == 6
 
 
+def test_schedule_watch_unreliable_and_past():
+    from datetime import datetime
+    from unittest.mock import patch
+
+    from services.schedule_watch_service import diff_snapshots
+
+    fixed_now = datetime(2026, 7, 6, 0, 0, 0)
+
+    with patch("services.schedule_watch_service.now_local", return_value=fixed_now):
+        old = {
+            "2026-07-05": "work|morning|11:00 — утро",
+            "2026-07-06": "work|morning|11:00 — утро",
+            "2026-07-07": "work|evening|16:00 — вечер",
+        }
+        new_error = {
+            "2026-07-05": "error",
+            "2026-07-06": "work|morning|11:00 — утро",
+            "2026-07-07": "work|evening|16:00 — вечер",
+        }
+        assert diff_snapshots(old, new_error) == []
+
+        new_missing = {
+            "2026-07-05": "missing",
+            "2026-07-06": "work|morning|11:00 — утро",
+            "2026-07-07": "work|evening|16:00 — вечер",
+        }
+        assert diff_snapshots(old, new_missing) == []
+
+        new_past_off = {
+            "2026-07-05": "off",
+            "2026-07-06": "work|morning|11:00 — утро",
+            "2026-07-07": "work|evening|16:00 — вечер",
+        }
+        assert diff_snapshots(old, new_past_off) == []
+
+        new_future_off = {
+            "2026-07-05": "work|morning|11:00 — утро",
+            "2026-07-06": "off",
+            "2026-07-07": "work|evening|16:00 — вечер",
+        }
+        changes = diff_snapshots(old, new_future_off)
+        assert len(changes) == 1
+        assert changes[0][0] == "removed"
+        assert changes[0][1].day == 6
+
+
+def test_roster_person_name():
+    from services.miniapp_service import _roster_person_name
+
+    assert _roster_person_name("Платон — 11:00 — утро") == "Платон"
+    assert _roster_person_name("Платон") == "Платон"
+
+
 def test_broadcast_format_helpers():
     from keyboards.admin import BC_FMT_HTML, BC_FMT_HTML_MINIAPP, BC_FMT_PLAIN
     from routers.admin import _broadcast_parse_mode, _broadcast_format_hint
@@ -639,6 +692,8 @@ def main():
         ("broadcast_format_helpers", test_broadcast_format_helpers),
         ("admin_alert_dedup", test_admin_alert_dedup_by_key),
         ("schedule_watch_midnight", test_schedule_watch_midnight_window_slide),
+        ("schedule_watch_unreliable", test_schedule_watch_unreliable_and_past),
+        ("roster_person_name", test_roster_person_name),
     ]
 
     for name, fn in checks:
