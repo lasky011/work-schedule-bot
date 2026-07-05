@@ -639,6 +639,76 @@ def test_roster_person_name():
     assert _roster_person_name("Платон") == "Платон"
 
 
+def test_period_coverage_missing():
+    from unittest.mock import patch
+
+    from services.period_coverage_service import format_period_key, missing_period_keys
+
+    sample = {
+        (2026, 7, 1): "2125046654",
+    }
+    with patch("services.period_coverage_service.SHEET_GID_MAP", sample):
+        missing = missing_period_keys(days_ahead=14)
+        assert (2026, 7, 16) in missing
+        assert "июл" in format_period_key((2026, 7, 16))
+
+
+def test_cache_signal_pending():
+    import services.cache_signal_service as cache_signal
+
+    cache_signal._last_applied_version = 0
+
+    async def run():
+        from unittest.mock import AsyncMock, patch
+
+        with patch(
+            "services.cache_signal_service.get_int",
+            new=AsyncMock(return_value=2),
+        ):
+            assert await cache_signal.pending_sheet_cache_signal() is True
+
+        with patch(
+            "services.cache_signal_service.get_int",
+            new=AsyncMock(return_value=2),
+        ), patch(
+            "services.cache_signal_service.reload_from_db",
+            new=AsyncMock(return_value=5),
+        ), patch(
+            "services.cache_signal_service.load_all_sheet_gids",
+            new=AsyncMock(return_value=(5, 0, [])),
+        ):
+            assert await cache_signal.apply_pending_sheet_cache_signal() is True
+            assert cache_signal._last_applied_version == 2
+            assert await cache_signal.pending_sheet_cache_signal() is False
+
+    asyncio.run(run())
+
+
+def test_admin_health_period_gap():
+    from unittest.mock import MagicMock, patch
+
+    from services.admin_health_service import collect_health_issues
+
+    mock_conn = MagicMock()
+    mock_cursor = MagicMock()
+    mock_conn.cursor.return_value = mock_cursor
+    mock_cursor.fetchone.side_effect = [(5,), (3,)]
+
+    with patch(
+        "services.admin_health_service.get_db_connection",
+        return_value=mock_conn,
+    ), patch(
+        "services.admin_health_service.SHEET_GID_MAP",
+        {(2026, 7, 1): "1"},
+    ), patch(
+        "services.admin_health_service.missing_period_keys",
+        return_value=[(2026, 7, 16)],
+    ):
+        issues = collect_health_issues()
+    keys = [key for key, _msg in issues]
+    assert "period_gap" in keys
+
+
 def test_broadcast_format_helpers():
     from keyboards.admin import BC_FMT_HTML, BC_FMT_HTML_MINIAPP, BC_FMT_PLAIN
     from routers.admin import _broadcast_parse_mode, _broadcast_format_hint
@@ -694,6 +764,9 @@ def main():
         ("schedule_watch_midnight", test_schedule_watch_midnight_window_slide),
         ("schedule_watch_unreliable", test_schedule_watch_unreliable_and_past),
         ("roster_person_name", test_roster_person_name),
+        ("period_coverage", test_period_coverage_missing),
+        ("cache_signal", test_cache_signal_pending),
+        ("admin_health_period_gap", test_admin_health_period_gap),
     ]
 
     for name, fn in checks:

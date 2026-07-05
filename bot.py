@@ -40,7 +40,8 @@ from schedule_utils import (
 from services import schedule_service as schedule
 from services.compare_service import configure_compare_service
 from services.salary_service import configure_salary_service
-from services.sheet_loader import CACHE_REFRESH_SECONDS, load_full_sheet, load_sheet, maybe_refresh_sheet_cache
+from services.cache_signal_service import maybe_refresh_sheet_cache
+from services.sheet_loader import CACHE_REFRESH_SECONDS, load_full_sheet, load_sheet
 from services.sheet_periods_service import load_from_db_sync, sync_from_db
 from services.schedule_watch_service import check_all_registered_users, configure_schedule_watch
 from ui_utils import configure_ui_utils
@@ -152,6 +153,35 @@ def init_db():
             user_id     INTEGER PRIMARY KEY,
             snapshot    TEXT NOT NULL,
             updated_at  TEXT DEFAULT (datetime('now'))
+        )
+        """)
+
+    if USE_POSTGRES:
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS sheet_periods (
+            id          SERIAL PRIMARY KEY,
+            year        INT NOT NULL,
+            month       INT NOT NULL CHECK (month BETWEEN 1 AND 12),
+            start_day   INT NOT NULL CHECK (start_day IN (1, 16)),
+            gid         TEXT NOT NULL,
+            created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            UNIQUE (year, month, start_day)
+        )
+        """)
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS admin_log (
+            id              SERIAL PRIMARY KEY,
+            admin_user_id   BIGINT NOT NULL,
+            action          TEXT NOT NULL,
+            details         TEXT,
+            created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """)
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS bot_state (
+            key         TEXT PRIMARY KEY,
+            value       TEXT NOT NULL,
+            updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
         """)
 

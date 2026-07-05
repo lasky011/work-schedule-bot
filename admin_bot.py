@@ -19,7 +19,8 @@ from routers.admin import configure_admin_router, router as admin_router
 from schedule_utils import configure_schedule_utils
 from services import schedule_service as schedule
 from services.admin_alerts_service import run_health_alerts
-from services.sheet_loader import CACHE_REFRESH_SECONDS, load_full_sheet, maybe_refresh_sheet_cache
+from services.cache_signal_service import maybe_refresh_sheet_cache
+from services.sheet_loader import CACHE_REFRESH_SECONDS, load_full_sheet
 from services.sheet_periods_service import load_from_db_sync, sync_from_db
 from services.schedule_watch_service import configure_schedule_watch
 from ui_utils import configure_ui_utils

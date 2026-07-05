@@ -12,6 +12,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from app_config import APP_TIMEZONE_NAME, BOT_TOKEN, MINIAPP_URL, is_admin, now_local
+from constants import SHIFT_END_NOTIFY
 from db import get_db_connection
 from keyboards.admin import (
     BTN_ADD_PERIOD,
@@ -86,6 +87,8 @@ from services import schedule_service as schedule
 from services.schedule_watch_service import WATCH_DAYS, check_user_schedule, reset_user_snapshot
 from services.telegram_notify import send_user_message
 from services.sheet_periods_service import SHEET_GID_MAP, add_period, reload_from_db, remove_period
+from services.cache_signal_service import bump_sheet_cache_signal
+from services.period_coverage_service import format_period_key, missing_period_keys
 from services.sheet_loader import load_all_sheet_gids
 from sheets_client import cached_df, cached_time, clear_sheet_cache
 from states import (
@@ -117,6 +120,14 @@ _ACTION_LABELS = {
     "reconcile_shifts": "⚖️ сверка",
     "health_check": "🔔 проверка",
 }
+
+
+def _hours_notify_times_text() -> str:
+    return " / ".join(sorted(set(SHIFT_END_NOTIFY.values())))
+
+
+def _main_cache_pickup_hint() -> str:
+    return "Основной бот (prod/test) подхватит в течение ~3 мин."
 
 
 def configure_admin_router(load_full_sheet):
@@ -182,7 +193,7 @@ async def _format_user_card(user_id: int) -> str:
     if not user:
         return f"⚠️ Пользователь `{user_id}` не найден."
 
-    _, name, notify, notify_time, role, track_hours, notify_hours, notify_hours_time, theme = user
+    _, name, notify, notify_time, role, track_hours, notify_hours, _notify_hours_time, theme = user
     meta = await get_snapshot_meta(user_id)
     recent = await get_user_recent_shifts(user_id)
 
@@ -193,7 +204,8 @@ async def _format_user_card(user_id: int) -> str:
         f"Роль: {role or '—'}",
         f"Тема Mini App: {theme or '—'}",
         f"🔔 Смены: {'вкл ' + (notify_time or '?') if notify else 'выкл'}",
-        f"⏱ Напоминания часов: {'вкл ' + (notify_hours_time or '?') if notify_hours else 'выкл'}",
+        f"⏱ Напоминания часов: {'вкл' if notify_hours else 'выкл'}",
+        f"   Расписание: {_hours_notify_times_text()} (по типу смены)",
         f"📝 Учёт часов: {'вкл' if track_hours else 'выкл'}",
         f"Snapshot: {_format_snapshot_status(meta)}",
     ]
@@ -361,7 +373,11 @@ async def _reload_periods(message: Message) -> None:
         logging.exception("admin_reload_periods error: %s", e)
         return await message.answer(f"⚠️ Не удалось перезагрузить периоды: {e}")
     await record_action(message.from_user.id, "reload_periods", f"count={count}")
-    await message.answer(f"✅ Периоды перезагружены из БД: {count}", reply_markup=admin_main_kb())
+    await bump_sheet_cache_signal()
+    await message.answer(
+        f"✅ Периоды перезагружены из БД: {count}\n{_main_cache_pickup_hint()}",
+        reply_markup=admin_main_kb(),
+    )
 
 
 async def _reload_sheets(message: Message) -> None:
@@ -377,8 +393,10 @@ async def _reload_sheets(message: Message) -> None:
             "reload_sheets",
             f"loaded={loaded}, failed={failed}",
         )
+        await bump_sheet_cache_signal()
         lines = [
             f"✅ Периоды перезагружены, листов в кэше: {loaded}.",
+            _main_cache_pickup_hint(),
         ]
         if failed:
             lines.append(f"⚠️ Не загрузилось: {failed}")
@@ -479,12 +497,13 @@ async def _save_period(
         "save_period",
         f"{start_day}–{end_day} {month_label(month)} {year}, gid={gid}",
     )
+    await bump_sheet_cache_signal()
     await state.clear()
     await message.answer(
         f"✅ Период {start_day}–{end_day} {month_label(month)} {year} сохранён.\n"
         f"gid={gid}\n"
         f"Всего периодов: {count}\n\n"
-        "Prod и test подхватят в течение ~5 мин.",
+        f"{_main_cache_pickup_hint()}",
         reply_markup=admin_main_kb(),
     )
 
@@ -1213,6 +1232,7 @@ async def admin_delete_period_confirm(callback: CallbackQuery, state: FSMContext
         "delete_period",
         f"{start_day}–{end_day} {month_label(month)} {year}",
     )
+    await bump_sheet_cache_signal()
     await callback.answer("Удалено")
     try:
         await callback.message.edit_reply_markup(reply_markup=None)

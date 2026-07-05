@@ -22,24 +22,6 @@ def oldest_cache_age_seconds() -> int | None:
         return None
 
 
-async def maybe_refresh_sheet_cache() -> None:
-    age = oldest_cache_age_seconds()
-    if age is None or age < CACHE_REFRESH_SECONDS:
-        return
-    try:
-        loaded, failed, errors = await load_all_sheet_gids()
-        logging.info(
-            "sheet cache refresh: age=%ss loaded=%s failed=%s",
-            age,
-            loaded,
-            failed,
-        )
-        if failed and errors:
-            logging.warning("sheet cache refresh errors: %s", "; ".join(errors[:3]))
-    except Exception:
-        logging.exception("sheet cache refresh failed")
-
-
 async def _cache_gid(gid: int) -> None:
     if gid not in cache_locks:
         cache_locks[gid] = asyncio.Lock()

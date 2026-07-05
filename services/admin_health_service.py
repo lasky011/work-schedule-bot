@@ -5,6 +5,7 @@ from __future__ import annotations
 from app_config import now_local
 from db import get_db_connection
 from departments_manager import get_departments_status
+from services.period_coverage_service import format_period_key, missing_period_keys
 from services.sheet_periods_service import SHEET_GID_MAP
 from services.sheet_loader import oldest_cache_age_seconds
 from sheets_client import cached_df, cached_time
@@ -28,6 +29,15 @@ def collect_health_issues() -> list[tuple[str, str]]:
 
     if not SHEET_GID_MAP:
         issues.append(("periods", "В БД нет периодов графика (SHEET_GID_MAP пуст)"))
+
+    missing = missing_period_keys(days_ahead=10)
+    if missing:
+        labels = ", ".join(format_period_key(key) for key in missing[:3])
+        extra = f" (+{len(missing) - 3})" if len(missing) > 3 else ""
+        issues.append((
+            "period_gap",
+            f"Нет gid для ближайших периодов: {labels}{extra}",
+        ))
 
     unique_gids = sorted({int(gid) for gid in SHEET_GID_MAP.values()})
     if unique_gids and not cached_df:
