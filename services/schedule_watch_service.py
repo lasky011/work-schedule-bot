@@ -68,13 +68,21 @@ async def build_snapshot(name: str, role: str | None) -> dict[str, str]:
 
 
 def diff_snapshots(old: dict, new: dict) -> list[tuple[str, datetime, str, str]]:
+    """Сравнивает только даты, присутствующие в обоих снимках.
+
+    Окно WATCH_DAYS сдвигается в полночь: вчерашний день выпадает из new,
+    завтрашний на горизонте может появиться только в new. Это не изменение
+    графика в таблице — иначе в 00:00 приходит ложное «снята смена».
+    """
     changes = []
-    for date_str in sorted(set(old.keys()) | set(new.keys())):
-        old_val = old.get(date_str, "unpublished")
-        new_val = new.get(date_str, "unpublished")
+    common_dates = set(old.keys()) & set(new.keys())
+    tz = now_local().tzinfo
+    for date_str in sorted(common_dates):
+        old_val = old[date_str]
+        new_val = new[date_str]
         if old_val == new_val:
             continue
-        dt = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=now_local().tzinfo)
+        dt = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=tz)
         if _is_work(old_val) and not _is_work(new_val):
             changes.append(("removed", dt, old_val, new_val))
         elif not _is_work(old_val) and _is_work(new_val):

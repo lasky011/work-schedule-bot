@@ -551,6 +551,41 @@ def test_admin_alert_dedup_by_key():
     assert should_send is False
 
 
+def test_schedule_watch_midnight_window_slide():
+    from services.schedule_watch_service import diff_snapshots
+
+    old = {
+        "2026-07-04": "work|evening|16:00 — вечер",
+        "2026-07-05": "off",
+        "2026-07-06": "work|morning|11:00 — утро",
+    }
+    # Окно сдвинулось: 4 июля выпало, 7 июля появилось
+    new = {
+        "2026-07-05": "off",
+        "2026-07-06": "work|morning|11:00 — утро",
+        "2026-07-07": "off",
+    }
+    assert diff_snapshots(old, new) == []
+
+    new_changed = {
+        "2026-07-05": "work|evening|16:00 — вечер",
+        "2026-07-06": "work|morning|11:00 — утро",
+    }
+    changes = diff_snapshots(old, new_changed)
+    assert len(changes) == 1
+    assert changes[0][0] == "added"
+    assert changes[0][1].day == 5
+
+    new_removed = {
+        "2026-07-05": "off",
+        "2026-07-06": "off",
+    }
+    changes = diff_snapshots(old, new_removed)
+    assert len(changes) == 1
+    assert changes[0][0] == "removed"
+    assert changes[0][1].day == 6
+
+
 def test_broadcast_format_helpers():
     from keyboards.admin import BC_FMT_HTML, BC_FMT_HTML_MINIAPP, BC_FMT_PLAIN
     from routers.admin import _broadcast_parse_mode, _broadcast_format_hint
@@ -603,6 +638,7 @@ def main():
         ("admin_health_issues", test_admin_health_issues),
         ("broadcast_format_helpers", test_broadcast_format_helpers),
         ("admin_alert_dedup", test_admin_alert_dedup_by_key),
+        ("schedule_watch_midnight", test_schedule_watch_midnight_window_slide),
     ]
 
     for name, fn in checks:
