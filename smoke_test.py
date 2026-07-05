@@ -207,6 +207,21 @@ def test_departments_manager():
     assert departments_manager.role_display_label("Официанты") == "🍽 Официант"
     assert departments_manager.role_display_label("Бармены") == "🍸 Бармен"
     assert departments_manager.role_display_label("Кальянщики") == "💨 Кальян"
+    assert departments_manager.role_display_label("Стажер") == "🎓 Стажер"
+    assert departments_manager.is_department_label("🎓 Стажер") is True
+    assert departments_manager.ordered_role_keys(
+        {"Бармен": [], "Стажер": [], "Официант": []}
+    )[:3] == ["Официант", "Стажер", "Бармен"]
+    assert "Роберт Фролов стаж" in departments_manager.DEPARTMENTS["🎓 Стажер"]
+
+
+def test_intern_shift_times():
+    from schedule_utils import detect_shift, detect_shift_type, is_work_shift
+
+    for value in ("13:00-15:00", "11:00-16:00", "16:30-19:30"):
+        assert is_work_shift(value)
+        assert detect_shift_type(value) in {"morning", "evening"}
+        assert "—" in detect_shift(value)
 
 
 def test_schedule_utils():
@@ -748,6 +763,7 @@ def main():
         ("keyboards", test_keyboards),
         ("ui_utils", test_ui_utils),
         ("departments_manager", test_departments_manager),
+        ("intern_shift_times", test_intern_shift_times),
         ("message_format", test_message_format),
         ("miniapp_auth", test_miniapp_auth),
         ("miniapp_week_today", test_miniapp_week_today_stays_real_when_offset_changes),
