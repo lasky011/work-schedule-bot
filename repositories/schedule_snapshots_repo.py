@@ -7,17 +7,22 @@ from db import USE_POSTGRES, get_db_connection, db_placeholder
 
 
 def _get_snapshot_sync(user_id: int) -> str | None:
+    meta = _get_snapshot_meta_sync(user_id)
+    return meta[0] if meta else None
+
+
+def _get_snapshot_meta_sync(user_id: int) -> tuple[str, object] | None:
     conn = get_db_connection()
     cursor = conn.cursor()
     ph = db_placeholder()
     cursor.execute(
-        f"SELECT snapshot FROM schedule_snapshots WHERE user_id={ph}",
+        f"SELECT snapshot, updated_at FROM schedule_snapshots WHERE user_id={ph}",
         (user_id,),
     )
     row = cursor.fetchone()
     cursor.close()
     conn.close()
-    return row[0] if row else None
+    return (row[0], row[1]) if row else None
 
 
 def _save_snapshot_sync(user_id: int, snapshot: dict) -> None:
@@ -61,6 +66,10 @@ def _delete_snapshot_sync(user_id: int) -> None:
 
 async def get_snapshot(user_id: int) -> str | None:
     return await asyncio.to_thread(_get_snapshot_sync, user_id)
+
+
+async def get_snapshot_meta(user_id: int) -> tuple[str, object] | None:
+    return await asyncio.to_thread(_get_snapshot_meta_sync, user_id)
 
 
 async def save_snapshot(user_id: int, snapshot: dict) -> None:

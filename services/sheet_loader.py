@@ -6,7 +6,18 @@ import logging
 from app_config import now_local
 from departments_manager import refresh_departments
 from services import schedule_service as schedule
+from services.sheet_periods_service import SHEET_GID_MAP
 from sheets_client import cache_locks, cached_df, cached_time, download_sheet
+
+
+async def _cache_gid(gid: int) -> None:
+    if gid not in cache_locks:
+        cache_locks[gid] = asyncio.Lock()
+
+    async with cache_locks[gid]:
+        df = await download_sheet(gid)
+        cached_df[gid] = df
+        cached_time[gid] = now_local()
 
 
 async def load_sheet(day, month=None, year=None):
@@ -23,30 +34,47 @@ async def load_sheet(day, month=None, year=None):
             "Добавь период через /add_period."
         )
 
-    if gid not in cache_locks:
-        cache_locks[gid] = asyncio.Lock()
+    if gid in cached_df and gid in cached_time:
+        if (now_local() - cached_time[gid]).total_seconds() < 60:
+            return cached_df[gid]
 
-    async with cache_locks[gid]:
-        now_time = now_local()
-        if gid in cached_df and gid in cached_time:
-            if (now_time - cached_time[gid]).total_seconds() < 60:
-                return cached_df[gid]
+    await _cache_gid(gid)
+    return cached_df[gid]
 
-        df = await download_sheet(gid)
-        cached_df[gid] = df
-        cached_time[gid] = now_time
-        return cached_df[gid]
+
+async def load_all_sheet_gids() -> tuple[int, int, list[str]]:
+    """Загружает все уникальные gid из SHEET_GID_MAP в локальный кэш."""
+    gids = sorted({int(gid) for gid in SHEET_GID_MAP.values()})
+    if not gids:
+        return 0, 0, []
+
+    loaded = 0
+    errors: list[str] = []
+    for gid in gids:
+        try:
+            await _cache_gid(gid)
+            loaded += 1
+        except Exception as e:
+            errors.append(f"gid={gid}: {e}")
+
+    if loaded:
+        await refresh_departments(force=True)
+    return loaded, len(gids) - loaded, errors
 
 
 async def load_full_sheet():
-    dfs = []
-    for day in [1, 16]:
-        try:
-            dfs.append(await load_sheet(day))
-        except (ValueError, ConnectionError):
-            pass
-    if not dfs:
-        logging.warning("Нет доступных листов при старте — бот запустится без кэша.")
+    loaded, failed, errors = await load_all_sheet_gids()
+    if loaded == 0:
+        if errors:
+            logging.warning("Не удалось загрузить листы при старте: %s", "; ".join(errors[:3]))
+        else:
+            logging.warning("Нет доступных листов при старте — бот запустится без кэша.")
         return None
-    await refresh_departments(force=True)
+    if failed:
+        logging.warning(
+            "Загружено %s gid, ошибок: %s (%s)",
+            loaded,
+            failed,
+            "; ".join(errors[:3]),
+        )
     return None

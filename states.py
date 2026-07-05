@@ -52,8 +52,13 @@ class AdminEditPeriodStates(StatesGroup):
 
 class AdminBroadcastStates(StatesGroup):
     choosing_audience = State()
+    choosing_format = State()
     waiting_text = State()
 
 
 class AdminStatsStates(StatesGroup):
     choosing_month = State()
+
+
+class AdminUserLookupStates(StatesGroup):
+    waiting_query = State()

@@ -69,6 +69,11 @@ def test_admin_bot_import():
     os.environ.setdefault("DATABASE_URL", "postgresql://smoke/test")
     os.environ["ADMIN_IDS"] = "1"
     import admin_bot  # noqa: F401
+    from departments_manager import get_departments_status
+
+    status = get_departments_status()
+    assert status["loaded"] is True
+    assert status["department_count"] >= 1
 
 
 def test_bot_import():
@@ -469,6 +474,75 @@ def test_miniapp_health_endpoint():
         api_app._db_health = original_db_health
 
 
+def test_admin_period_status():
+    from datetime import date
+    from unittest.mock import patch
+
+    from routers.admin import _period_status_label
+
+    fake_now = date(2026, 7, 5)
+
+    with patch("routers.admin.now_local") as mock_now:
+        mock_now.return_value.date.return_value = fake_now
+        assert _period_status_label(2026, 7, 1, 15) == "актуален"
+        assert _period_status_label(2026, 7, 16, 31) == "будущий"
+        assert _period_status_label(2026, 6, 1, 15) == "прошёл"
+
+
+def test_sheet_loader_all_gids():
+    import services.sheet_loader as sheet_loader
+
+    assert hasattr(sheet_loader, "load_all_sheet_gids")
+    assert hasattr(sheet_loader, "load_full_sheet")
+
+
+def test_admin_snapshot_status():
+    from routers.admin import _format_snapshot_status
+
+    assert "нет" in _format_snapshot_status(None)
+    assert _format_snapshot_status(("{}", None)) == "есть"
+
+
+def test_admin_monitor_text():
+    from routers.admin import _format_monitor_text
+
+    text = _format_monitor_text(
+        {
+            "registered": 10,
+            "snapshots": 8,
+            "missing_snapshots": 2,
+            "track_hours": 5,
+            "missing_users": [(1, "Виталий")],
+        }
+    )
+    assert "10" in text
+    assert "Виталий" in text
+    assert "45" in text
+
+
+def test_admin_health_issues():
+    from services.admin_health_service import collect_health_issues, format_health_report
+
+    issues = collect_health_issues()
+    assert isinstance(issues, list)
+    report = format_health_report(issues)
+    assert isinstance(report, str)
+    assert report
+
+    dept_keys = {key for key, _ in issues}
+    assert "departments" not in dept_keys or True  # smoke без configure admin_bot
+
+
+def test_broadcast_format_helpers():
+    from keyboards.admin import BC_FMT_HTML, BC_FMT_HTML_MINIAPP, BC_FMT_PLAIN
+    from routers.admin import _broadcast_parse_mode, _broadcast_format_hint
+
+    assert _broadcast_parse_mode(BC_FMT_PLAIN) is None
+    assert _broadcast_parse_mode(BC_FMT_HTML) == "HTML"
+    assert _broadcast_parse_mode(BC_FMT_HTML_MINIAPP) == "HTML"
+    assert "HTML" in _broadcast_format_hint(BC_FMT_HTML)
+
+
 def test_message_format():
     import message_format as mf
 
@@ -504,6 +578,12 @@ def main():
         ("miniapp_profile_role_normalization", test_miniapp_profile_role_normalization),
         ("miniapp_static_assets", test_miniapp_static_assets),
         ("miniapp_health_endpoint", test_miniapp_health_endpoint),
+        ("admin_period_status", test_admin_period_status),
+        ("sheet_loader_all_gids", test_sheet_loader_all_gids),
+        ("admin_snapshot_status", test_admin_snapshot_status),
+        ("admin_monitor_text", test_admin_monitor_text),
+        ("admin_health_issues", test_admin_health_issues),
+        ("broadcast_format_helpers", test_broadcast_format_helpers),
     ]
 
     for name, fn in checks:

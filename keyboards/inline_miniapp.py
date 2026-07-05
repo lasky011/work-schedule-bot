@@ -60,6 +60,17 @@ def miniapp_open_kb(view: str | None = None) -> InlineKeyboardMarkup | None:
     )
 
 
+def miniapp_broadcast_markup() -> dict | None:
+    url = miniapp_link()
+    if not url:
+        return None
+    return {
+        "inline_keyboard": [
+            [{"text": "✨ Открыть TNG Alice", "web_app": {"url": url}}],
+        ],
+    }
+
+
 def schedule_change_reply_markup() -> dict | None:
     url = miniapp_link(view="schedule") if MINIAPP_URL else ""
     if not url:

@@ -8,7 +8,12 @@ import requests
 from app_config import BOT_TOKEN
 
 
-def _send_sync(chat_id: int, text: str, reply_markup: dict | None = None) -> bool:
+def _send_sync(
+    chat_id: int,
+    text: str,
+    reply_markup: dict | None = None,
+    parse_mode: str | None = None,
+) -> bool:
     if not BOT_TOKEN:
         logging.warning("telegram_notify: BOT_TOKEN is missing")
         return False
@@ -16,6 +21,8 @@ def _send_sync(chat_id: int, text: str, reply_markup: dict | None = None) -> boo
         payload = {"chat_id": chat_id, "text": text}
         if reply_markup:
             payload["reply_markup"] = reply_markup
+        if parse_mode:
+            payload["parse_mode"] = parse_mode
         resp = requests.post(
             f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
             json=payload,
@@ -34,5 +41,6 @@ async def send_user_message(
     chat_id: int,
     text: str,
     reply_markup: dict | None = None,
+    parse_mode: str | None = None,
 ) -> bool:
-    return await asyncio.to_thread(_send_sync, chat_id, text, reply_markup)
+    return await asyncio.to_thread(_send_sync, chat_id, text, reply_markup, parse_mode)

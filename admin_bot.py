@@ -13,15 +13,20 @@ from app_config import (
     validate_admin_env,
 )
 from db import init_pg_pool
+from departments_manager import configure_departments_manager
 from keyboards import configure_keyboard_context
 from routers.admin import configure_admin_router, router as admin_router
 from schedule_utils import configure_schedule_utils
 from services import schedule_service as schedule
+from services.admin_alerts_service import run_health_alerts
 from services.sheet_loader import load_full_sheet
 from services.sheet_periods_service import load_from_db_sync, sync_from_db
+from services.schedule_watch_service import configure_schedule_watch
 from ui_utils import configure_ui_utils
 
 logging.basicConfig(level=logging.INFO)
+
+ADMIN_ALERT_INTERVAL_SECONDS = 900
 
 MONTHS = [
     "",
@@ -47,6 +52,8 @@ configure_ui_utils(MONTHS, MONTHS_NOM)
 from services.sheet_loader import load_sheet  # noqa: E402
 
 schedule.configure_schedule_service(load_sheet, MONTHS, RU_HOLIDAYS)
+configure_departments_manager(schedule.clean_person_name, load_sheet)
+configure_schedule_watch(MONTHS)
 configure_admin_router(load_full_sheet)
 
 dp = Dispatcher(storage=MemoryStorage())
@@ -83,6 +90,25 @@ async def periods_sync_loop() -> None:
             break
         except Exception as e:
             logging.warning("admin periods_sync_loop: %s", e)
+            try:
+                await run_health_alerts()
+            except Exception:
+                logging.exception("health alert after periods_sync failure")
+
+
+async def health_alert_loop() -> None:
+    await asyncio.sleep(60)
+    while True:
+        try:
+            await run_health_alerts()
+        except asyncio.CancelledError:
+            break
+        except Exception:
+            logging.exception("health_alert_loop: ошибка проверки")
+        try:
+            await asyncio.sleep(ADMIN_ALERT_INTERVAL_SECONDS)
+        except asyncio.CancelledError:
+            break
 
 
 async def main():
@@ -93,6 +119,7 @@ async def main():
 
     init_pg_pool()
     await asyncio.to_thread(load_from_db_sync)
+    await load_full_sheet()
 
     bot = Bot(token=token)
 
@@ -100,6 +127,13 @@ async def main():
     sync_task.add_done_callback(
         lambda t: logging.exception(
             "periods_sync_loop crashed",
+            exc_info=t.exception(),
+        ) if not t.cancelled() and t.exception() else None
+    )
+    alert_task = asyncio.create_task(health_alert_loop())
+    alert_task.add_done_callback(
+        lambda t: logging.exception(
+            "health_alert_loop crashed",
             exc_info=t.exception(),
         ) if not t.cancelled() and t.exception() else None
     )
