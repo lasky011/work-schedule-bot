@@ -152,8 +152,11 @@ def test_rates_service():
         "Кальянщик": 280,
         "Менеджеры": 500,
     })
+    rates_service._apply_rates(dict(rates_service.RATES))
     assert rates_service.get_rate("🍽 Официант") == 350
     assert rates_service.get_rate("💨 Кальян") == 280
+    assert rates_service.get_rate("Кальян") == 280
+    assert rates_service.RATES["Кальян"] == 280
     assert rates_service.get_rate("Менеджер") == 500
     assert "Официант" in rates_service.format_rates_text()
 

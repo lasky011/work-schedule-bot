@@ -38,25 +38,6 @@ def normalize_rate_role(role: str | None) -> str | None:
     return ROLE_ALIASES.get(text, text)
 
 
-def get_rate(role: str | None) -> int:
-    key = normalize_rate_role(role)
-    if not key:
-        return 0
-    return int(RATES.get(key, 0))
-
-
-def role_label(role_key: str) -> str:
-    for key, label in ROLE_CATALOG:
-        if key == role_key:
-            return label
-    return role_key
-
-
-def _apply_rates(rows: dict[str, int]) -> None:
-    RATES.clear()
-    RATES.update(rows)
-
-
 def _seed_from_env() -> dict[str, int]:
     env = {k: v for k, v in env_rates().items() if v > 0}
     if not env:
@@ -67,6 +48,34 @@ def _seed_from_env() -> dict[str, int]:
         except Exception as e:
             logging.warning("rates seed %s failed: %s", role_key, e)
     return env
+
+
+def _apply_rates(rows: dict[str, int]) -> None:
+    RATES.clear()
+    RATES.update(rows)
+    for alias, canonical in ROLE_ALIASES.items():
+        if canonical in RATES:
+            RATES[alias] = RATES[canonical]
+
+
+def get_rate(role: str | None) -> int:
+    key = normalize_rate_role(role)
+    if not key:
+        return 0
+    rate = int(RATES.get(key, 0))
+    if rate:
+        return rate
+    canonical = ROLE_ALIASES.get(key)
+    if canonical:
+        return int(RATES.get(canonical, 0))
+    return 0
+
+
+def role_label(role_key: str) -> str:
+    for key, label in ROLE_CATALOG:
+        if key == role_key:
+            return label
+    return role_key
 
 
 def _upsert_sync_env(role_key: str, rate: int) -> None:
@@ -114,6 +123,9 @@ async def set_rate(role_key: str, rate: int) -> None:
         raise ValueError("Ставка не может быть отрицательной")
     await upsert(role_key, rate)
     RATES[role_key] = rate
+    for alias, canonical in ROLE_ALIASES.items():
+        if canonical == role_key:
+            RATES[alias] = rate
 
 
 def format_rates_text() -> str:
