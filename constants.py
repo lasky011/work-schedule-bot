@@ -1,12 +1,24 @@
 import os
 
-RATES: dict[str, int] = {
-    "Официант":  int(os.getenv("RATE_WAITER", 0)),
-    "Хостес":    int(os.getenv("RATE_HOSTESS", 0)),
-    "Бармен":    int(os.getenv("RATE_BARTENDER", 0)),
-    "Кальянщик": int(os.getenv("RATE_HOOKAH", 0)),
-    "Менеджер":  int(os.getenv("RATE_MANAGER", 0)),
+ROLE_RATE_ENV: dict[str, str] = {
+    "Официант": "RATE_WAITER",
+    "Хостес": "RATE_HOSTESS",
+    "Бармен": "RATE_BARTENDER",
+    "Кальянщик": "RATE_HOOKAH",
+    "Менеджеры": "RATE_MANAGER",
+    "Стажер": "RATE_INTERN",
 }
+
+
+def env_rates() -> dict[str, int]:
+    return {
+        role: int(os.getenv(env_key, 0))
+        for role, env_key in ROLE_RATE_ENV.items()
+    }
+
+
+# Заполняется services.rates_service при старте.
+RATES: dict[str, int] = env_rates()
 
 SHIFT_HOURS: dict[tuple, float] = {
     ("morning", "weekday"): 12.5,   # Пн–Чт, Вс

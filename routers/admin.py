@@ -27,6 +27,7 @@ from keyboards.admin import (
     BTN_PERIODS,
     BTN_RELOAD_PERIODS,
     BTN_RELOAD_SHEETS,
+    BTN_RATES,
     BTN_STATS,
     BTN_LOGS,
     BTN_STATUS,
@@ -44,6 +45,7 @@ from keyboards.admin import (
     CB_CONFIRM_DELETE,
     CB_DELETE_PERIOD,
     CB_EDIT_PERIOD,
+    CB_EDIT_RATE,
     CB_RECONCILE,
     CB_RELOAD_PERIODS,
     CB_RELOAD_SHEETS,
@@ -61,6 +63,7 @@ from keyboards.admin import (
     confirm_delete_kb,
     monitor_kb,
     periods_inline_kb,
+    rates_inline_kb,
     stats_month_kb,
     user_card_kb,
     user_pick_kb,
@@ -87,6 +90,13 @@ from services import schedule_service as schedule
 from services.schedule_watch_service import WATCH_DAYS, check_user_schedule, reset_user_snapshot
 from services.telegram_notify import send_user_message
 from services.sheet_periods_service import SHEET_GID_MAP, add_period, reload_from_db, remove_period
+from services.rates_service import (
+    bump_rates_signal,
+    format_rates_text,
+    reload_from_db as reload_rates_from_db,
+    role_label,
+    set_rate,
+)
 from services.cache_signal_service import bump_sheet_cache_signal
 from services.period_coverage_service import format_period_key, missing_period_keys
 from services.sheet_loader import load_all_sheet_gids
@@ -95,6 +105,7 @@ from states import (
     AdminAddPeriodStates,
     AdminBroadcastStates,
     AdminEditPeriodStates,
+    AdminRatesStates,
     AdminStatsStates,
     AdminUserLookupStates,
 )
@@ -119,6 +130,7 @@ _ACTION_LABELS = {
     "user_check_schedule": "👁 график",
     "reconcile_shifts": "⚖️ сверка",
     "health_check": "🔔 проверка",
+    "update_rate": "💰 ставка",
 }
 
 
@@ -525,6 +537,7 @@ async def admin_start(message: Message, state: FSMContext):
         "🔔 Проверка — алерты о проблемах системы\n"
         "📢 Рассылка — HTML и кнопка Mini App\n"
         "📈 Статистика — смены по месяцам\n"
+        "💰 Ставки — ₽/час по ролям\n"
         "📜 Логи — последние действия админа",
         reply_markup=admin_main_kb(),
     )
@@ -554,6 +567,80 @@ async def admin_cache(message: Message, state: FSMContext):
         return
     await state.clear()
     await _send_cache(message)
+
+
+@router.message(F.text == BTN_RATES)
+async def admin_rates(message: Message, state: FSMContext):
+    if _deny(message):
+        return await message.answer("⛔ Нет доступа. Этот бот только для администраторов.")
+    await state.clear()
+    await reload_rates_from_db(quiet=True)
+    await message.answer(
+        format_rates_text(),
+        reply_markup=rates_inline_kb(),
+    )
+
+
+@router.callback_query(F.data.startswith(f"{CB_EDIT_RATE}"))
+async def admin_rate_edit_start(callback: CallbackQuery, state: FSMContext):
+    if await _deny_callback(callback):
+        return
+
+    role_key = callback.data[len(CB_EDIT_RATE):]
+    if not role_key:
+        return await callback.answer("Некорректная роль", show_alert=True)
+
+    await state.set_state(AdminRatesStates.waiting_value)
+    await state.update_data(rate_role=role_key)
+    await callback.answer()
+    await callback.message.answer(
+        f"Введи новую ставку ₽/час для {role_label(role_key)}.\n"
+        "Только число, например: 350",
+        reply_markup=admin_cancel_kb(),
+    )
+
+
+@router.message(AdminRatesStates.waiting_value)
+async def admin_rate_save(message: Message, state: FSMContext):
+    if _deny(message):
+        return
+
+    if message.text == BTN_CANCEL:
+        await state.clear()
+        return await message.answer("Отменено.", reply_markup=admin_main_kb())
+
+    raw = (message.text or "").strip().replace(" ", "").replace("₽", "")
+    if not raw.isdigit():
+        return await message.answer(
+            "⚠️ Введи целое число, например 350.",
+            reply_markup=admin_cancel_kb(),
+        )
+
+    rate = int(raw)
+    data = await state.get_data()
+    role_key = data.get("rate_role")
+    if not role_key:
+        await state.clear()
+        return await message.answer("⚠️ Роль не выбрана. Нажми 💰 Ставки снова.", reply_markup=admin_main_kb())
+
+    try:
+        await set_rate(role_key, rate)
+    except Exception as e:
+        logging.exception("admin set rate error: %s", e)
+        return await message.answer(f"⚠️ Не удалось сохранить: {e}", reply_markup=admin_main_kb())
+
+    await bump_rates_signal()
+    await record_action(
+        message.from_user.id,
+        "update_rate",
+        f"{role_key}={rate}",
+    )
+    await state.clear()
+    await message.answer(
+        f"✅ {role_label(role_key)}: {rate:,} ₽/час\n\nОсновной бот подхватит в течение ~3 мин.".replace(",", " "),
+        reply_markup=admin_main_kb(),
+    )
+    await message.answer(format_rates_text(), reply_markup=rates_inline_kb())
 
 
 @router.message(F.text == BTN_STATS)

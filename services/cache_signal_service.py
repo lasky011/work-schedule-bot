@@ -52,6 +52,11 @@ async def apply_pending_sheet_cache_signal() -> bool:
 
 async def maybe_refresh_sheet_cache() -> None:
     """Плановый refresh + реакция на сигнал из admin-бота."""
+    from services.rates_service import apply_pending_rates_signal
+
+    if await apply_pending_rates_signal():
+        pass
+
     if await apply_pending_sheet_cache_signal():
         return
 

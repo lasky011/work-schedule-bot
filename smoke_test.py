@@ -143,6 +143,21 @@ def test_salary_service():
     ) == (2026, 5, 1, 15)
 
 
+def test_rates_service():
+    import services.rates_service as rates_service
+
+    rates_service.RATES.clear()
+    rates_service.RATES.update({
+        "Официант": 350,
+        "Кальянщик": 280,
+        "Менеджеры": 500,
+    })
+    assert rates_service.get_rate("🍽 Официант") == 350
+    assert rates_service.get_rate("💨 Кальян") == 280
+    assert rates_service.get_rate("Менеджер") == 500
+    assert "Официант" in rates_service.format_rates_text()
+
+
 def test_ui_utils():
     import ui_utils
 
@@ -759,6 +774,7 @@ def main():
         ("admin_bot_import", test_admin_bot_import),
         ("imports", test_imports),
         ("salary_service", test_salary_service),
+        ("rates_service", test_rates_service),
         ("schedule_utils", test_schedule_utils),
         ("keyboards", test_keyboards),
         ("ui_utils", test_ui_utils),

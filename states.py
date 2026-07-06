@@ -62,3 +62,7 @@ class AdminStatsStates(StatesGroup):
 
 class AdminUserLookupStates(StatesGroup):
     waiting_query = State()
+
+
+class AdminRatesStates(StatesGroup):
+    waiting_value = State()

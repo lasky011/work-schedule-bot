@@ -5,7 +5,7 @@ import re
 from datetime import datetime
 from typing import Awaitable, Callable
 
-from constants import RATES
+from services.rates_service import get_rate
 from repositories.shifts_repo import get_shifts_for_month
 from schedule_utils import detect_shift_type, get_standard_hours, is_work_shift
 from ui_utils import fmt_hours, month_label
@@ -104,7 +104,7 @@ async def build_salary_stats_data(
         except (ValueError, ConnectionError):
             pass
 
-    rate = RATES.get(get_role_key(role) or "", 0)
+    rate = get_rate(role)
     period_title = f"{month_label(month)} {year} ({period_start}–{period_end})"
 
     actual_shifts = 0

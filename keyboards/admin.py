@@ -7,6 +7,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardBu
 from app_config import now_local
 from ui_utils import month_label
 
+BTN_RATES = "💰 Ставки"
 BTN_STATS = "📈 Статистика"
 BTN_LOGS = "📜 Логи"
 BTN_DASHBOARD = "📊 Дашборд"
@@ -40,6 +41,7 @@ CB_USER_TEST = "usr:test:"
 CB_USER_RESET_SNAP = "usr:snap:"
 CB_USER_CHECK = "usr:chk:"
 CB_RECONCILE = "adm:reconcile"
+CB_EDIT_RATE = "rate:edit:"
 
 BC_AUD_ALL = "all"
 BC_AUD_NOTIFY = "notify"
@@ -72,7 +74,7 @@ def admin_main_kb() -> ReplyKeyboardMarkup:
             [KeyboardButton(text=BTN_USER_LOOKUP), KeyboardButton(text=BTN_MONITOR)],
             [KeyboardButton(text=BTN_RECONCILE), KeyboardButton(text=BTN_ALERTS)],
             [KeyboardButton(text=BTN_STATS), KeyboardButton(text=BTN_LOGS)],
-            [KeyboardButton(text=BTN_BROADCAST)],
+            [KeyboardButton(text=BTN_RATES), KeyboardButton(text=BTN_BROADCAST)],
             [KeyboardButton(text=BTN_RELOAD_SHEETS), KeyboardButton(text=BTN_RELOAD_PERIODS)],
             [KeyboardButton(text=BTN_STATUS), KeyboardButton(text=BTN_CACHE)],
             [KeyboardButton(text=BTN_HELP)],
@@ -269,3 +271,19 @@ def monitor_kb() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="⚖️ Сверка", callback_data=CB_RECONCILE)],
         ]
     )
+
+
+def rates_inline_kb() -> InlineKeyboardMarkup:
+    from services.rates_service import ROLE_CATALOG
+
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=f"✏️ {label}",
+                callback_data=f"{CB_EDIT_RATE}{role_key}",
+            )
+        ]
+        for role_key, label in ROLE_CATALOG
+    ]
+    rows.append([InlineKeyboardButton(text="❌ Отмена", callback_data=CB_CANCEL)])
+    return InlineKeyboardMarkup(inline_keyboard=rows)

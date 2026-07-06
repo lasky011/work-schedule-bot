@@ -43,6 +43,7 @@ from services.salary_service import configure_salary_service
 from services.cache_signal_service import maybe_refresh_sheet_cache
 from services.sheet_loader import CACHE_REFRESH_SECONDS, load_full_sheet, load_sheet
 from services.sheet_periods_service import load_from_db_sync, sync_from_db
+from services.rates_service import load_from_db_sync as load_rates_sync
 from services.schedule_watch_service import check_all_registered_users, configure_schedule_watch
 from ui_utils import configure_ui_utils
 
@@ -181,6 +182,13 @@ def init_db():
         CREATE TABLE IF NOT EXISTS bot_state (
             key         TEXT PRIMARY KEY,
             value       TEXT NOT NULL,
+            updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """)
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS role_rates (
+            role_key    TEXT PRIMARY KEY,
+            rate        INTEGER NOT NULL CHECK (rate >= 0),
             updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
         """)
@@ -436,6 +444,7 @@ async def main():
     await asyncio.to_thread(init_db)
     init_pg_pool()
     await asyncio.to_thread(load_from_db_sync)
+    await asyncio.to_thread(load_rates_sync)
 
     if not BOT_TOKEN:
         print("Ошибка: BOT_TOKEN не найден в .env")
