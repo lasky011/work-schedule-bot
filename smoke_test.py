@@ -673,9 +673,14 @@ def test_roster_person_name():
 
 
 def test_period_coverage_missing():
+    from datetime import date
     from unittest.mock import patch
 
-    from services.period_coverage_service import format_period_key, missing_period_keys
+    from services.period_coverage_service import (
+        format_period_key,
+        missing_period_alerts,
+        missing_period_keys,
+    )
 
     sample = {
         (2026, 7, 1): "2125046654",
@@ -684,6 +689,36 @@ def test_period_coverage_missing():
         missing = missing_period_keys(days_ahead=14)
         assert (2026, 7, 16) in missing
         assert "июл" in format_period_key((2026, 7, 16))
+
+        # До следующего периода > 2 дней — алерт не нужен
+        assert missing_period_alerts(on=date(2026, 7, 6)) == []
+        # За 2 дня до 16 июля — алерт
+        assert missing_period_alerts(on=date(2026, 7, 14)) == [(2026, 7, 16)]
+        assert missing_period_alerts(on=date(2026, 7, 15)) == [(2026, 7, 16)]
+
+        # Текущий период без gid — алерт сразу
+        only_next = {(2026, 7, 16): "x"}
+        with patch("services.period_coverage_service.SHEET_GID_MAP", only_next):
+            assert missing_period_alerts(on=date(2026, 7, 10)) == [(2026, 7, 1)]
+
+
+def test_period_gap_alert_no_repeat():
+    from app_config import now_local
+    from services.admin_alerts_service import (
+        _active_issues,
+        _last_repeat,
+        _no_repeat_keys,
+        reset_alert_state,
+    )
+
+    reset_alert_state()
+    assert "period_gap" in _no_repeat_keys
+    _active_issues["period_gap"] = "Нет gid"
+    _last_repeat["period_gap"] = now_local()
+
+    key = "period_gap"
+    assert key in _active_issues
+    assert key in _no_repeat_keys
 
 
 def test_cache_signal_pending():
@@ -734,7 +769,7 @@ def test_admin_health_period_gap():
         "services.admin_health_service.SHEET_GID_MAP",
         {(2026, 7, 1): "1"},
     ), patch(
-        "services.admin_health_service.missing_period_keys",
+        "services.admin_health_service.missing_period_alerts",
         return_value=[(2026, 7, 16)],
     ):
         issues = collect_health_issues()
@@ -800,6 +835,7 @@ def main():
         ("schedule_watch_unreliable", test_schedule_watch_unreliable_and_past),
         ("roster_person_name", test_roster_person_name),
         ("period_coverage", test_period_coverage_missing),
+        ("period_gap_no_repeat", test_period_gap_alert_no_repeat),
         ("cache_signal", test_cache_signal_pending),
         ("admin_health_period_gap", test_admin_health_period_gap),
     ]

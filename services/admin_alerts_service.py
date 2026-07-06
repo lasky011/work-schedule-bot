@@ -10,6 +10,7 @@ from services.admin_notify import notify_admins
 
 _active_issues: dict[str, str] = {}
 _repeat_after_seconds = 3600
+_no_repeat_keys = frozenset({"period_gap"})
 _last_repeat: dict[str, object] = {}
 
 
@@ -36,6 +37,8 @@ async def run_health_alerts() -> dict:
         should_send = False
         if key not in _active_issues:
             should_send = True
+        elif key in _no_repeat_keys:
+            should_send = False
         else:
             last = _last_repeat.get(key)
             if last is not None and (now - last).total_seconds() >= _repeat_after_seconds:
