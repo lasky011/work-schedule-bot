@@ -187,6 +187,7 @@ function todayCardHtml(today, tomorrow) {
     } else {
       todayLine = `${dayLabel} · выходной`;
     }
+    if (today.gen_cleaning) todayLine += " · 🧹 ген";
   }
 
   let tomorrowLine = "";
@@ -199,6 +200,7 @@ function todayCardHtml(today, tomorrow) {
     } else {
       tomorrowLine = "завтра · выходной";
     }
+    if (tomorrow.gen_cleaning) tomorrowLine += " · 🧹 ген";
   }
 
   const actions = today?.date
@@ -238,11 +240,15 @@ function monthShiftShort(day) {
 }
 
 function weekDayCellHtml(d) {
+  const genMark = d.gen_cleaning
+    ? '<div class="day-gen-cleaning" title="ген уборка 9:00">🧹</div>'
+    : "";
   return `
-    <div class="day-cell day-pick${d.is_today ? " today" : ""}" data-date="${d.date}" role="button">
+    <div class="day-cell day-pick${d.is_today ? " today" : ""}${d.gen_cleaning ? " gen-cleaning" : ""}" data-date="${d.date}" role="button">
       <div class="day-wd">${d.weekday}</div>
       <div class="day-num">${d.day}</div>
       <div class="day-shift ${shiftClass(d)}">${shiftLabel(d)}</div>
+      ${genMark}
     </div>
   `;
 }
@@ -253,12 +259,17 @@ function monthDayCellHtml(d) {
     "month-cell",
     "month-pick",
     d.is_today ? "today" : "",
+    d.gen_cleaning ? "gen-cleaning" : "",
     unpublished ? "unpublished" : shiftClass(d),
   ].filter(Boolean).join(" ");
+  const genMark = d.gen_cleaning
+    ? '<div class="month-gen" aria-label="ген уборка">🧹</div>'
+    : "";
   return `
     <div class="${cls}" data-date="${d.date}" role="button">
       <div class="month-num">${d.day}</div>
       <div class="month-mark">${monthShiftShort(d)}</div>
+      ${genMark}
     </div>
   `;
 }
@@ -313,8 +324,13 @@ async function openDaySheet(dateStr) {
       </div>
     `).join("") || `<div class="hours-meta">все в списке работают или нет данных</div>`;
 
+    const genBanner = data.gen_cleaning
+      ? '<div class="gen-cleaning-banner">🧹 Ген уборка в 9:00</div>'
+      : "";
+
     content.innerHTML = `
       <div class="hours-title">${escapeHtml(data.weekday)} · ${escapeHtml(data.header)}</div>
+      ${genBanner}
       <div class="card-meta">${data.total_working} на смене</div>
       <div class="card" style="margin-top:12px">
         <div class="card-label">работают</div>
@@ -394,7 +410,7 @@ async function renderScheduleMonth() {
     ${scheduleModeToggleHtml()}
     <div class="card-label">${data.header}</div>
     <div class="month-legend">
-      <span>♠ утро</span><span>♥ вечер</span><span>— вых</span><span>· нет графика</span>
+      <span class="legend-morning">♠ утро</span><span class="legend-evening">♥ вечер</span><span>— вых</span><span class="legend-gen">🧹 ген</span><span>· нет графика</span>
     </div>
     <div class="month-grid">
       ${wdHeader}
@@ -510,10 +526,10 @@ async function renderAnalytics() {
     }
 
     const maxBar = Math.max(data.morning, data.evening, data.off, 1);
-    const bar = (label, val) => `
+    const bar = (label, val, kind) => `
       <div class="bar-row">
         <span style="width:48px">${label}</span>
-        <div class="bar-track"><div class="bar-fill" style="width:${Math.round(val / maxBar * 100)}%"></div></div>
+        <div class="bar-track"><div class="bar-fill ${kind || ""}" style="width:${Math.round(val / maxBar * 100)}%"></div></div>
         <span>${val}</span>
       </div>
     `;
@@ -529,8 +545,8 @@ async function renderAnalytics() {
       </div>
       <div class="card">
         <div class="card-label">распределение</div>
-        ${bar("♠ утро", data.morning)}
-        ${bar("♥ вечер", data.evening)}
+        ${bar("♠ утро", data.morning, "morning")}
+        ${bar("♥ вечер", data.evening, "evening")}
         ${bar("вых", data.off)}
       </div>
       ${hoursBlock}
@@ -551,7 +567,7 @@ async function renderTeam() {
     let myLine = "выходной";
     let myClass = "";
     if (my?.working) {
-      myClass = "working";
+      myClass = `working ${my.shift_type || ""}`;
       myLine = shiftLabel(my);
       if (my.hours) myLine += ` · ${my.hours} ч`;
     }
@@ -1409,7 +1425,7 @@ async function renderColleagueSchedule() {
         ${colleagueScheduleToggleHtml()}
         <div class="card-label">${data.header}</div>
         <div class="month-legend">
-          <span>♠ утро</span><span>♥ вечер</span><span>— вых</span><span>· нет графика</span>
+          <span class="legend-morning">♠ утро</span><span class="legend-evening">♥ вечер</span><span>— вых</span><span class="legend-gen">🧹 ген</span><span>· нет графика</span>
         </div>
         <div class="month-grid">${wdHeader}${pad}${cells}</div>
         <div class="month-stats">

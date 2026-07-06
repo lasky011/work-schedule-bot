@@ -23,7 +23,7 @@ from db import USE_POSTGRES, get_db_connection, init_pg_pool
 from keyboards import configure_keyboard_context
 from keyboards.inline_miniapp import daily_notify_kb, hours_notify_kb
 from repositories.shifts_repo import get_shift_for_date
-from repositories.users_repo import get_notify_hours_users, get_notify_users
+from repositories.users_repo import get_notify_hours_users, get_notify_users, get_registered_users
 from routers.colleagues import router as colleagues_router
 from routers.common import router as common_router
 from routers.fallback import router as fallback_router
@@ -41,6 +41,11 @@ from services import schedule_service as schedule
 from services.compare_service import configure_compare_service
 from services.salary_service import configure_salary_service
 from services.cache_signal_service import maybe_refresh_sheet_cache
+from services.gen_cleaning_service import (
+    GEN_CLEANING_NOTIFY_TIME,
+    gen_cleaning_notification_text,
+    is_gen_cleaning_notify_evening,
+)
 from services.sheet_loader import CACHE_REFRESH_SECONDS, load_full_sheet, load_sheet
 from services.sheet_periods_service import load_from_db_sync, sync_from_db
 from services.rates_service import load_from_db_sync as load_rates_sync
@@ -369,6 +374,61 @@ async def notification_loop(bot):
             break
 
 
+async def gen_cleaning_notification_loop(bot) -> None:
+    sent = {}
+    last_cleanup = now_local().date()
+
+    while True:
+        try:
+            now = now_local()
+            current_time = now.strftime("%H:%M")
+            today = now.date()
+
+            if today != last_cleanup:
+                cutoff = (today - timedelta(days=3)).strftime("%Y-%m-%d")
+                sent = {
+                    k: v for k, v in sent.items()
+                    if k.rsplit("-", 1)[-1] >= cutoff
+                }
+                last_cleanup = today
+
+            if (
+                current_time == GEN_CLEANING_NOTIFY_TIME
+                and is_gen_cleaning_notify_evening(today)
+            ):
+                cleaning_date = today + timedelta(days=1)
+                cleaning_key = cleaning_date.strftime("%Y-%m-%d")
+                text = gen_cleaning_notification_text()
+
+                try:
+                    users = await get_registered_users()
+                except Exception as e:
+                    logging.error("gen_cleaning_notification_loop DB error: %s", e)
+                    await asyncio.sleep(60)
+                    continue
+
+                for user_row in users:
+                    user_id = user_row[0]
+                    key = f"{user_id}-gen-cleaning-{cleaning_key}"
+                    if sent.get(key):
+                        continue
+                    try:
+                        await bot.send_message(user_id, text)
+                        sent[key] = True
+                    except Exception as e:
+                        logging.exception(
+                            "gen_cleaning_notification_loop: user_id=%s: %s",
+                            user_id, e,
+                        )
+        except Exception:
+            logging.exception("gen_cleaning_notification_loop: критическая ошибка")
+
+        try:
+            await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            break
+
+
 async def schedule_watch_loop() -> None:
     await asyncio.sleep(30)
     while True:
@@ -476,6 +536,13 @@ async def main():
     hours_task.add_done_callback(
         lambda t: logging.exception(
             "hours_notification_loop: фоновая задача завершилась с ошибкой",
+            exc_info=t.exception(),
+        ) if not t.cancelled() and t.exception() else None
+    )
+    gen_cleaning_task = asyncio.create_task(gen_cleaning_notification_loop(bot))
+    gen_cleaning_task.add_done_callback(
+        lambda t: logging.exception(
+            "gen_cleaning_notification_loop: фоновая задача завершилась с ошибкой",
             exc_info=t.exception(),
         ) if not t.cancelled() and t.exception() else None
     )

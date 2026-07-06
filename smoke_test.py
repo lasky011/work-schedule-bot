@@ -460,6 +460,61 @@ def test_miniapp_profile_role_normalization():
         schedule_watch_service.reset_user_snapshot = original_reset_user_snapshot
 
 
+def test_gen_cleaning_schedule():
+    from datetime import date
+
+    from services.gen_cleaning_service import (
+        FIRST_GEN_CLEANING,
+        GEN_CLEANING_NOTIFY_TIME,
+        gen_cleaning_notification_text,
+        is_gen_cleaning_day,
+        is_gen_cleaning_notify_evening,
+    )
+
+    assert FIRST_GEN_CLEANING == date(2026, 7, 8)
+    assert FIRST_GEN_CLEANING.weekday() == 2
+    assert is_gen_cleaning_day(date(2026, 7, 8))
+    assert not is_gen_cleaning_day(date(2026, 7, 9))
+    assert not is_gen_cleaning_day(date(2026, 7, 15))
+    assert is_gen_cleaning_day(date(2026, 7, 22))
+    assert is_gen_cleaning_notify_evening(date(2026, 7, 7))
+    assert not is_gen_cleaning_notify_evening(date(2026, 7, 8))
+    assert GEN_CLEANING_NOTIFY_TIME == "22:00"
+    assert "будильник" in gen_cleaning_notification_text().lower()
+
+
+def test_schedule_gen_cleaning_flag():
+    from datetime import datetime
+    from unittest.mock import AsyncMock, patch
+
+    import services.miniapp_service as miniapp_service
+    from app_config import now_local
+
+    async def run():
+        tz = now_local().tzinfo
+        cleaning_day = datetime(2026, 7, 8, tzinfo=tz)
+        regular_day = datetime(2026, 7, 9, tzinfo=tz)
+        shift = {
+            "working": False,
+            "shift_type": None,
+            "label": None,
+            "hours": None,
+        }
+        with patch.object(
+            miniapp_service, "_shift_for_person", new=AsyncMock(return_value=shift),
+        ):
+            cleaning = await miniapp_service._day_schedule_entry(
+                "Тест", None, cleaning_day, cleaning_day.date(),
+            )
+            regular = await miniapp_service._day_schedule_entry(
+                "Тест", None, regular_day, regular_day.date(),
+            )
+        assert cleaning["gen_cleaning"] is True
+        assert regular["gen_cleaning"] is False
+
+    asyncio.run(run())
+
+
 def test_miniapp_static_assets():
     import api.app as api_app
 
@@ -822,6 +877,8 @@ def main():
         ("miniapp_auth", test_miniapp_auth),
         ("miniapp_week_today", test_miniapp_week_today_stays_real_when_offset_changes),
         ("miniapp_profile_role_normalization", test_miniapp_profile_role_normalization),
+        ("gen_cleaning_schedule", test_gen_cleaning_schedule),
+        ("schedule_gen_cleaning_flag", test_schedule_gen_cleaning_flag),
         ("miniapp_static_assets", test_miniapp_static_assets),
         ("miniapp_health_endpoint", test_miniapp_health_endpoint),
         ("admin_period_status", test_admin_period_status),

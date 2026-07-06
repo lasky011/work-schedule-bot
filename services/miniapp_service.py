@@ -20,6 +20,7 @@ from schedule_utils import detect_shift, detect_shift_type, format_date, get_sta
 from ui_utils import is_valid_time
 from services import salary_service
 from services import schedule_service as schedule
+from services.gen_cleaning_service import is_gen_cleaning_day
 from services.telegram_notify import send_user_message
 
 
@@ -217,6 +218,7 @@ async def _day_schedule_entry(
         "month": dt.month,
         "is_today": dt.date() == today,
         "published": published,
+        "gen_cleaning": is_gen_cleaning_day(dt.date()),
         **shift,
     }
 
@@ -309,6 +311,7 @@ async def _month_schedule_for(name: str, role: str | None, month_offset: int = 0
             "weekday": WEEKDAYS_SHORT[dt.weekday()],
             "is_today": dt.date() == today,
             "published": published,
+            "gen_cleaning": is_gen_cleaning_day(dt.date()),
             **shift,
         })
 
@@ -383,6 +386,7 @@ async def get_day_roster(date_str: str) -> dict:
         "weekday": WEEKDAYS_SHORT[dt.weekday()],
         "header": f"{day} {schedule.MONTHS[month]}",
         "published": published,
+        "gen_cleaning": is_gen_cleaning_day(dt.date()),
         "total_working": len(working_plain_names),
         "departments": departments,
         "off": off_people,
