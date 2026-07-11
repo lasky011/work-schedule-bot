@@ -1410,6 +1410,30 @@ body {
   margin-bottom: 12px;
 }
 
+.compare-graph-btn {
+  width: 100%;
+  margin-bottom: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.compare-graph-ico {
+  display: inline-flex;
+  opacity: 0.75;
+}
+
+.compare-graph-ico svg {
+  width: 16px;
+  height: 16px;
+}
+
+.compare-add-btn {
+  width: 100%;
+  margin-bottom: 12px;
+}
+
 .schedule-toggle .btn.active {
   color: var(--text);
   border-color: var(--btn-primary-border);
@@ -1693,6 +1717,29 @@ body {
 
 .shift-row.future {
   opacity: 0.55;
+}
+
+.shift-row-clickable {
+  width: 100%;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  color: inherit;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.shift-row-clickable:active {
+  opacity: 0.7;
+}
+
+.shift-chevron {
+  color: var(--text-muted);
+  font-size: 15px;
+  line-height: 1;
+  margin-left: auto;
+  padding-left: 6px;
 }
 
 .shift-date {

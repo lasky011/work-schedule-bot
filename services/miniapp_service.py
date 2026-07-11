@@ -203,6 +203,34 @@ async def _shift_for_person(name: str, role: str | None, dt: datetime) -> dict:
         return {"working": False, "shift_type": None, "label": None, "hours": None, "error": True}
 
 
+def _person_working_in_role(departments: list[dict], role_key: str, name: str) -> bool:
+    """Есть ли человек в списке работающих именно в этой роли."""
+    for dep in departments:
+        if dep["role"] == role_key:
+            return any(_roster_person_name(e) == name for e in dep["people"])
+    return False
+
+
+def _add_working_person(
+    departments: list[dict], role: str | None, name: str, shift: dict,
+) -> None:
+    """Добавляет работающего человека в список отделов карточки дня."""
+    role_key = normalize_role_name(role) or (role or "")
+    raw = shift.get("raw")
+    display = detect_shift(raw) if raw else (shift.get("label") or "смена")
+    entry = f"{name} — {display}"
+    for dep in departments:
+        if dep["role"] == role_key:
+            if entry not in dep["people"]:
+                dep["people"].append(entry)
+            return
+    departments.append({
+        "role": role_key,
+        "role_label": role_display_label(role_key),
+        "people": [entry],
+    })
+
+
 async def _day_schedule_entry(
     name: str,
     role: str | None,
@@ -363,18 +391,44 @@ async def get_day_roster(date_str: str) -> dict:
 
     off_people: list[dict] = []
     if published:
+        off_seen: set[tuple[str, str]] = set()
         for dep_label, names in DEPARTMENTS.items():
             dep_role = dep_label.split(" ", 1)[-1] if " " in dep_label else dep_label
+            role_key = normalize_role_name(dep_role) or dep_role
             for person_name in names:
-                if person_name in working_plain_names:
+                key = (person_name, role_key)
+                if key in off_seen:
                     continue
+
+                # Статус считаем по КАЖДОЙ роли отдельно. Человек может
+                # работать в одной роли (например, Дарья — бармен) и быть
+                # выходным в другой (хостес). В «возможную замену» он
+                # попадает по той роли, где у него нет смены.
+                if _person_working_in_role(departments, role_key, person_name):
+                    continue
+
                 shift = await _shift_for_person(person_name, dep_role, dt)
-                if shift.get("error") or shift["working"]:
+                if shift.get("error"):
                     continue
+
+                if shift["working"]:
+                    # get_people_for_day мог не увидеть работающего человека —
+                    # добавляем в «работают», чтобы он не исчез из карточки дня.
+                    if not _person_working_in_role(departments, role_key, person_name):
+                        _add_working_person(departments, dep_role, person_name, shift)
+                    working_plain_names.add(person_name)
+                    continue
+
+                off_seen.add(key)
                 off_people.append({
                     "name": person_name,
                     "role_label": role_display_label(dep_role),
                 })
+
+    if departments:
+        order = ordered_role_keys({d["role"]: d["people"] for d in departments})
+        dep_by_role = {d["role"]: d for d in departments}
+        departments = [dep_by_role[r] for r in order if r in dep_by_role]
 
     off_people.sort(key=lambda p: (p["role_label"] or "", p["name"]))
 

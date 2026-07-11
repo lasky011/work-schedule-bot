@@ -640,38 +640,48 @@ def test_admin_alert_dedup_by_key():
 
 
 def test_schedule_watch_midnight_window_slide():
+    from datetime import datetime
+    from unittest.mock import patch
+
+    import services.schedule_watch_service as sw
     from services.schedule_watch_service import diff_snapshots
 
-    old = {
-        "2026-07-04": "work|evening|16:00 — вечер",
-        "2026-07-05": "off",
-        "2026-07-06": "work|morning|11:00 — утро",
-    }
-    # Окно сдвинулось: 4 июля выпало, 7 июля появилось
-    new = {
-        "2026-07-05": "off",
-        "2026-07-06": "work|morning|11:00 — утро",
-        "2026-07-07": "off",
-    }
-    assert diff_snapshots(old, new) == []
+    # Фиксируем «сегодня» до тестовых дат, чтобы фильтр прошлых дней
+    # не делал тест зависимым от реального календаря.
+    tz = sw.now_local().tzinfo
+    fixed_now = datetime(2026, 7, 1, tzinfo=tz)
 
-    new_changed = {
-        "2026-07-05": "work|evening|16:00 — вечер",
-        "2026-07-06": "work|morning|11:00 — утро",
-    }
-    changes = diff_snapshots(old, new_changed)
-    assert len(changes) == 1
-    assert changes[0][0] == "added"
-    assert changes[0][1].day == 5
+    with patch.object(sw, "now_local", return_value=fixed_now):
+        old = {
+            "2026-07-04": "work|evening|16:00 — вечер",
+            "2026-07-05": "off",
+            "2026-07-06": "work|morning|11:00 — утро",
+        }
+        # Окно сдвинулось: 4 июля выпало, 7 июля появилось
+        new = {
+            "2026-07-05": "off",
+            "2026-07-06": "work|morning|11:00 — утро",
+            "2026-07-07": "off",
+        }
+        assert diff_snapshots(old, new) == []
 
-    new_removed = {
-        "2026-07-05": "off",
-        "2026-07-06": "off",
-    }
-    changes = diff_snapshots(old, new_removed)
-    assert len(changes) == 1
-    assert changes[0][0] == "removed"
-    assert changes[0][1].day == 6
+        new_changed = {
+            "2026-07-05": "work|evening|16:00 — вечер",
+            "2026-07-06": "work|morning|11:00 — утро",
+        }
+        changes = diff_snapshots(old, new_changed)
+        assert len(changes) == 1
+        assert changes[0][0] == "added"
+        assert changes[0][1].day == 5
+
+        new_removed = {
+            "2026-07-05": "off",
+            "2026-07-06": "off",
+        }
+        changes = diff_snapshots(old, new_removed)
+        assert len(changes) == 1
+        assert changes[0][0] == "removed"
+        assert changes[0][1].day == 6
 
 
 def test_schedule_watch_unreliable_and_past():
@@ -725,6 +735,89 @@ def test_roster_person_name():
 
     assert _roster_person_name("Платон — 11:00 — утро") == "Платон"
     assert _roster_person_name("Платон") == "Платон"
+
+
+def test_day_roster_dual_role_off_in_second_role():
+    """Дарья работает барменом, но выходная как хостес: она должна остаться
+    в «работают» (бармен) И попасть в «возможную замену» как хостес."""
+    from unittest.mock import AsyncMock, patch
+
+    import departments_manager
+    import services.miniapp_service as miniapp_service
+
+    departments_manager.configure_departments_manager(
+        lambda name: str(name).strip(), None,
+    )
+
+    async def fake_shift(name, role, dt):
+        if name == "Дарья" and role == "Бармен":
+            return {
+                "working": True, "shift_type": "morning",
+                "label": "утро", "hours": 12.5, "raw": "11:00",
+            }
+        return {"working": False, "shift_type": None, "label": "вых", "hours": None}
+
+    async def run():
+        with patch.object(
+            miniapp_service.schedule, "is_day_published", return_value=True,
+        ), patch.object(
+            miniapp_service.schedule, "get_people_for_day",
+            new=AsyncMock(return_value={"Бармен": ["Дарья — 11:00 — утро"]}),
+        ), patch.object(
+            miniapp_service, "_shift_for_person", new=fake_shift,
+        ):
+            return await miniapp_service.get_day_roster("2026-07-12")
+
+    data = asyncio.run(run())
+
+    # в «работают» под барменом
+    barmen = [d for d in data["departments"] if d["role"] == "Бармен"]
+    assert barmen and any("Дарья" in n for n in barmen[0]["people"]), data["departments"]
+
+    # в «возможную замену» как хостес, но не как бармен
+    darya_off = [p for p in data["off"] if p["name"] == "Дарья"]
+    assert len(darya_off) == 1, data["off"]
+    assert "Хостес" in darya_off[0]["role_label"]
+    assert "Бармен" not in darya_off[0]["role_label"]
+
+
+def test_day_roster_missed_working_person_not_lost():
+    """Если get_people_for_day пропустил работающего человека, но по табелю
+    он работает — он должен попасть в «работают», а не исчезнуть."""
+    from unittest.mock import AsyncMock, patch
+
+    import departments_manager
+    import services.miniapp_service as miniapp_service
+
+    departments_manager.configure_departments_manager(
+        lambda name: str(name).strip(), None,
+    )
+
+    async def fake_shift(name, role, dt):
+        if name == "Вениамин" and role == "Бармен":
+            return {
+                "working": True, "shift_type": "evening",
+                "label": "вечер", "hours": 8, "raw": "16:00",
+            }
+        return {"working": False, "shift_type": None, "label": "вых", "hours": None}
+
+    async def run():
+        with patch.object(
+            miniapp_service.schedule, "is_day_published", return_value=True,
+        ), patch.object(
+            miniapp_service.schedule, "get_people_for_day",
+            new=AsyncMock(return_value={}),
+        ), patch.object(
+            miniapp_service, "_shift_for_person", new=fake_shift,
+        ):
+            return await miniapp_service.get_day_roster("2026-07-12")
+
+    data = asyncio.run(run())
+    working_names = [
+        _n for dep in data["departments"] for _n in dep["people"]
+    ]
+    assert any("Вениамин" in n for n in working_names), data["departments"]
+    assert not any(p["name"] == "Вениамин" for p in data["off"]), data["off"]
 
 
 def test_period_coverage_missing():
@@ -891,6 +984,8 @@ def main():
         ("schedule_watch_midnight", test_schedule_watch_midnight_window_slide),
         ("schedule_watch_unreliable", test_schedule_watch_unreliable_and_past),
         ("roster_person_name", test_roster_person_name),
+        ("day_roster_dual_role_off", test_day_roster_dual_role_off_in_second_role),
+        ("day_roster_missed_working", test_day_roster_missed_working_person_not_lost),
         ("period_coverage", test_period_coverage_missing),
         ("period_gap_no_repeat", test_period_gap_alert_no_repeat),
         ("cache_signal", test_cache_signal_pending),

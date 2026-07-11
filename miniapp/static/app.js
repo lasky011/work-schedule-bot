@@ -13,6 +13,8 @@ let colleagueReturnTab = null;
 let comparePick = [];
 let comparePeriods = null;
 let comparePeriodIndex = 0;
+let compareFromColleague = null;
+let addParticipantMode = false;
 let salaryPeriods = null;
 let salaryPeriodIndex = 0;
 let namePickRole = null;
@@ -1204,6 +1206,7 @@ function renderCompareDock() {
 
   const names = comparePick.map((c) => c.name).join(", ");
   const countLabel = comparePick.length === 1 ? "1 коллега" : `${comparePick.length} коллеги`;
+  const btnLabel = addParticipantMode ? "перейти к сравнению" : "сравнить";
 
   dock.innerHTML = `
     <div class="compare-dock-inner">
@@ -1211,7 +1214,7 @@ function renderCompareDock() {
         <span class="compare-dock-count">${countLabel} для сравнения</span>
         <span class="compare-dock-names">${names}</span>
       </div>
-      <button type="button" class="btn btn-primary" id="run-compare-dock">сравнить</button>
+      <button type="button" class="btn btn-primary" id="run-compare-dock">${btnLabel}</button>
     </div>
   `;
   dock.classList.remove("hidden");
@@ -1219,6 +1222,7 @@ function renderCompareDock() {
   app?.classList.add("has-compare-dock");
 
   document.getElementById("run-compare-dock")?.addEventListener("click", async () => {
+    addParticipantMode = false;
     peopleScreen = "compare";
     renderCompareDock();
     await renderPeople();
@@ -1245,8 +1249,12 @@ async function renderPeopleList() {
       </div>
     `).join("");
 
+    const hint = addParticipantMode
+      ? "тап — выбрать участника · внизу «перейти к сравнению»"
+      : "тап — график · долгий тап — в сравнение · тап по выбранному — убрать";
+
     document.getElementById("main").innerHTML = `
-      <div class="card-label">тап — график · долгий тап — в сравнение · тап по выбранному — убрать</div>
+      <div class="card-label">${hint}</div>
       <div class="card">${blocks || '<div class="empty-team">нет коллег в списке</div>'}</div>
       <p class="quote">everyone's mad here</p>
     `;
@@ -1357,6 +1365,14 @@ function bindPersonChip(btn) {
       longPressed = false;
       return;
     }
+    // Режим добавления участника: обычный тап только выбирает/снимает
+    // коллегу. Ничего не открывается — переход по кнопке «перейти к сравнению».
+    if (addParticipantMode) {
+      toggleComparePick(name, role);
+      renderPeopleList();
+      tg?.HapticFeedback?.selectionChanged();
+      return;
+    }
     if (isSelected()) {
       toggleComparePick(name, role);
       renderPeopleList();
@@ -1385,6 +1401,30 @@ function colleagueScheduleToggleHtml() {
       <button type="button" class="btn${colleagueScheduleMode === "month" ? " active" : ""}" data-col-mode="month">месяц</button>
     </div>
   `;
+}
+
+function colleagueCompareBtnHtml() {
+  return `<button type="button" class="btn btn-primary compare-graph-btn" id="col-compare">
+      <span class="compare-graph-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="12" r="5.5"/><circle cx="15" cy="12" r="5.5"/></svg></span>
+      сравнить график · подсчёт совпадений
+    </button>`;
+}
+
+function compareWithColleague(name, role) {
+  if (!name) return;
+  compareFromColleague = colleagueView ? { ...colleagueView } : { name, role: role || null };
+  comparePick = [{ name, role: role || null }];
+  comparePeriods = null;
+  comparePeriodIndex = 0;
+  peopleScreen = "compare";
+  hapticLight();
+  renderPeople();
+}
+
+function bindColleagueCompareBtn() {
+  document.getElementById("col-compare")?.addEventListener("click", () => {
+    compareWithColleague(colleagueView.name, colleagueView.role);
+  });
 }
 
 function bindColleagueScheduleToggle() {
@@ -1422,6 +1462,7 @@ async function renderColleagueSchedule() {
       document.getElementById("main").innerHTML = `
         <button type="button" class="btn back-btn" id="people-back">${colleagueBackLabel()}</button>
         ${roleLine}
+        ${colleagueCompareBtnHtml()}
         ${colleagueScheduleToggleHtml()}
         <div class="card-label">${data.header}</div>
         <div class="month-legend">
@@ -1438,6 +1479,7 @@ async function renderColleagueSchedule() {
       `;
 
       bindColleagueScheduleToggle();
+      bindColleagueCompareBtn();
       bindDayPickers();
       document.getElementById("people-back").onclick = backFromColleagueView;
       document.getElementById("col-month-prev").onclick = () => {
@@ -1464,6 +1506,7 @@ async function renderColleagueSchedule() {
     document.getElementById("main").innerHTML = `
       <button type="button" class="btn back-btn" id="people-back">${colleagueBackLabel()}</button>
       ${roleLine}
+      ${colleagueCompareBtnHtml()}
       ${colleagueScheduleToggleHtml()}
       <div class="card-label">неделя · ${data.header}</div>
       <div class="week-grid">${daysHtml}</div>
@@ -1474,6 +1517,7 @@ async function renderColleagueSchedule() {
     `;
 
     bindColleagueScheduleToggle();
+    bindColleagueCompareBtn();
     bindDayPickers();
     document.getElementById("people-back").onclick = backFromColleagueView;
     document.getElementById("col-prev").onclick = () => {
@@ -1489,7 +1533,23 @@ async function renderColleagueSchedule() {
   }
 }
 
+function addCompareParticipant() {
+  // Оставляем уже выбранных участников и уходим в список коллег.
+  // В этом режиме обычный тап по коллеге сразу добавляет его в сравнение.
+  compareFromColleague = null;
+  addParticipantMode = true;
+  peopleScreen = "list";
+  hapticLight();
+  document.getElementById("screen-title").textContent = TITLES.people;
+  updateSubtitle();
+  renderPeople();
+}
+
 function backToPeopleList() {
+  // Выход из сравнения в «коллеги» сбрасывает выбранных участников.
+  if (peopleScreen === "compare") comparePick = [];
+  addParticipantMode = false;
+  compareFromColleague = null;
   peopleScreen = "list";
   colleagueView = null;
   colleagueReturnTab = null;
@@ -1519,22 +1579,32 @@ async function renderCompareResult() {
     });
 
     const workRows = (data.common_work || []).map((w) => {
-      const parts = Object.entries(w.shifts).map(([n, s]) => `${n}: ${s}`).join(" · ");
-      return `<div class="shift-row"><span class="shift-date">${w.day}</span><span class="shift-name">${parts}</span></div>`;
+      const iso = `${data.period.year}-${String(data.period.month).padStart(2, "0")}-${String(w.day).padStart(2, "0")}`;
+      const parts = Object.entries(w.shifts).map(([n, s]) => `${escapeHtml(n)}: ${escapeHtml(s)}`).join(" · ");
+      return `<button type="button" class="shift-row shift-row-clickable day-pick" data-date="${escapeAttr(iso)}"><span class="shift-date">${w.day}</span><span class="shift-name">${parts}</span><span class="shift-chevron" aria-hidden="true">›</span></button>`;
     }).join("") || `<div class="empty-team">общих рабочих дней нет</div>`;
 
-    const offRows = (data.common_off || []).map((d) =>
-      `<span class="person-chip">${d.date}</span>`,
-    ).join("") || `<span class="hours-meta">общих выходных нет</span>`;
+    const offRows = (data.common_off || []).map((d) => {
+      const iso = `${data.period.year}-${String(data.period.month).padStart(2, "0")}-${String(d.day).padStart(2, "0")}`;
+      return `<button type="button" class="person-chip person-chip-btn day-pick" data-date="${escapeAttr(iso)}">${d.date}</button>`;
+    }).join("") || `<span class="hours-meta">общих выходных нет</span>`;
 
     const names = data.participants.map((p) => p.name).join(", ");
+    const workCount = (data.common_work || []).length;
+    const offCount = (data.common_off || []).length;
+    const backLabel = compareFromColleague ? "← к графику" : "← к списку";
 
     document.getElementById("main").innerHTML = `
-      <button type="button" class="btn back-btn" id="compare-back">← к списку</button>
+      <button type="button" class="btn back-btn" id="compare-back">${backLabel}</button>
       <div class="card">
         <div class="card-label">${data.period.label}</div>
         <div class="card-meta">${names}</div>
       </div>
+      <div class="stats-grid">
+        <div class="stat"><div class="stat-val">${workCount}</div><div class="stat-label">вместе смен</div></div>
+        <div class="stat"><div class="stat-val">${offCount}</div><div class="stat-label">общих вых</div></div>
+      </div>
+      <button type="button" class="btn compare-add-btn" id="compare-add">+ добавить участника для сравнения</button>
       <div class="week-nav" style="margin-top:0;margin-bottom:12px">
         <button type="button" class="btn" id="cmp-prev" ${comparePeriodIndex <= 0 ? "disabled" : ""}>←</button>
         <button type="button" class="btn" id="cmp-next" ${comparePeriodIndex >= comparePeriods.length - 1 ? "disabled" : ""}>→</button>
@@ -1549,7 +1619,21 @@ async function renderCompareResult() {
       </div>
     `;
 
+    document.getElementById("compare-add")?.addEventListener("click", addCompareParticipant);
+    bindDayPickers();
+
     document.getElementById("compare-back").onclick = () => {
+      if (compareFromColleague) {
+        colleagueView = { ...compareFromColleague };
+        compareFromColleague = null;
+        comparePick = [];
+        peopleScreen = "person";
+        document.getElementById("screen-title").textContent = colleagueView.name;
+        renderPeople();
+        return;
+      }
+      // переход из сравнения в «коллеги» — сбрасываем участников
+      comparePick = [];
       peopleScreen = "list";
       document.getElementById("screen-title").textContent = TITLES.people;
       updateSubtitle();
@@ -1640,6 +1724,7 @@ function setTab(next) {
   const changed = tab !== next;
   if (changed) hapticLight();
   if (changed && main) main.classList.add("tab-fade");
+  if (changed) addParticipantMode = false;
 
   tab = next;
   if (tab !== "people") {
