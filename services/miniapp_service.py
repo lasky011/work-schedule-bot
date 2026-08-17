@@ -15,7 +15,7 @@ from departments_manager import (
 )
 from keyboards.compare import get_available_periods
 from repositories.shifts_repo import delete_shift, get_shift_for_date, get_shifts_for_month, save_shift
-from repositories.users_repo import get_user, save_user
+from repositories.users_repo import get_onboarding_seen, get_user, save_user
 from schedule_utils import detect_shift, detect_shift_type, format_date, get_standard_hours, is_work_shift
 from ui_utils import is_valid_time
 from services import salary_service
@@ -70,6 +70,7 @@ async def get_profile(user_id: int) -> dict:
     notify_time = user[3] if len(user) > 3 else None
     theme = user[8] if len(user) > 8 and user[8] else "alice_dark"
     role_label = role_display_label(role) if role else None
+    onboarding_seen = await get_onboarding_seen(user_id)
 
     return {
         "registered": True,
@@ -82,6 +83,7 @@ async def get_profile(user_id: int) -> dict:
         "notify_time": notify_time,
         "notify_hours": notify_hours,
         "theme": theme,
+        "onboarding_seen": onboarding_seen,
     }
 
 
@@ -93,6 +95,7 @@ async def update_user_settings(
     track_hours: bool | None = None,
     notify_hours: bool | None = None,
     theme: str | None = None,
+    onboarding_seen: bool | None = None,
 ) -> dict:
     user = await get_user(user_id)
     if not user or not user[1]:
@@ -127,6 +130,8 @@ async def update_user_settings(
         await save_user(user_id, notify_hours=1 if notify_hours else 0)
     if theme is not None:
         await save_user(user_id, theme=theme)
+    if onboarding_seen is not None:
+        await save_user(user_id, onboarding_seen=1 if onboarding_seen else 0)
 
     for msg in chat_msgs:
         await send_user_message(user_id, msg)
