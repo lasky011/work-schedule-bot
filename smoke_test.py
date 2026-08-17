@@ -821,9 +821,10 @@ def test_day_roster_missed_working_person_not_lost():
 
 
 def test_period_coverage_missing():
-    from datetime import date
+    from datetime import date, datetime
     from unittest.mock import patch
 
+    from app_config import APP_TIMEZONE
     from services.period_coverage_service import (
         format_period_key,
         missing_period_alerts,
@@ -833,7 +834,12 @@ def test_period_coverage_missing():
     sample = {
         (2026, 7, 1): "2125046654",
     }
-    with patch("services.period_coverage_service.SHEET_GID_MAP", sample):
+    # Фиксируем "сегодня" внутри периода 1–15 июля, иначе missing_period_keys()
+    # (которая опирается на now_local()) даёт разный результат в зависимости от
+    # реальной даты запуска теста.
+    fixed_now = datetime(2026, 7, 10, 12, 0, tzinfo=APP_TIMEZONE)
+    with patch("services.period_coverage_service.now_local", return_value=fixed_now), \
+            patch("services.period_coverage_service.SHEET_GID_MAP", sample):
         missing = missing_period_keys(days_ahead=14)
         assert (2026, 7, 16) in missing
         assert "июл" in format_period_key((2026, 7, 16))
