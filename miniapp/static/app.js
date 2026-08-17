@@ -148,7 +148,7 @@ async function renderNamePicker(targetId, { onboarding = false } = {}) {
         if (onboarding) {
           document.getElementById("nav")?.classList.remove("hidden");
           refreshNavBadges();
-          setTab("schedule");
+          startOnboarding();
           return;
         }
         renderSettingsContent();
@@ -895,6 +895,16 @@ function renderSettingsContent() {
         ${themeOptionsHtml(p.theme || "alice_dark")}
       </div>
     </div>
+    <div class="card">
+      <div class="card-label">обучение</div>
+      <div class="setting-row">
+        <div class="setting-info">
+          <div class="setting-title">знакомство с ботом</div>
+          <div class="setting-desc">приветствие, настройки и тур по вкладкам</div>
+        </div>
+        <button type="button" class="btn" id="replay-onboarding">пройти</button>
+      </div>
+    </div>
   `;
 
   document.getElementById("close-settings-sheet")?.addEventListener("click", () => {
@@ -910,6 +920,12 @@ function renderSettingsContent() {
   document.getElementById("change-name")?.addEventListener("click", () => {
     namePickRole = null;
     renderNamePicker("settings-content");
+  });
+
+  document.getElementById("replay-onboarding")?.addEventListener("click", () => {
+    hapticLight();
+    closeSettingsSheet();
+    startOnboarding();
   });
 
   content.querySelectorAll(".theme-option").forEach((btn) => {
@@ -1760,6 +1776,11 @@ document.querySelectorAll(".nav-btn").forEach((btn) => {
     hideSplash();
     if (!ok) return;
 
+    if (!profile.onboarding_seen) {
+      startOnboarding();
+      return;
+    }
+
     if (start.view === "team") {
       teamDayOffset = start.teamOffset;
       setTab("team");
@@ -1777,3 +1798,213 @@ document.querySelectorAll(".nav-btn").forEach((btn) => {
     renderError(e.message);
   }
 })();
+
+// ---------- Онбординг нового пользователя ----------
+
+const ONBOARDING_TABS = [
+  { tab: "schedule", label: "график", text: "твой график на неделю и месяц. тапни день — увидишь детали смены." },
+  { tab: "team", label: "смена", text: "кто ещё работает в выбранный день — вся команда на смене." },
+  { tab: "people", label: "коллеги", text: "коллеги и совпадения графиков. можно сравнить свои смены с чужими." },
+  { tab: "salary", label: "зп", text: "примерный расчёт зарплаты за период по твоим сменам." },
+  { tab: "analytics", label: "стат", text: "смены и часы за период — вся статистика в цифрах." },
+];
+
+function onboardingRoot() {
+  let root = document.getElementById("onboarding");
+  if (!root) {
+    root = document.createElement("div");
+    root.id = "onboarding";
+    root.className = "onboarding hidden";
+    document.body.appendChild(root);
+  }
+  return root;
+}
+
+function startOnboarding() {
+  document.getElementById("nav")?.classList.remove("hidden");
+  try { setTab("schedule"); } catch (_) { /* noop */ }
+  renderOnboardingWelcome();
+}
+
+function renderOnboardingWelcome() {
+  const root = onboardingRoot();
+  root.classList.remove("hidden");
+  root.classList.add("centered");
+  const name = escapeHtml(profile?.name || "");
+  root.innerHTML = `
+    <div class="onb-backdrop"></div>
+    <div class="onb-card">
+      <div class="onb-badge">TNG · Alice</div>
+      <div class="onb-title">добро пожаловать в зазеркалье${name ? ", " + name : ""}</div>
+      <div class="onb-desc">давай быстро настроим бота под тебя и покажем, что где живёт. это займёт минуту.</div>
+      <button type="button" class="btn btn-primary onb-btn-wide" id="onb-start">настроить</button>
+      <button type="button" class="btn onb-btn-wide onb-skip" id="onb-skip">пропустить</button>
+    </div>
+  `;
+  document.getElementById("onb-start")?.addEventListener("click", () => { hapticLight(); renderOnboardingWizard(); });
+  document.getElementById("onb-skip")?.addEventListener("click", () => finishOnboarding());
+}
+
+async function onbPatch(body) {
+  try {
+    await patchSettings(body);
+    return true;
+  } catch (e) {
+    tg?.showAlert?.(e.message);
+    return false;
+  }
+}
+
+function renderOnboardingWizard() {
+  const root = onboardingRoot();
+  root.classList.remove("hidden");
+  root.classList.add("centered");
+  const p = profile || {};
+  const t = p.notify_time || "09:00";
+  root.innerHTML = `
+    <div class="onb-backdrop"></div>
+    <div class="onb-card onb-wizard">
+      <div class="onb-step">шаг 1 из 2 · настройки</div>
+      <div class="onb-title sm">настроим под тебя</div>
+      <div class="onb-desc">включи только то, что нужно — потом всё можно поменять в настройках.</div>
+
+      <div class="onb-opt">
+        <div class="onb-opt-info">
+          <div class="onb-opt-title">🔔 ежедневное напоминание</div>
+          <div class="onb-opt-desc">утром пишу в чат, во сколько ты сегодня на смене</div>
+        </div>
+        <button type="button" class="btn toggle-btn${p.notify ? " on" : ""}" id="onb-notify">${p.notify ? "вкл" : "выкл"}</button>
+      </div>
+      <div class="onb-opt onb-sub${p.notify ? "" : " hidden"}" id="onb-time-row">
+        <div class="onb-opt-info"><div class="onb-opt-title">время</div></div>
+        <input class="hours-input settings-time" id="onb-notify-time" value="${escapeAttr(t)}" placeholder="09:00" />
+      </div>
+
+      <div class="onb-opt">
+        <div class="onb-opt-info">
+          <div class="onb-opt-title">💰 учёт часов</div>
+          <div class="onb-opt-desc">считаю зарплату и аналитику по реально отработанным сменам</div>
+        </div>
+        <button type="button" class="btn toggle-btn${p.track_hours ? " on" : ""}" id="onb-track">${p.track_hours ? "вкл" : "выкл"}</button>
+      </div>
+
+      <div class="onb-opt onb-sub${p.track_hours ? "" : " onb-dim"}">
+        <div class="onb-opt-info">
+          <div class="onb-opt-title">⏰ напоминание внести часы</div>
+          <div class="onb-opt-desc">после смены пришлю кнопку — быстро отметить часы</div>
+        </div>
+        <button type="button" class="btn toggle-btn${p.notify_hours ? " on" : ""}" id="onb-notify-hours">${p.notify_hours ? "вкл" : "выкл"}</button>
+      </div>
+
+      <div class="onb-theme">
+        <div class="onb-opt-title">🎨 тема оформления</div>
+        <div class="theme-grid">${themeOptionsHtml(p.theme || "alice_dark")}</div>
+      </div>
+
+      <button type="button" class="btn btn-primary onb-btn-wide" id="onb-next">далее →</button>
+      <button type="button" class="btn onb-btn-wide onb-skip" id="onb-skip2">пропустить всё</button>
+    </div>
+  `;
+
+  document.getElementById("onb-notify")?.addEventListener("click", async () => {
+    hapticLight();
+    if (p.notify) {
+      if (await onbPatch({ notify: false })) renderOnboardingWizard();
+    } else {
+      const time = document.getElementById("onb-notify-time")?.value?.trim() || "09:00";
+      if (await onbPatch({ notify: true, notify_time: time })) renderOnboardingWizard();
+    }
+  });
+
+  document.getElementById("onb-track")?.addEventListener("click", async () => {
+    hapticLight();
+    if (await onbPatch({ track_hours: !p.track_hours })) {
+      refreshNavBadges();
+      renderOnboardingWizard();
+    }
+  });
+
+  document.getElementById("onb-notify-hours")?.addEventListener("click", async () => {
+    if (!p.track_hours) {
+      tg?.showAlert?.("Сначала включи учёт часов");
+      return;
+    }
+    hapticLight();
+    if (await onbPatch({ notify_hours: !p.notify_hours })) renderOnboardingWizard();
+  });
+
+  root.querySelectorAll(".theme-option").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const nextTheme = btn.dataset.theme;
+      if (!nextTheme || nextTheme === p.theme) return;
+      hapticLight();
+      if (await onbPatch({ theme: nextTheme })) {
+        applyTheme(profile.theme || nextTheme);
+        renderOnboardingWizard();
+      }
+    });
+  });
+
+  document.getElementById("onb-next")?.addEventListener("click", () => { hapticLight(); startOnboardingTour(0); });
+  document.getElementById("onb-skip2")?.addEventListener("click", () => finishOnboarding());
+}
+
+function startOnboardingTour(index) {
+  const root = onboardingRoot();
+  root.classList.remove("hidden");
+  root.classList.remove("centered");
+  const step = ONBOARDING_TABS[index];
+  if (!step) { finishOnboarding(); return; }
+
+  try { setTab(step.tab); } catch (_) { /* noop */ }
+
+  const btn = document.querySelector(`.nav-btn[data-tab="${step.tab}"]`);
+  const rect = btn ? btn.getBoundingClientRect() : null;
+  const isLast = index === ONBOARDING_TABS.length - 1;
+
+  root.innerHTML = `
+    <div class="onb-backdrop tour"></div>
+    ${rect ? `<div class="onb-ring" style="left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;height:${rect.height}px"></div>` : ""}
+    <div class="onb-bubble" id="onb-bubble">
+      <div class="onb-bubble-step">${index + 1} / ${ONBOARDING_TABS.length}</div>
+      <div class="onb-bubble-title">${escapeHtml(step.label)}</div>
+      <div class="onb-bubble-text">${escapeHtml(step.text)}</div>
+      <div class="onb-bubble-actions">
+        <button type="button" class="btn onb-skip" id="onb-tour-skip">пропустить</button>
+        <button type="button" class="btn btn-primary" id="onb-tour-next">${isLast ? "готово" : "далее"}</button>
+      </div>
+    </div>
+  `;
+
+  const bubble = document.getElementById("onb-bubble");
+  if (bubble) {
+    const bw = Math.min(300, window.innerWidth - 24);
+    bubble.style.width = bw + "px";
+    if (rect) {
+      let left = rect.left + rect.width / 2 - bw / 2;
+      left = Math.max(12, Math.min(left, window.innerWidth - bw - 12));
+      bubble.style.left = left + "px";
+      bubble.style.bottom = (window.innerHeight - rect.top + 14) + "px";
+    } else {
+      bubble.style.left = "50%";
+      bubble.style.transform = "translateX(-50%)";
+      bubble.style.bottom = "96px";
+    }
+  }
+
+  document.getElementById("onb-tour-next")?.addEventListener("click", () => { hapticLight(); startOnboardingTour(index + 1); });
+  document.getElementById("onb-tour-skip")?.addEventListener("click", () => finishOnboarding());
+}
+
+async function finishOnboarding() {
+  const root = document.getElementById("onboarding");
+  if (root) {
+    root.classList.add("hidden");
+    root.classList.remove("centered");
+    root.innerHTML = "";
+  }
+  await onbPatch({ onboarding_seen: true });
+  applyTheme(profile?.theme || "alice_dark");
+  refreshNavBadges();
+  setTab("schedule");
+}

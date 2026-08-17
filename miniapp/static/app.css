@@ -2344,3 +2344,185 @@ body {
   font-size: 13px;
   padding: 12px 0;
 }
+
+/* —— онбординг нового пользователя —— */
+.onboarding {
+  position: fixed;
+  inset: 0;
+  z-index: 500;
+}
+
+.onboarding.hidden {
+  display: none;
+}
+
+.onboarding.centered {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.onb-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.72);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+}
+
+.onb-backdrop.tour {
+  bottom: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px));
+}
+
+.onb-card {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 340px;
+  max-height: 88vh;
+  overflow-y: auto;
+  padding: 22px 20px;
+  background: var(--sheet-bg);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  box-shadow: var(--card-shadow);
+}
+
+.onb-badge {
+  font-size: 12px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--gold);
+  margin-bottom: 12px;
+}
+
+.onb-step {
+  font-size: 11px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+.onb-title {
+  font-size: 22px;
+  line-height: 1.25;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+
+.onb-title.sm {
+  font-size: 19px;
+}
+
+.onb-desc {
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--text-muted);
+  margin-bottom: 16px;
+}
+
+.onb-btn-wide {
+  width: 100%;
+  margin-top: 10px;
+}
+
+.onb-skip {
+  color: var(--text-muted);
+}
+
+.onb-opt {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+  border-top: 1px solid var(--border);
+}
+
+.onb-opt-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.onb-opt-title {
+  font-size: 15px;
+  color: var(--text);
+}
+
+.onb-opt-desc {
+  font-size: 12.5px;
+  line-height: 1.35;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.onb-opt .toggle-btn {
+  flex-shrink: 0;
+}
+
+.onb-sub {
+  padding-left: 6px;
+}
+
+.onb-sub .settings-time {
+  max-width: 120px;
+}
+
+.onb-dim {
+  opacity: 0.5;
+}
+
+.onb-theme {
+  padding: 14px 0 4px;
+  border-top: 1px solid var(--border);
+}
+
+.onb-theme .onb-opt-title {
+  margin-bottom: 10px;
+}
+
+.onb-ring {
+  position: fixed;
+  z-index: 2;
+  border: 2px solid var(--gold);
+  border-radius: 14px;
+  box-shadow: 0 0 0 4px rgba(154, 138, 106, 0.25), 0 0 18px rgba(154, 138, 106, 0.5);
+  pointer-events: none;
+  transition: left 0.25s ease, top 0.25s ease, width 0.25s ease, height 0.25s ease;
+}
+
+.onb-bubble {
+  position: fixed;
+  z-index: 3;
+  padding: 14px 16px;
+  background: var(--sheet-bg);
+  border: 1px solid var(--btn-primary-border);
+  border-radius: 16px;
+  box-shadow: var(--card-shadow);
+}
+
+.onb-bubble-step {
+  font-size: 11px;
+  letter-spacing: 1px;
+  color: var(--text-muted);
+}
+
+.onb-bubble-title {
+  font-size: 16px;
+  color: var(--gold);
+  margin: 2px 0 6px;
+}
+
+.onb-bubble-text {
+  font-size: 13.5px;
+  line-height: 1.4;
+  color: var(--text);
+  margin-bottom: 12px;
+}
+
+.onb-bubble-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
