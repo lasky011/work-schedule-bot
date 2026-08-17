@@ -8,14 +8,21 @@ import requests
 from app_config import ADMIN_BOT_TOKEN, ADMIN_IDS
 
 
-def _send_admin_sync(chat_id: int, text: str) -> bool:
+def _send_admin_sync(
+    chat_id: int,
+    text: str,
+    reply_markup: dict | None = None,
+) -> bool:
     if not ADMIN_BOT_TOKEN:
         logging.warning("admin_notify: ADMIN_BOT_TOKEN is missing")
         return False
     try:
+        payload = {"chat_id": chat_id, "text": text}
+        if reply_markup:
+            payload["reply_markup"] = reply_markup
         resp = requests.post(
             f"https://api.telegram.org/bot{ADMIN_BOT_TOKEN}/sendMessage",
-            json={"chat_id": chat_id, "text": text},
+            json=payload,
             timeout=10,
         )
         if not resp.ok:
@@ -27,12 +34,12 @@ def _send_admin_sync(chat_id: int, text: str) -> bool:
         return False
 
 
-async def notify_admins(text: str) -> int:
+async def notify_admins(text: str, reply_markup: dict | None = None) -> int:
     if not ADMIN_IDS:
         return 0
     sent = 0
     for admin_id in ADMIN_IDS:
-        ok = await asyncio.to_thread(_send_admin_sync, admin_id, text)
+        ok = await asyncio.to_thread(_send_admin_sync, admin_id, text, reply_markup)
         if ok:
             sent += 1
     return sent

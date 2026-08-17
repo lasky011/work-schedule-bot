@@ -14,7 +14,7 @@ from departments_manager import (
     role_display_label,
 )
 from schedule_utils import clean_value, detect_shift, format_date, is_work_shift
-from repositories.users_repo import get_user
+from repositories.users_repo import get_user, save_user
 import message_format as mf
 
 SCHEDULE_MAX_DAY_COL = 16
@@ -103,57 +103,188 @@ def normalize_person_lookup_name(name: str | None) -> str:
     text = _clean_person_name_value(name)
     text = text.replace("ё", "е").replace("Ё", "Е")
     text = text.lower()
+    text = re.sub(r"\bстаж(?:ер[аы]?|ёры?)?\b", " ", text, flags=re.IGNORECASE)
     text = re.sub(r"\s+", " ", text).strip()
     return text
 
 
-async def find_row(name, day, month=None, year=None, target_role=None):
+def person_names_match(a: str | None, b: str | None) -> bool:
+    """Совпадение имён: точное после нормализации или короткое + хвост («Анна» / «Анна 2-2 утро»)."""
+    na = normalize_person_lookup_name(a)
+    nb = normalize_person_lookup_name(b)
+    if not na or not nb:
+        return False
+    if na == nb:
+        return True
+    short, long = (na, nb) if len(na) <= len(nb) else (nb, na)
+    return long.startswith(short + " ")
+
+
+def preferred_sheet_name(bot_name: str | None, sheet_name: str | None) -> str | None:
+    """Если имя в листе — мягкое переименование бота, вернуть имя из листа."""
+    bot = (bot_name or "").replace("\xa0", " ").strip()
+    sheet = _clean_person_name_value(sheet_name)
+    if not bot or not sheet or bot == sheet:
+        return None
+    if not person_names_match(bot, sheet):
+        return None
+    return sheet
+
+
+_synced_name_cache: set[tuple[int, str]] = set()
+
+
+async def find_row(name, day, month=None, year=None, target_role=None, alt_names=None):
     now = now_local()
     if month is None:
         month = now.month
     if year is None:
         year = now.year
     df = await _load_sheet(day, month, year)
-    role = None
     target_role_norm = normalize_role_name(target_role)
-    needle = str(name).strip().lower()
-    needle_norm = normalize_person_lookup_name(name)
 
-    for i in range(len(df)):
-        first = str(df.iloc[i, 0]).strip()
-        if first in ROLES:
-            role = normalize_role_name(first)
-            continue
-        row = df.iloc[i].fillna("").astype(str).tolist()
-        if needle and needle in " ".join(row).lower():
-            if target_role_norm is None or role == target_role_norm:
-                return row, role
+    needles: list[str] = []
+    for n in [name, *(alt_names or [])]:
+        cleaned = (n or "").replace("\xa0", " ").strip()
+        if cleaned and cleaned not in needles:
+            needles.append(cleaned)
+    if not needles:
+        return None, None
 
-    # Fallback: точный поиск по первой колонке с нормализацией имени.
-    # Нужен для листов 16-30, где роль/строка может отличаться от выбранной кнопки.
+    needle_norms = {
+        normalize_person_lookup_name(n) for n in needles if normalize_person_lookup_name(n)
+    }
+
+    # Кандидаты: (score, row_index, role) — 3 точное, 2 prefix short/full.
+    candidates: list[tuple[int, int, str | None]] = []
     role = None
     for i in range(len(df)):
         first = str(df.iloc[i, 0]).replace("\xa0", " ").strip()
-        first_clean = _clean_person_name_value(first)
-
         if first in ROLES:
             role = normalize_role_name(first)
             continue
 
+        first_clean = _clean_person_name_value(first)
         if not first_clean:
+            continue
+        if target_role_norm is not None and role != target_role_norm:
             continue
 
         first_norm = normalize_person_lookup_name(first_clean)
-        if first_norm == needle_norm:
-            if target_role_norm is None or role == target_role_norm:
-                row = df.iloc[i].fillna("").astype(str).tolist()
-                logging.info(
-                    "find_row fallback matched name=%s day=%s month=%s year=%s role=%s target_role=%s",
-                    name, day, month, year, role, target_role_norm,
-                )
-                return row, role
+        if not first_norm:
+            continue
+        if first_norm in needle_norms:
+            candidates.append((3, i, role))
+        elif any(person_names_match(first_clean, n) for n in needles):
+            candidates.append((2, i, role))
+
+    if candidates:
+        candidates.sort(
+            key=lambda c: (
+                c[0],
+                len(normalize_person_lookup_name(
+                    _clean_person_name_value(str(df.iloc[c[1], 0])),
+                )),
+            ),
+            reverse=True,
+        )
+        _score, idx, matched_role = candidates[0]
+        row = df.iloc[idx].fillna("").astype(str).tolist()
+        if _score < 3 or len(candidates) > 1 or len(needles) > 1:
+            logging.info(
+                "find_row matched name=%s alts=%s → sheet=%s day=%s.%s.%s role=%s score=%s candidates=%s",
+                name,
+                [n for n in needles if n != name],
+                _clean_person_name_value(str(df.iloc[idx, 0])),
+                day, month, year, matched_role, _score, len(candidates),
+            )
+        return row, matched_role
 
     return None, None
+
+
+async def find_row_for_user(
+    user_id: int,
+    name: str | None,
+    day,
+    month=None,
+    year=None,
+    target_role=None,
+):
+    """Personal schedule lookup: include confirmed historical sheet aliases."""
+    from repositories.name_rename_repo import list_aliases
+
+    primary = (name or "").strip()
+    alts = await list_aliases(int(user_id)) if user_id else []
+    return await find_row(
+        primary, day, month, year, target_role=target_role, alt_names=alts,
+    )
+
+
+async def sync_user_name_from_sheet(
+    user_id: int,
+    bot_name: str | None,
+    role: str | None = None,
+    *,
+    day: int | None = None,
+    month: int | None = None,
+    year: int | None = None,
+) -> str:
+    """Подтянуть написание имени из листа, сохранив старое как алиас.
+
+    Не вызывается из schedule_watch: смена display name внутри цикла
+    ломала снимки и давала бесконечные «добавлены смены».
+    """
+    current = (bot_name or "").strip()
+    if not current or not user_id:
+        return current
+
+    now = now_local()
+    day = now.day if day is None else day
+    month = now.month if month is None else month
+    year = now.year if year is None else year
+
+    try:
+        row, _role = await find_row_for_user(
+            user_id, current, day, month, year, target_role=role,
+        )
+        if not row and role:
+            row, _role = await find_row_for_user(
+                user_id, current, day, month, year, target_role=None,
+            )
+    except Exception as e:
+        logging.warning("sync_user_name_from_sheet lookup failed user_id=%s: %s", user_id, e)
+        return current
+
+    if not row:
+        return current
+
+    sheet_raw = _clean_person_name_value(row[0])
+    if not sheet_raw or sheet_raw == current:
+        return current
+
+    sheet_name = preferred_sheet_name(current, sheet_raw) or sheet_raw
+    if sheet_name == current:
+        return current
+
+    cache_key = (int(user_id), sheet_name)
+    if cache_key in _synced_name_cache:
+        return sheet_name
+
+    try:
+        from repositories.name_rename_repo import remember_rename_aliases
+
+        await remember_rename_aliases(user_id, current, sheet_name)
+        await save_user(user_id, name=sheet_name)
+        _synced_name_cache.add(cache_key)
+        logging.info(
+            "sync_user_name: user_id=%s display %r → %r (aliases kept)",
+            user_id, current, sheet_name,
+        )
+        return sheet_name
+    except Exception as e:
+        logging.warning("sync_user_name apply failed user_id=%s: %s", user_id, e)
+        return current
 async def get_day_value(row, day, month=None, year=None):
     now = now_local()
     if month is None:
@@ -337,10 +468,16 @@ async def get_my_status_for_day(user_id, day, month=None, year=None):
     if not my_name:
         return "👤 Твоё имя не выбрано."
 
+    my_name = await sync_user_name_from_sheet(
+        user_id, my_name, my_role, day=day, month=month, year=year,
+    )
+
     if not is_day_published(day, month, year):
         return "👤 Твой график: график пока не составлен."
 
-    row, _ = await find_row(my_name, day, month, year, target_role=my_role)
+    row, _ = await find_row_for_user(
+        user_id, my_name, day, month, year, target_role=my_role,
+    )
     if not row:
         return f"👤 Твой график: не нашёл имя {my_name}."
 

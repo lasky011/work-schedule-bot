@@ -730,6 +730,143 @@ def test_schedule_watch_unreliable_and_past():
         assert changes[0][1].day == 6
 
 
+def test_person_names_match_short_and_full():
+    from services.schedule_service import person_names_match, preferred_sheet_name
+
+    assert person_names_match("Анна", "Анна 2-2 утро")
+    assert person_names_match("Анна 2-2 утро", "Анна")
+    assert not person_names_match("Аня", "Анна")
+    assert preferred_sheet_name("Анна", "Анна 2-2 утро") == "Анна 2-2 утро"
+
+
+def test_schedule_watch_parse_and_merge():
+    from services.schedule_watch_service import merge_snapshot, parse_snapshot
+
+    assert parse_snapshot('{"2026-08-20": "missing"}')["2026-08-20"] == "missing"
+    assert parse_snapshot({"2026-08-20": "off"})["2026-08-20"] == "off"
+    assert parse_snapshot(None) == {}
+
+    merged = merge_snapshot(
+        {"2026-08-20": "work|morning|11:00 — утро", "2026-08-21": "off"},
+        {"2026-08-20": "missing", "2026-08-21": "off", "2026-08-22": "unpublished"},
+    )
+    assert merged["2026-08-20"].startswith("work|")
+    assert merged["2026-08-21"] == "off"
+    assert merged["2026-08-22"] == "unpublished"
+
+
+def test_schedule_watch_missing_to_work_notifies_once():
+    from datetime import datetime
+    from unittest.mock import patch
+
+    from services.schedule_watch_service import diff_snapshots
+
+    fixed_now = datetime(2026, 8, 16, 12, 0, 0)
+    with patch("services.schedule_watch_service.now_local", return_value=fixed_now):
+        old = {
+            "2026-08-16": "work|morning|11:00 — утро",
+            "2026-08-20": "missing",
+            "2026-08-21": "unpublished",
+        }
+        new = {
+            "2026-08-16": "work|morning|11:00 — утро",
+            "2026-08-20": "work|evening|16:00 — вечер",
+            "2026-08-21": "work|morning|11:00 — утро",
+        }
+        changes = diff_snapshots(old, new)
+        kinds = {c[0] for c in changes}
+        days = {c[1].day for c in changes}
+        assert kinds == {"added"}
+        assert days == {20, 21}
+
+        # error → work still silent
+        assert diff_snapshots(
+            {"2026-08-20": "error"},
+            {"2026-08-20": "work|morning|11:00 — утро"},
+        ) == []
+
+
+def test_schedule_watch_send_fail_does_not_repeat():
+    import asyncio
+    import json
+    from datetime import datetime
+    from unittest.mock import AsyncMock, patch
+
+    import services.schedule_watch_service as sw
+
+    sw.reset_watch_runtime_state()
+    tz = sw.now_local().tzinfo
+    fixed = datetime(2026, 8, 16, 12, 0, tzinfo=tz)
+    old = {"2026-08-20": "missing"}
+    new = {"2026-08-20": "work|morning|11:00 — утро"}
+    stored = {"raw": json.dumps(old)}
+    send = AsyncMock(return_value=False)
+
+    async def fake_get(_uid):
+        return stored["raw"]
+
+    async def fake_save(_uid, snap):
+        stored["raw"] = json.dumps(snap)
+
+    async def run():
+        with patch.object(sw, "now_local", return_value=fixed), \
+             patch.object(sw, "build_snapshot", AsyncMock(return_value=new)), \
+             patch.object(sw, "get_snapshot", fake_get), \
+             patch.object(sw, "save_snapshot", fake_save), \
+             patch.object(sw, "send_user_message", send), \
+             patch.object(sw, "_aliases_for", AsyncMock(return_value=["Анна"])):
+            await sw.check_user_schedule(1744702147, "Анна 2-2 утро", "Официант")
+            await sw.check_user_schedule(1744702147, "Анна 2-2 утро", "Официант")
+
+    asyncio.run(run())
+    assert send.call_count == 1
+    assert json.loads(stored["raw"])["2026-08-20"].startswith("work|")
+
+
+def test_schedule_watch_missing_flicker_does_not_spam():
+    import asyncio
+    import json
+    from datetime import datetime
+    from unittest.mock import AsyncMock, patch
+
+    import services.schedule_watch_service as sw
+
+    sw.reset_watch_runtime_state()
+    tz = sw.now_local().tzinfo
+    fixed = datetime(2026, 8, 16, 12, 0, tzinfo=tz)
+    stored = {"raw": json.dumps({"2026-08-20": "work|morning|11:00 — утро"})}
+    send = AsyncMock(return_value=True)
+    builds = [
+        {"2026-08-20": "missing"},
+        {"2026-08-20": "work|morning|11:00 — утро"},
+        {"2026-08-20": "missing"},
+    ]
+
+    async def fake_get(_uid):
+        return stored["raw"]
+
+    async def fake_save(_uid, snap):
+        stored["raw"] = json.dumps(snap)
+
+    async def fake_build(_name, _role, alt_names=None):
+        return builds.pop(0)
+
+    async def run():
+        with patch.object(sw, "now_local", return_value=fixed), \
+             patch.object(sw, "build_snapshot", fake_build), \
+             patch.object(sw, "get_snapshot", fake_get), \
+             patch.object(sw, "save_snapshot", fake_save), \
+             patch.object(sw, "send_user_message", send), \
+             patch.object(sw, "_aliases_for", AsyncMock(return_value=[])):
+            await sw.check_user_schedule(1, "Анна", "Официант")
+            await sw.check_user_schedule(1, "Анна", "Официант")
+            await sw.check_user_schedule(1, "Анна", "Официант")
+
+    asyncio.run(run())
+    assert send.call_count == 0
+    assert json.loads(stored["raw"])["2026-08-20"].startswith("work|")
+
+
 def test_roster_person_name():
     from services.miniapp_service import _roster_person_name
 
@@ -833,7 +970,11 @@ def test_period_coverage_missing():
     sample = {
         (2026, 7, 1): "2125046654",
     }
-    with patch("services.period_coverage_service.SHEET_GID_MAP", sample):
+    july = date(2026, 7, 10)
+    with patch("services.period_coverage_service.SHEET_GID_MAP", sample), patch(
+        "services.period_coverage_service.now_local",
+        return_value=type("N", (), {"date": staticmethod(lambda: july)})(),
+    ):
         missing = missing_period_keys(days_ahead=14)
         assert (2026, 7, 16) in missing
         assert "июл" in format_period_key((2026, 7, 16))
@@ -983,6 +1124,11 @@ def main():
         ("admin_alert_dedup", test_admin_alert_dedup_by_key),
         ("schedule_watch_midnight", test_schedule_watch_midnight_window_slide),
         ("schedule_watch_unreliable", test_schedule_watch_unreliable_and_past),
+        ("person_names_match", test_person_names_match_short_and_full),
+        ("schedule_watch_parse_merge", test_schedule_watch_parse_and_merge),
+        ("schedule_watch_missing_to_work", test_schedule_watch_missing_to_work_notifies_once),
+        ("schedule_watch_send_fail_once", test_schedule_watch_send_fail_does_not_repeat),
+        ("schedule_watch_missing_flicker", test_schedule_watch_missing_flicker_does_not_spam),
         ("roster_person_name", test_roster_person_name),
         ("day_roster_dual_role_off", test_day_roster_dual_role_off_in_second_role),
         ("day_roster_missed_working", test_day_roster_missed_working_person_not_lost),

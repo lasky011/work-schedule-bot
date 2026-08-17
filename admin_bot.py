@@ -119,6 +119,8 @@ async def health_alert_loop() -> None:
         try:
             await maybe_refresh_sheet_cache()
             await run_health_alerts()
+            from services.name_rename_service import scan_registered_name_renames
+            await scan_registered_name_renames()
         except asyncio.CancelledError:
             break
         except Exception:
@@ -136,6 +138,11 @@ async def main():
     token = os.getenv("ADMIN_BOT_TOKEN")
 
     init_pg_pool()
+    try:
+        from repositories.name_rename_repo import ensure_schema as ensure_name_rename_schema
+        await asyncio.to_thread(ensure_name_rename_schema)
+    except Exception:
+        logging.exception("name_rename schema init failed")
     await asyncio.to_thread(load_from_db_sync)
     await asyncio.to_thread(load_rates_sync)
     await load_full_sheet()

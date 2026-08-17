@@ -222,12 +222,31 @@ def _watch_monitor_stats_sync() -> dict:
         cursor.execute("SELECT COUNT(*) FROM users WHERE track_hours = 1 AND name IS NOT NULL")
         track_hours = cursor.fetchone()[0]
 
+        recent_repeats: list[str] = []
+        try:
+            cursor.execute(
+                """
+                SELECT details, created_at
+                FROM admin_log
+                WHERE action = 'watch_repeat'
+                  AND created_at > NOW() - INTERVAL '24 hours'
+                ORDER BY created_at DESC
+                LIMIT 10
+                """
+            )
+            for details, created_at in cursor.fetchall() or []:
+                stamp = str(created_at)[:16] if created_at else ""
+                recent_repeats.append(f"{stamp} {details or ''}".strip())
+        except Exception:
+            conn.rollback()
+
         return {
             "registered": registered,
             "snapshots": snapshots,
             "missing_snapshots": max(0, registered - snapshots),
             "missing_users": missing,
             "track_hours": track_hours,
+            "recent_repeats": recent_repeats,
         }
     finally:
         cursor.close()

@@ -201,6 +201,11 @@ def init_db():
     conn.commit()
     cursor.close()
     conn.close()
+    try:
+        from repositories.name_rename_repo import ensure_schema as ensure_name_rename_schema
+        ensure_name_rename_schema()
+    except Exception:
+        logging.exception("name_rename schema init failed")
 
 
 schedule.configure_schedule_service(load_sheet, MONTHS, RU_HOLIDAYS)

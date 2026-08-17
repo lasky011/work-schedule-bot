@@ -83,11 +83,12 @@ from repositories.admin_repo import (
 )
 from repositories.schedule_snapshots_repo import get_snapshot_meta
 from repositories.shifts_repo import get_shifts_for_month
-from repositories.users_repo import get_user
+from repositories.users_repo import get_user, save_user
 from schedule_utils import is_work_shift
 from services.admin_alerts_service import run_health_alerts
 from services import schedule_service as schedule
 from services.schedule_watch_service import WATCH_DAYS, check_user_schedule, reset_user_snapshot
+from repositories.name_rename_repo import get_request, resolve_request
 from services.telegram_notify import send_user_message
 from services.sheet_periods_service import SHEET_GID_MAP, add_period, reload_from_db, remove_period
 from services.rates_service import (
@@ -282,6 +283,11 @@ def _format_monitor_text(stats: dict) -> str:
         f"Окно отслеживания: {WATCH_DAYS} дн.",
         f"С учётом часов: {stats['track_hours']}",
     ]
+    repeats = stats.get("recent_repeats") or []
+    if repeats:
+        lines.append(f"\n⚠️ Повторные пуши schedule_watch за 24ч: {len(repeats)}")
+        for item in repeats[:8]:
+            lines.append(f"• {item}")
     missing = stats.get("missing_users") or []
     if missing:
         lines.append("\nБез snapshot (не получат пуш об изменениях):")
@@ -966,6 +972,84 @@ async def admin_user_open(callback: CallbackQuery, state: FSMContext):
     user_id = int(callback.data[len(CB_USER_OPEN):])
     await callback.answer()
     await _send_user_card(callback.message, user_id)
+
+
+@router.callback_query(F.data.startswith("rename:ok:"))
+async def admin_rename_confirm(callback: CallbackQuery, state: FSMContext):
+    if await _deny_callback(callback):
+        return
+    await state.clear()
+    request_id = int(callback.data.split(":")[-1])
+    row = await get_request(request_id)
+    if not row:
+        return await callback.answer("Заявка не найдена", show_alert=True)
+    _id, user_id, old_name, new_name, role, status = row
+    if status != "pending":
+        return await callback.answer(f"Уже обработано: {status}", show_alert=True)
+
+    ok = await resolve_request(request_id, "confirmed", callback.from_user.id)
+    if not ok:
+        return await callback.answer("Не удалось подтвердить", show_alert=True)
+
+    await save_user(user_id, name=new_name)
+    from repositories.name_rename_repo import remember_rename_aliases
+    await remember_rename_aliases(user_id, old_name, new_name)
+    # Snapshot не сбрасываем: реальные правки смен вокруг переименования
+    # должны уйти одним пушем. schedule_watch после этого закрепляет снимок
+    # даже если Telegram вернул ошибку — иначе «добавлены смены» зацикливаются.
+    await record_action(
+        callback.from_user.id,
+        "name_rename_confirm",
+        f"id={request_id}, user_id={user_id}, {old_name!r} → {new_name!r}, role={role}",
+    )
+    await callback.answer("Подтверждено")
+    try:
+        await callback.message.edit_text(
+            f"✅ Подтверждено\n\n"
+            f"{old_name} → {new_name}\n"
+            f"user_id: `{user_id}`\n"
+            f"Имя в боте обновлено (алиас сохранён)."
+        )
+    except Exception:
+        await callback.message.answer(
+            f"✅ {old_name} → {new_name} (user_id={user_id})"
+        )
+
+
+@router.callback_query(F.data.startswith("rename:no:"))
+async def admin_rename_reject(callback: CallbackQuery, state: FSMContext):
+    if await _deny_callback(callback):
+        return
+    await state.clear()
+    request_id = int(callback.data.split(":")[-1])
+    row = await get_request(request_id)
+    if not row:
+        return await callback.answer("Заявка не найдена", show_alert=True)
+    _id, user_id, old_name, new_name, role, status = row
+    if status != "pending":
+        return await callback.answer(f"Уже обработано: {status}", show_alert=True)
+
+    ok = await resolve_request(request_id, "rejected", callback.from_user.id)
+    if not ok:
+        return await callback.answer("Не удалось отклонить", show_alert=True)
+
+    await record_action(
+        callback.from_user.id,
+        "name_rename_reject",
+        f"id={request_id}, user_id={user_id}, {old_name!r} → {new_name!r}, role={role}",
+    )
+    await callback.answer("Отклонено")
+    try:
+        await callback.message.edit_text(
+            f"❌ Отклонено\n\n"
+            f"{old_name} ↛ {new_name}\n"
+            f"user_id: `{user_id}`\n"
+            f"Имя в боте не менялось. Повторно не спросим эту пару."
+        )
+    except Exception:
+        await callback.message.answer(
+            f"❌ Отклонено: {old_name} ↛ {new_name}"
+        )
 
 
 @router.callback_query(F.data.startswith(CB_USER_TEST))
