@@ -2485,7 +2485,7 @@ body {
 /* тур по вкладкам */
 /* подсветка активной вкладки во время тура (на самой кнопке нав-бара) */
 .nav.onb-touring .nav-btn {
-  opacity: 0.32;
+  opacity: 0.5;
   transition: opacity 0.2s ease;
 }
 
@@ -2498,7 +2498,9 @@ body {
   z-index: 2;
   color: var(--nav-active-text);
   background: var(--nav-active-bg);
+  border: 1px solid var(--gold);
   border-radius: 12px;
+  box-shadow: 0 0 14px 1px var(--gold);
   animation: onb-tab-pulse 1.6s ease-in-out infinite;
 }
 
@@ -2507,8 +2509,8 @@ body {
 }
 
 @keyframes onb-tab-pulse {
-  0%, 100% { box-shadow: 0 0 0 2px var(--gold), 0 0 14px color-mix(in srgb, var(--gold) 50%, transparent); }
-  50% { box-shadow: 0 0 0 2px var(--gold), 0 0 26px color-mix(in srgb, var(--gold) 85%, transparent); }
+  0%, 100% { box-shadow: 0 0 10px 0 var(--gold); }
+  50% { box-shadow: 0 0 20px 3px var(--gold); }
 }
 
 .onb-bubble {
