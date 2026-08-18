@@ -1984,7 +1984,7 @@ function startOnboardingTour(index) {
 
   root.innerHTML = `
     <div class="onb-backdrop tour"></div>
-    ${rect ? `<div class="onb-ring" style="left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;height:${rect.height}px"></div>` : ""}
+    ${rect ? `<div class="onb-ring" style="left:${rect.left - 6}px;top:${rect.top - 6}px;width:${rect.width + 12}px;height:${rect.height + 12}px"></div>` : ""}
     <div class="onb-bubble card onb-anim" id="onb-bubble">
       <div class="onb-brandline">${index + 1} / ${ONBOARDING_TABS.length}</div>
       <div class="onb-bubble-title">${escapeHtml(step.label)}</div>

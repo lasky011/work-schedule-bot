@@ -2485,12 +2485,19 @@ body {
 /* тур по вкладкам */
 .onb-ring {
   position: fixed;
-  z-index: 2;
-  border: 1.5px solid var(--gold);
+  z-index: 4;
+  border: 2px solid var(--gold);
   border-radius: 14px;
-  box-shadow: 0 0 0 3px rgba(154, 138, 106, 0.28), 0 0 22px rgba(154, 138, 106, 0.55);
+  background: rgba(154, 138, 106, 0.1);
+  box-shadow: 0 0 0 3px rgba(154, 138, 106, 0.3), 0 0 26px rgba(154, 138, 106, 0.6);
   pointer-events: none;
   transition: left 0.28s ease, top 0.28s ease, width 0.28s ease, height 0.28s ease;
+  animation: onb-ring-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes onb-ring-pulse {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(154, 138, 106, 0.28), 0 0 22px rgba(154, 138, 106, 0.45); }
+  50% { box-shadow: 0 0 0 5px rgba(154, 138, 106, 0.42), 0 0 30px rgba(154, 138, 106, 0.75); }
 }
 
 .onb-bubble {
