@@ -2483,21 +2483,23 @@ body {
 }
 
 /* тур по вкладкам */
-.onb-ring {
-  position: fixed;
-  z-index: 4;
-  border: 2px solid var(--gold);
-  border-radius: 14px;
-  background: rgba(154, 138, 106, 0.1);
-  box-shadow: 0 0 0 3px rgba(154, 138, 106, 0.3), 0 0 26px rgba(154, 138, 106, 0.6);
-  pointer-events: none;
-  transition: left 0.28s ease, top 0.28s ease, width 0.28s ease, height 0.28s ease;
-  animation: onb-ring-pulse 1.8s ease-in-out infinite;
+/* подсветка активной вкладки во время тура (на самой кнопке нав-бара) */
+.nav-btn.onb-tab-highlight {
+  position: relative;
+  z-index: 2;
+  color: var(--nav-active-text);
+  background: var(--nav-active-bg);
+  border-radius: 12px;
+  animation: onb-tab-pulse 1.6s ease-in-out infinite;
 }
 
-@keyframes onb-ring-pulse {
-  0%, 100% { box-shadow: 0 0 0 3px rgba(154, 138, 106, 0.28), 0 0 22px rgba(154, 138, 106, 0.45); }
-  50% { box-shadow: 0 0 0 5px rgba(154, 138, 106, 0.42), 0 0 30px rgba(154, 138, 106, 0.75); }
+.nav-btn.onb-tab-highlight .nav-icon {
+  color: var(--nav-active-icon);
+}
+
+@keyframes onb-tab-pulse {
+  0%, 100% { box-shadow: 0 0 0 2px var(--gold), 0 0 14px rgba(154, 138, 106, 0.5); }
+  50% { box-shadow: 0 0 0 2px var(--gold), 0 0 24px rgba(154, 138, 106, 0.9); }
 }
 
 .onb-bubble {

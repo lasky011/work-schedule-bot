@@ -1982,9 +1982,12 @@ function startOnboardingTour(index) {
   const rect = btn ? btn.getBoundingClientRect() : null;
   const isLast = index === ONBOARDING_TABS.length - 1;
 
+  document.querySelectorAll(".nav-btn").forEach((b) => {
+    b.classList.toggle("onb-tab-highlight", b.dataset.tab === step.tab);
+  });
+
   root.innerHTML = `
     <div class="onb-backdrop tour"></div>
-    ${rect ? `<div class="onb-ring" style="left:${rect.left - 6}px;top:${rect.top - 6}px;width:${rect.width + 12}px;height:${rect.height + 12}px"></div>` : ""}
     <div class="onb-bubble card onb-anim" id="onb-bubble">
       <div class="onb-brandline">${index + 1} / ${ONBOARDING_TABS.length}</div>
       <div class="onb-bubble-title">${escapeHtml(step.label)}</div>
@@ -2024,6 +2027,9 @@ function startOnboardingTour(index) {
 }
 
 async function finishOnboarding() {
+  document.querySelectorAll(".nav-btn.onb-tab-highlight").forEach((b) => {
+    b.classList.remove("onb-tab-highlight");
+  });
   const root = document.getElementById("onboarding");
   if (root) {
     root.classList.add("hidden");
