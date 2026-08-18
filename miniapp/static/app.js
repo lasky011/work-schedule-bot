@@ -1833,12 +1833,23 @@ function renderOnboardingWelcome() {
   const name = escapeHtml(profile?.name || "");
   root.innerHTML = `
     <div class="onb-backdrop"></div>
-    <div class="onb-card">
-      <div class="onb-badge">TNG · Alice</div>
-      <div class="onb-title">добро пожаловать в зазеркалье${name ? ", " + name : ""}</div>
-      <div class="onb-desc">давай быстро настроим бота под тебя и покажем, что где живёт. это займёт минуту.</div>
-      <button type="button" class="btn btn-primary onb-btn-wide" id="onb-start">настроить</button>
-      <button type="button" class="btn onb-btn-wide onb-skip" id="onb-skip">пропустить</button>
+    <div class="onb-dialog onb-anim">
+      <div class="card onb-panel">
+        <div class="onb-cards" aria-hidden="true">
+          <div class="card-loader">
+            <div class="card-stack">
+              <span class="playing-card c1">♠</span>
+              <span class="playing-card c2">♥</span>
+              <span class="playing-card c3">♦</span>
+            </div>
+          </div>
+        </div>
+        <div class="onb-brandline">TNG · Alice</div>
+        <div class="onb-h1">добро пожаловать${name ? ",<br>" + name : ""}</div>
+        <div class="onb-sub">давай настроим бота под тебя и покажем, что где живёт. это займёт минуту.</div>
+        <button type="button" class="btn btn-primary onb-btn-wide" id="onb-start">настроить</button>
+        <button type="button" class="btn onb-btn-wide onb-ghost" id="onb-skip">пропустить</button>
+      </div>
     </div>
   `;
   document.getElementById("onb-start")?.addEventListener("click", () => { hapticLight(); renderOnboardingWizard(); });
@@ -1863,46 +1874,55 @@ function renderOnboardingWizard() {
   const t = p.notify_time || "09:00";
   root.innerHTML = `
     <div class="onb-backdrop"></div>
-    <div class="onb-card onb-wizard">
-      <div class="onb-step">шаг 1 из 2 · настройки</div>
-      <div class="onb-title sm">настроим под тебя</div>
-      <div class="onb-desc">включи только то, что нужно — потом всё можно поменять в настройках.</div>
+    <div class="onb-dialog onb-scroll onb-anim">
+      <div class="onb-head">
+        <div class="onb-brandline">шаг 1 · настройки</div>
+        <div class="onb-h2">настроим под тебя</div>
+        <div class="onb-sub">включи только то, что нужно — потом всё можно поменять в настройках.</div>
+      </div>
 
-      <div class="onb-opt">
-        <div class="onb-opt-info">
-          <div class="onb-opt-title">🔔 ежедневное напоминание</div>
-          <div class="onb-opt-desc">утром пишу в чат, во сколько ты сегодня на смене</div>
+      <div class="card">
+        <div class="card-label">уведомления</div>
+        <div class="setting-row">
+          <div class="setting-info">
+            <div class="setting-title">🔔 ежедневное напоминание</div>
+            <div class="setting-desc">утром пишу в чат, во сколько ты сегодня на смене</div>
+          </div>
+          <button type="button" class="btn toggle-btn${p.notify ? " on" : ""}" id="onb-notify">${p.notify ? "вкл" : "выкл"}</button>
         </div>
-        <button type="button" class="btn toggle-btn${p.notify ? " on" : ""}" id="onb-notify">${p.notify ? "вкл" : "выкл"}</button>
-      </div>
-      <div class="onb-opt onb-sub${p.notify ? "" : " hidden"}" id="onb-time-row">
-        <div class="onb-opt-info"><div class="onb-opt-title">время</div></div>
-        <input class="hours-input settings-time" id="onb-notify-time" value="${escapeAttr(t)}" placeholder="09:00" />
-      </div>
-
-      <div class="onb-opt">
-        <div class="onb-opt-info">
-          <div class="onb-opt-title">💰 учёт часов</div>
-          <div class="onb-opt-desc">считаю зарплату и аналитику по реально отработанным сменам</div>
+        <div class="setting-row onb-time-row${p.notify ? "" : " hidden"}" id="onb-time-row">
+          <div class="setting-info"><div class="setting-title">время</div></div>
+          <input class="hours-input settings-time" id="onb-notify-time" value="${escapeAttr(t)}" placeholder="09:00" />
         </div>
-        <button type="button" class="btn toggle-btn${p.track_hours ? " on" : ""}" id="onb-track">${p.track_hours ? "вкл" : "выкл"}</button>
       </div>
 
-      <div class="onb-opt onb-sub${p.track_hours ? "" : " onb-dim"}">
-        <div class="onb-opt-info">
-          <div class="onb-opt-title">⏰ напоминание внести часы</div>
-          <div class="onb-opt-desc">после смены пришлю кнопку — быстро отметить часы</div>
+      <div class="card">
+        <div class="card-label">часы и зарплата</div>
+        <div class="setting-row">
+          <div class="setting-info">
+            <div class="setting-title">💰 учёт часов</div>
+            <div class="setting-desc">считаю зарплату и аналитику по реально отработанным сменам</div>
+          </div>
+          <button type="button" class="btn toggle-btn${p.track_hours ? " on" : ""}" id="onb-track">${p.track_hours ? "вкл" : "выкл"}</button>
         </div>
-        <button type="button" class="btn toggle-btn${p.notify_hours ? " on" : ""}" id="onb-notify-hours">${p.notify_hours ? "вкл" : "выкл"}</button>
+        <div class="setting-row${p.track_hours ? "" : " onb-dim"}">
+          <div class="setting-info">
+            <div class="setting-title">⏰ напоминание внести часы</div>
+            <div class="setting-desc">после смены пришлю кнопку — быстро отметить часы</div>
+          </div>
+          <button type="button" class="btn toggle-btn${p.notify_hours ? " on" : ""}" id="onb-notify-hours">${p.notify_hours ? "вкл" : "выкл"}</button>
+        </div>
       </div>
 
-      <div class="onb-theme">
-        <div class="onb-opt-title">🎨 тема оформления</div>
+      <div class="card">
+        <div class="card-label">тема оформления</div>
         <div class="theme-grid">${themeOptionsHtml(p.theme || "alice_dark")}</div>
       </div>
 
-      <button type="button" class="btn btn-primary onb-btn-wide" id="onb-next">далее →</button>
-      <button type="button" class="btn onb-btn-wide onb-skip" id="onb-skip2">пропустить всё</button>
+      <div class="onb-actions">
+        <button type="button" class="btn onb-ghost" id="onb-skip2">пропустить</button>
+        <button type="button" class="btn btn-primary" id="onb-next">далее →</button>
+      </div>
     </div>
   `;
 
@@ -1965,30 +1985,37 @@ function startOnboardingTour(index) {
   root.innerHTML = `
     <div class="onb-backdrop tour"></div>
     ${rect ? `<div class="onb-ring" style="left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;height:${rect.height}px"></div>` : ""}
-    <div class="onb-bubble" id="onb-bubble">
-      <div class="onb-bubble-step">${index + 1} / ${ONBOARDING_TABS.length}</div>
+    <div class="onb-bubble card onb-anim" id="onb-bubble">
+      <div class="onb-brandline">${index + 1} / ${ONBOARDING_TABS.length}</div>
       <div class="onb-bubble-title">${escapeHtml(step.label)}</div>
       <div class="onb-bubble-text">${escapeHtml(step.text)}</div>
-      <div class="onb-bubble-actions">
-        <button type="button" class="btn onb-skip" id="onb-tour-skip">пропустить</button>
+      <div class="onb-actions">
+        <button type="button" class="btn onb-ghost" id="onb-tour-skip">пропустить</button>
         <button type="button" class="btn btn-primary" id="onb-tour-next">${isLast ? "готово" : "далее"}</button>
       </div>
+      <div class="onb-bubble-arrow" id="onb-arrow"></div>
     </div>
   `;
 
   const bubble = document.getElementById("onb-bubble");
   if (bubble) {
-    const bw = Math.min(300, window.innerWidth - 24);
+    const bw = Math.min(320, window.innerWidth - 24);
     bubble.style.width = bw + "px";
     if (rect) {
       let left = rect.left + rect.width / 2 - bw / 2;
       left = Math.max(12, Math.min(left, window.innerWidth - bw - 12));
       bubble.style.left = left + "px";
-      bubble.style.bottom = (window.innerHeight - rect.top + 14) + "px";
+      bubble.style.bottom = (window.innerHeight - rect.top + 16) + "px";
+      const arrow = document.getElementById("onb-arrow");
+      if (arrow) {
+        const ax = rect.left + rect.width / 2 - left;
+        arrow.style.left = Math.max(16, Math.min(ax, bw - 16)) + "px";
+      }
     } else {
       bubble.style.left = "50%";
       bubble.style.transform = "translateX(-50%)";
       bubble.style.bottom = "96px";
+      document.getElementById("onb-arrow")?.style.setProperty("display", "none");
     }
   }
 
