@@ -1982,6 +1982,7 @@ function startOnboardingTour(index) {
   const rect = btn ? btn.getBoundingClientRect() : null;
   const isLast = index === ONBOARDING_TABS.length - 1;
 
+  document.getElementById("nav")?.classList.add("onb-touring");
   document.querySelectorAll(".nav-btn").forEach((b) => {
     b.classList.toggle("onb-tab-highlight", b.dataset.tab === step.tab);
   });
@@ -2027,6 +2028,7 @@ function startOnboardingTour(index) {
 }
 
 async function finishOnboarding() {
+  document.getElementById("nav")?.classList.remove("onb-touring");
   document.querySelectorAll(".nav-btn.onb-tab-highlight").forEach((b) => {
     b.classList.remove("onb-tab-highlight");
   });
