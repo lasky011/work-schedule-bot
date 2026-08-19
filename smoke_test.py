@@ -400,7 +400,7 @@ def test_miniapp_week_today_stays_real_when_offset_changes():
     assert data["tomorrow"]["day"] == 5
 
 
-def test_supervisor_week_uses_venue_roster():
+def test_supervisor_week_keeps_personal_schedule():
     from datetime import datetime
     from unittest.mock import patch
     from zoneinfo import ZoneInfo
@@ -420,6 +420,16 @@ def test_supervisor_week_uses_venue_roster():
             0, 0, None, "alice_dark",
         )
 
+    async def fake_shift(_name, _role, _dt):
+        return {
+            "working": True,
+            "shift_type": "morning",
+            "label": "утро",
+            "hours": 12.5,
+            "raw": "11:00",
+            "in_sheet": True,
+        }
+
     async def fake_people(day, month=None, year=None):
         return {
             "Официант": ["Владислав — 11:00 — утро", "Юлия — 16:00 — вечер"],
@@ -428,21 +438,21 @@ def test_supervisor_week_uses_venue_roster():
 
     with patch.object(miniapp_service, "get_user", fake_get_user), \
             patch.object(miniapp_service, "now_local", return_value=now), \
+            patch.object(miniapp_service, "_shift_for_person", fake_shift), \
             patch.object(miniapp_service.schedule, "is_day_published", return_value=True), \
             patch.object(miniapp_service.schedule, "get_people_for_day", fake_people), \
             patch.object(miniapp_service.schedule, "MONTHS", months):
         data = asyncio.run(miniapp_service.get_week_schedule(1, 0))
 
-    assert data["venue"] is True
-    assert data["today"]["venue"] is True
-    assert data["today"]["day"] == 19
-    assert data["today"]["total_working"] == 3
-    assert data["today"]["morning"] == 2
-    assert data["today"]["evening"] == 1
+    assert data.get("venue") is None
+    assert data["name"] == "Владислав Байкалов"
     assert data["today"]["working"] is True
-    assert data["today"]["label"] == "3 чел"
-    assert all(day.get("venue") for day in data["days"])
-    assert data["days"][2]["day"] == 19
+    assert data["today"]["shift_type"] == "morning"
+    assert data["today"]["label"] == "утро"
+    assert data["today"]["total_working"] == 3
+    assert data["today"]["roster_morning"] == 2
+    assert data["today"]["roster_evening"] == 1
+    assert all(day["label"] == "утро" for day in data["days"])
     assert data["days"][2]["total_working"] == 3
 
 
@@ -1054,7 +1064,7 @@ def main():
         ("message_format", test_message_format),
         ("miniapp_auth", test_miniapp_auth),
         ("miniapp_week_today", test_miniapp_week_today_stays_real_when_offset_changes),
-        ("supervisor_week_venue", test_supervisor_week_uses_venue_roster),
+        ("supervisor_week_personal", test_supervisor_week_keeps_personal_schedule),
         ("supervisor_roster_off", test_supervisor_skipped_from_day_roster_off),
         ("miniapp_profile_role_normalization", test_miniapp_profile_role_normalization),
         ("gen_cleaning_schedule", test_gen_cleaning_schedule),

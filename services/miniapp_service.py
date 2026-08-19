@@ -299,41 +299,44 @@ async def _day_schedule_entry(
     }
 
 
-async def _venue_day_entry(dt: datetime, today: date) -> dict:
-    """Сводка смены зала: сколько человек работают, без личной строки."""
-    published = schedule.is_day_published(dt.day, dt.month, dt.year)
-    total = morning = evening = 0
-    if published:
-        try:
-            by_role = await schedule.get_people_for_day(dt.day, dt.month, dt.year)
-        except (ValueError, ConnectionError):
-            by_role = {}
-        total, morning, evening = _roster_shift_counts(by_role)
-
-    working = published and total > 0
-    shift_type = None
-    if morning and not evening:
-        shift_type = "morning"
-    elif evening and not morning:
-        shift_type = "evening"
-
+async def _roster_counts_for(dt: datetime, published: bool) -> dict:
+    if not published:
+        return {
+            "total_working": None,
+            "roster_morning": None,
+            "roster_evening": None,
+        }
+    try:
+        by_role = await schedule.get_people_for_day(dt.day, dt.month, dt.year)
+    except (ValueError, ConnectionError):
+        by_role = {}
+    total, morning, evening = _roster_shift_counts(by_role)
     return {
-        "date": dt.strftime("%Y-%m-%d"),
-        "weekday": WEEKDAYS_SHORT[dt.weekday()],
-        "day": dt.day,
-        "month": dt.month,
-        "is_today": dt.date() == today,
-        "published": published,
-        "gen_cleaning": is_gen_cleaning_day(dt.date()),
-        "working": working,
-        "shift_type": shift_type,
-        "label": f"{total} чел" if published else None,
-        "hours": None,
-        "venue": True,
         "total_working": total,
-        "morning": morning,
-        "evening": evening,
+        "roster_morning": morning,
+        "roster_evening": evening,
     }
+
+
+async def _enrich_with_roster_counts(payload: dict) -> dict:
+    """Добавляет численность смены, не трогая личный график."""
+    cache: dict[str, dict] = {}
+    entries = list(payload.get("days") or [])
+    for key in ("today", "tomorrow"):
+        if payload.get(key):
+            entries.append(payload[key])
+    for entry in entries:
+        date_str = entry.get("date")
+        if not date_str:
+            continue
+        if date_str not in cache:
+            try:
+                dt = datetime.strptime(date_str, "%Y-%m-%d")
+            except ValueError:
+                continue
+            cache[date_str] = await _roster_counts_for(dt, bool(entry.get("published")))
+        entry.update(cache[date_str])
+    return payload
 
 
 def _week_header(days: list[dict]) -> str:
@@ -341,73 +344,6 @@ def _week_header(days: list[dict]) -> str:
     if first["month"] == last["month"]:
         return f"{first['day']}–{last['day']} {schedule.MONTHS[first['month']]}"
     return f"{first['day']}–{last['day']}"
-
-
-async def _venue_week_schedule(week_offset: int = 0) -> dict:
-    now = now_local()
-    week_start = (now - timedelta(days=now.weekday())).replace(
-        hour=0, minute=0, second=0, microsecond=0,
-    ) + timedelta(weeks=week_offset)
-    today = now.date()
-    days = []
-    for i in range(7):
-        days.append(await _venue_day_entry(week_start + timedelta(days=i), today))
-
-    today_dt = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    tomorrow_dt = today_dt + timedelta(days=1)
-    return {
-        "name": None,
-        "role": "Управляющий",
-        "role_label": role_display_label("Управляющий"),
-        "header": _week_header(days),
-        "week_offset": week_offset,
-        "venue": True,
-        "today": await _venue_day_entry(today_dt, today),
-        "tomorrow": await _venue_day_entry(tomorrow_dt, today),
-        "days": days,
-    }
-
-
-async def _venue_month_schedule(month_offset: int = 0) -> dict:
-    now = now_local()
-    month = now.month + month_offset
-    year = now.year
-    while month < 1:
-        month += 12
-        year -= 1
-    while month > 12:
-        month -= 12
-        year += 1
-
-    last_day = calendar.monthrange(year, month)[1]
-    today = now.date()
-    days = []
-    working = off = 0
-    for day in range(1, last_day + 1):
-        entry = await _venue_day_entry(
-            datetime(year, month, day, tzinfo=now.tzinfo), today,
-        )
-        if entry["working"]:
-            working += 1
-        elif entry["published"]:
-            off += 1
-        days.append(entry)
-
-    first_weekday = datetime(year, month, 1, tzinfo=now.tzinfo).weekday()
-    return {
-        "name": None,
-        "role": "Управляющий",
-        "role_label": role_display_label("Управляющий"),
-        "year": year,
-        "month": month,
-        "month_name": schedule.MONTHS[month],
-        "header": f"{schedule.MONTHS[month]} {year}",
-        "month_offset": month_offset,
-        "first_weekday": first_weekday,
-        "venue": True,
-        "days": days,
-        "stats": {"working": working, "off": off},
-    }
 
 
 async def _week_schedule_for(name: str, role: str | None, week_offset: int = 0) -> dict:
@@ -445,9 +381,10 @@ async def get_week_schedule(user_id: int, week_offset: int = 0) -> dict:
         return {"error": "not_registered"}
 
     role = user[4] if len(user) > 4 else None
+    data = await _week_schedule_for(user[1], role, week_offset)
     if _is_supervisor(user[1], role):
-        return await _venue_week_schedule(week_offset)
-    return await _week_schedule_for(user[1], role, week_offset)
+        await _enrich_with_roster_counts(data)
+    return data
 
 
 async def get_month_schedule(user_id: int, month_offset: int = 0) -> dict:
@@ -456,9 +393,10 @@ async def get_month_schedule(user_id: int, month_offset: int = 0) -> dict:
         return {"error": "not_registered"}
 
     role = user[4] if len(user) > 4 else None
+    data = await _month_schedule_for(user[1], role, month_offset)
     if _is_supervisor(user[1], role):
-        return await _venue_month_schedule(month_offset)
-    return await _month_schedule_for(user[1], role, month_offset)
+        await _enrich_with_roster_counts(data)
+    return data
 
 
 async def _month_schedule_for(name: str, role: str | None, month_offset: int = 0) -> dict:

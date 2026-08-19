@@ -1409,11 +1409,22 @@ body.is-supervisor .nav {
 
 .day-shift.off { color: var(--text-muted); }
 
-.day-shift.venue {
-  color: var(--gold);
-  font-weight: 600;
+.day-headcount {
+  font-size: 8px;
+  color: var(--text-muted);
+  opacity: 0.55;
   font-variant-numeric: tabular-nums;
-  font-size: 11px;
+  line-height: 1;
+  margin-top: 2px;
+}
+
+.today-roster {
+  opacity: 0.7;
+}
+
+.legend-muted {
+  color: var(--text-muted);
+  opacity: 0.65;
 }
 
 .week-nav {
@@ -1528,11 +1539,9 @@ body.is-supervisor .nav {
 
 .month-cell.off .month-mark { color: var(--text-muted); }
 
-.month-cell.venue .month-mark {
-  color: var(--gold);
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  font-size: 10px;
+.month-cell .day-headcount {
+  font-size: 7px;
+  margin-top: 1px;
 }
 
 .month-legend .legend-morning {

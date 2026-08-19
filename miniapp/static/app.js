@@ -30,10 +30,6 @@ function parseStartParams() {
 }
 
 function shiftLabel(day) {
-  if (day.venue) {
-    if (!day.published) return "·";
-    return `${day.total_working || 0}`;
-  }
   if (!day.working) return "—";
   if (day.shift_type === "morning") return "♠ утро";
   if (day.shift_type === "evening") return "♥ вечер";
@@ -41,7 +37,6 @@ function shiftLabel(day) {
 }
 
 function shiftClass(day) {
-  if (day.venue) return day.working ? "venue" : "off";
   if (!day.working) return "off";
   return day.shift_type === "morning" ? "morning" : "evening";
 }
@@ -286,11 +281,7 @@ function todayCardHtml(today, tomorrow) {
   let todayLine = "нет данных";
   if (today) {
     const dayLabel = formatScheduleDay(today);
-    if (today.venue) {
-      todayLine = today.published === false
-        ? `${dayLabel} · график не опубликован`
-        : `${dayLabel} · ${today.total_working || 0} на смене`;
-    } else if (today.working) {
+    if (today.working) {
       todayLine = `${dayLabel} · ${shiftLabel(today)}`;
       if (today.hours) todayLine += ` · ${today.hours} ч`;
     } else if (today.published === false) {
@@ -303,11 +294,7 @@ function todayCardHtml(today, tomorrow) {
 
   let tomorrowLine = "";
   if (tomorrow) {
-    if (tomorrow.venue) {
-      tomorrowLine = tomorrow.published === false
-        ? "завтра · график не опубликован"
-        : `завтра · ${tomorrow.total_working || 0} на смене`;
-    } else if (tomorrow.working) {
+    if (tomorrow.working) {
       tomorrowLine = `завтра · ${shiftLabel(tomorrow)}`;
       if (tomorrow.hours) tomorrowLine += ` · ${tomorrow.hours} ч`;
     } else if (tomorrow.published === false) {
@@ -317,6 +304,13 @@ function todayCardHtml(today, tomorrow) {
     }
     if (tomorrow.gen_cleaning) tomorrowLine += " · 🧹 ген";
   }
+
+  const rosterLine = Number.isFinite(today?.total_working) && today.published
+    ? `<div class="card-meta today-roster">${today.total_working} на смене</div>`
+    : "";
+  const tomorrowRoster = Number.isFinite(tomorrow?.total_working) && tomorrow.published
+    ? ` · ${tomorrow.total_working} на смене`
+    : "";
 
   const actions = today?.date
     ? `<div class="today-actions">
@@ -328,7 +322,8 @@ function todayCardHtml(today, tomorrow) {
     <div class="card today-card">
       <div class="card-label">сегодня</div>
       <div class="card-title">${escapeHtml(todayLine)}</div>
-      ${tomorrowLine ? `<div class="card-divider"></div><div class="card-meta">${escapeHtml(tomorrowLine)}</div>` : ""}
+      ${rosterLine}
+      ${tomorrowLine ? `<div class="card-divider"></div><div class="card-meta">${escapeHtml(tomorrowLine)}${escapeHtml(tomorrowRoster)}</div>` : ""}
       ${actions}
     </div>
   `;
@@ -347,10 +342,6 @@ function weekViewHintHtml(header) {
 }
 
 function monthShiftShort(day) {
-  if (day.venue) {
-    if (!day.published) return "·";
-    return String(day.total_working ?? 0);
-  }
   if (!day.published) return "·";
   if (!day.working) return "—";
   if (day.shift_type === "morning") return "♠";
@@ -359,12 +350,15 @@ function monthShiftShort(day) {
 }
 
 function scheduleLegendHtml() {
-  if (profile?.supervisor) {
-    return `<div class="month-legend"><span>цифра — сколько человек на смене</span><span>· нет графика</span></div>`;
-  }
   return `<div class="month-legend">
       <span class="legend-morning">♠ утро</span><span class="legend-evening">♥ вечер</span><span>— вых</span><span class="legend-gen">🧹 ген</span><span>· нет графика</span>
+      ${profile?.supervisor ? `<span class="legend-muted">серым — на смене</span>` : ""}
     </div>`;
+}
+
+function rosterHeadcountHtml(day) {
+  if (!Number.isFinite(day?.total_working) || day.published === false) return "";
+  return `<div class="day-headcount">${day.total_working}</div>`;
 }
 
 function weekDayCellHtml(d) {
@@ -376,6 +370,7 @@ function weekDayCellHtml(d) {
       <div class="day-wd">${d.weekday}</div>
       <div class="day-num">${d.day}</div>
       <div class="day-shift ${shiftClass(d)}">${shiftLabel(d)}</div>
+      ${rosterHeadcountHtml(d)}
       ${genMark}
     </div>
   `;
@@ -397,6 +392,7 @@ function monthDayCellHtml(d) {
     <div class="${cls}" data-date="${d.date}" role="button">
       <div class="month-num">${d.day}</div>
       <div class="month-mark">${monthShiftShort(d)}</div>
+      ${rosterHeadcountHtml(d)}
       ${genMark}
     </div>
   `;
@@ -725,7 +721,7 @@ async function renderTeam() {
           <div class="card-label">${escapeHtml(data.weekday)} · ${escapeHtml(data.header)}</div>
           ${data.published ? `<div class="team-total">${data.total} чел.</div>` : ""}
         </div>
-        ${profile?.supervisor ? "" : `<div class="my-shift-line ${myClass}">ты · ${myLine}</div>`}
+        <div class="my-shift-line ${myClass}">ты · ${myLine}</div>
         <div class="card-meta" style="margin-bottom:8px">тап по имени — график коллеги</div>
         ${body}
       </div>
@@ -1937,15 +1933,10 @@ const ONBOARDING_TABS = [
 ];
 
 function onboardingTabs() {
-  const tabs = profile?.supervisor
-    ? ONBOARDING_TABS.filter((step) => step.tab !== "salary" && step.tab !== "analytics")
-    : ONBOARDING_TABS;
-  if (!profile?.supervisor) return tabs;
-  return tabs.map((step) => (
-    step.tab === "schedule"
-      ? { ...step, text: "график зала: сколько человек на смене в каждый день. тапни день — увидишь состав." }
-      : step
-  ));
+  if (profile?.supervisor) {
+    return ONBOARDING_TABS.filter((step) => step.tab !== "salary" && step.tab !== "analytics");
+  }
+  return ONBOARDING_TABS;
 }
 
 function onboardingRoot() {
