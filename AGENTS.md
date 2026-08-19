@@ -1,5 +1,7 @@
 # AGENTS.md
 
+**Перед любой правкой продуктовой логики прочитай [`FORBIDDEN.md`](FORBIDDEN.md)** — там график ресторана, роли, управляющий и контракты, которые нельзя «улучшать» без явной просьбы.
+
 ## Cursor Cloud specific instructions
 
 This repo is **TNG Alice** — a Python 3.12 Telegram bot for restaurant staff work-schedule
