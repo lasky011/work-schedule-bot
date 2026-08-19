@@ -46,4 +46,4 @@ cur.close(); conn.close()
 Then reopen the **test** bot Mini App (URL `https://work-schedule-bot-test.fly.dev`).
 
 ### Supervisor Mini App
-Managers listed in `SUPERVISOR_NAMES` (or with role `Управляющий`) use the **same personal schedule lookup** as everyone else. Headcount per day (`total_working`) is a secondary field on their week/month payload — it must not replace ♠/♥/вых. Google Sheets currently has no «Управляющий» row for «Владислав Байкалов»; do not alias him to waiter «Владислав».
+Managers listed in `SUPERVISOR_NAMES` (or with role `Управляющий`) use the **fixed weekly schedule** in `services/supervisor_schedule.py`. Do **not** look their shifts up in Google Sheets. Waiter «Владислав» is a different person — never alias. GitHub `main` currently does not contain commit `dfbe8f0`; the module was recovered from Fly prod. Personal hours: Mon/Wed 11–19, Tue meeting 11–13 + shift 16–19, Thu/Sun off, Fri/Sat 16–01. Mini App tabs: schedule / team / people only.

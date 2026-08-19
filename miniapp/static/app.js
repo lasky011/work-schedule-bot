@@ -29,7 +29,31 @@ function parseStartParams() {
   };
 }
 
+function hasBlocks(day) {
+  return Array.isArray(day?.blocks) && day.blocks.length > 0;
+}
+
+function blockTone(block) {
+  if ((block?.kind || "shift") === "meeting") return "meeting";
+  const hour = parseInt(String(block?.start || "").split(":")[0], 10);
+  if (Number.isFinite(hour) && hour < 14) return "morning";
+  return "evening";
+}
+
+function blocksHtml(day, { compact = false } = {}) {
+  if (!hasBlocks(day)) return "";
+  const items = day.blocks.map((block) => {
+    const mark = block.kind === "meeting" ? "◎ " : "";
+    const text = compact ? (block.time || block.label) : block.label;
+    return `<div class="day-block ${blockTone(block)}">${mark}${escapeHtml(text || "")}</div>`;
+  }).join("");
+  return `<div class="my-shift-stack">${items}</div>`;
+}
+
 function shiftLabel(day) {
+  if (hasBlocks(day)) {
+    return day.blocks.map((b) => b.label).join(" · ");
+  }
   if (!day.working) return "—";
   if (day.shift_type === "morning") return "♠ утро";
   if (day.shift_type === "evening") return "♥ вечер";
@@ -279,9 +303,13 @@ function bindScheduleModeToggle() {
 
 function todayCardHtml(today, tomorrow) {
   let todayLine = "нет данных";
+  let todayBlocks = "";
   if (today) {
     const dayLabel = formatScheduleDay(today);
-    if (today.working) {
+    if (hasBlocks(today)) {
+      todayLine = dayLabel;
+      todayBlocks = blocksHtml(today);
+    } else if (today.working) {
       todayLine = `${dayLabel} · ${shiftLabel(today)}`;
       if (today.hours) todayLine += ` · ${today.hours} ч`;
     } else if (today.published === false) {
@@ -293,8 +321,12 @@ function todayCardHtml(today, tomorrow) {
   }
 
   let tomorrowLine = "";
+  let tomorrowBlocks = "";
   if (tomorrow) {
-    if (tomorrow.working) {
+    if (hasBlocks(tomorrow)) {
+      tomorrowLine = "завтра";
+      tomorrowBlocks = blocksHtml(tomorrow, { compact: true });
+    } else if (tomorrow.working) {
       tomorrowLine = `завтра · ${shiftLabel(tomorrow)}`;
       if (tomorrow.hours) tomorrowLine += ` · ${tomorrow.hours} ч`;
     } else if (tomorrow.published === false) {
@@ -304,13 +336,6 @@ function todayCardHtml(today, tomorrow) {
     }
     if (tomorrow.gen_cleaning) tomorrowLine += " · 🧹 ген";
   }
-
-  const rosterLine = Number.isFinite(today?.total_working) && today.published
-    ? `<div class="card-meta today-roster">${today.total_working} на смене</div>`
-    : "";
-  const tomorrowRoster = Number.isFinite(tomorrow?.total_working) && tomorrow.published
-    ? ` · ${tomorrow.total_working} на смене`
-    : "";
 
   const actions = today?.date
     ? `<div class="today-actions">
@@ -322,8 +347,8 @@ function todayCardHtml(today, tomorrow) {
     <div class="card today-card">
       <div class="card-label">сегодня</div>
       <div class="card-title">${escapeHtml(todayLine)}</div>
-      ${rosterLine}
-      ${tomorrowLine ? `<div class="card-divider"></div><div class="card-meta">${escapeHtml(tomorrowLine)}${escapeHtml(tomorrowRoster)}</div>` : ""}
+      ${todayBlocks}
+      ${tomorrowLine ? `<div class="card-divider"></div><div class="card-meta">${escapeHtml(tomorrowLine)}</div>${tomorrowBlocks}` : ""}
       ${actions}
     </div>
   `;
@@ -342,6 +367,12 @@ function weekViewHintHtml(header) {
 }
 
 function monthShiftShort(day) {
+  if (hasBlocks(day)) {
+    if (day.blocks.some((b) => b.kind === "meeting")) return "◎";
+    if (day.shift_type === "morning") return "♠";
+    if (day.shift_type === "evening") return "♥";
+    return "•";
+  }
   if (!day.published) return "·";
   if (!day.working) return "—";
   if (day.shift_type === "morning") return "♠";
@@ -352,25 +383,22 @@ function monthShiftShort(day) {
 function scheduleLegendHtml() {
   return `<div class="month-legend">
       <span class="legend-morning">♠ утро</span><span class="legend-evening">♥ вечер</span><span>— вых</span><span class="legend-gen">🧹 ген</span><span>· нет графика</span>
-      ${profile?.supervisor ? `<span class="legend-muted">серым — на смене</span>` : ""}
+      ${profile?.supervisor ? `<span class="legend-muted">◎ собрание</span>` : ""}
     </div>`;
-}
-
-function rosterHeadcountHtml(day) {
-  if (!Number.isFinite(day?.total_working) || day.published === false) return "";
-  return `<div class="day-headcount">${day.total_working}</div>`;
 }
 
 function weekDayCellHtml(d) {
   const genMark = d.gen_cleaning
     ? '<div class="day-gen-cleaning" title="ген уборка 9:00">🧹</div>'
     : "";
+  const shiftInner = hasBlocks(d)
+    ? blocksHtml(d, { compact: true })
+    : `<div class="day-shift ${shiftClass(d)}">${shiftLabel(d)}</div>`;
   return `
     <div class="day-cell day-pick${d.is_today ? " today" : ""}${d.gen_cleaning ? " gen-cleaning" : ""}" data-date="${d.date}" role="button">
       <div class="day-wd">${d.weekday}</div>
       <div class="day-num">${d.day}</div>
-      <div class="day-shift ${shiftClass(d)}">${shiftLabel(d)}</div>
-      ${rosterHeadcountHtml(d)}
+      ${shiftInner}
       ${genMark}
     </div>
   `;
@@ -392,7 +420,6 @@ function monthDayCellHtml(d) {
     <div class="${cls}" data-date="${d.date}" role="button">
       <div class="month-num">${d.day}</div>
       <div class="month-mark">${monthShiftShort(d)}</div>
-      ${rosterHeadcountHtml(d)}
       ${genMark}
     </div>
   `;
@@ -689,7 +716,12 @@ async function renderTeam() {
     const my = data.my_shift;
     let myLine = "выходной";
     let myClass = "";
-    if (my?.working) {
+    let myBlocks = "";
+    if (hasBlocks(my)) {
+      myClass = `working ${my.shift_type || ""}`;
+      myLine = "ты";
+      myBlocks = blocksHtml(my, { compact: true });
+    } else if (my?.working) {
       myClass = `working ${my.shift_type || ""}`;
       myLine = shiftLabel(my);
       if (my.hours) myLine += ` · ${my.hours} ч`;
@@ -721,7 +753,8 @@ async function renderTeam() {
           <div class="card-label">${escapeHtml(data.weekday)} · ${escapeHtml(data.header)}</div>
           ${data.published ? `<div class="team-total">${data.total} чел.</div>` : ""}
         </div>
-        <div class="my-shift-line ${myClass}">ты · ${myLine}</div>
+        <div class="my-shift-line ${myClass}">${hasBlocks(my) ? "ты" : `ты · ${myLine}`}</div>
+        ${myBlocks}
         <div class="card-meta" style="margin-bottom:8px">тап по имени — график коллеги</div>
         ${body}
       </div>

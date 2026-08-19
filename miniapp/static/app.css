@@ -1409,6 +1409,46 @@ body.is-supervisor .nav {
 
 .day-shift.off { color: var(--text-muted); }
 
+.my-shift-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 4px;
+}
+
+.day-cell .my-shift-stack {
+  align-items: center;
+}
+
+.day-block {
+  font-size: 8px;
+  letter-spacing: 0.03em;
+  line-height: 1.2;
+}
+
+.day-block.morning {
+  color: var(--shift-morning);
+  font-weight: 600;
+}
+
+.day-block.evening {
+  color: var(--shift-evening);
+  font-weight: 600;
+}
+
+.day-block.meeting {
+  color: var(--gold);
+  font-weight: 600;
+}
+
+.today-card .day-block {
+  font-size: 13px;
+}
+
+.my-shift-line + .my-shift-stack {
+  margin: 0 0 10px;
+}
+
 .day-headcount {
   font-size: 8px;
   color: var(--text-muted);

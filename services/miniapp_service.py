@@ -3,7 +3,7 @@
 import calendar
 from datetime import date, datetime, timedelta
 
-from app_config import is_supervisor_name, now_local
+from app_config import now_local
 from departments_manager import (
     DEPARTMENTS,
     is_person_name,
@@ -21,6 +21,12 @@ from ui_utils import is_valid_time
 from services import salary_service
 from services import schedule_service as schedule
 from services.gen_cleaning_service import is_gen_cleaning_day
+from services.supervisor_schedule import (
+    month_schedule as supervisor_month_schedule,
+    shift_for_weekday as supervisor_shift_for_weekday,
+    uses_fixed_schedule,
+    week_schedule as supervisor_week_schedule,
+)
 from services.telegram_notify import send_user_message
 
 
@@ -35,7 +41,7 @@ def _roster_person_name(entry: str) -> str:
 
 
 def _is_supervisor(name: str | None, role: str | None = None) -> bool:
-    return is_supervisor_name(name) or normalize_role_name(role) == "Управляющий"
+    return uses_fixed_schedule(name, role)
 
 
 def _roster_shift_counts(by_role: dict) -> tuple[int, int, int]:
@@ -202,6 +208,8 @@ async def remove_shift_log(user_id: int, date_str: str) -> dict:
 
 
 async def _shift_for_person(name: str, role: str | None, dt: datetime) -> dict:
+    if uses_fixed_schedule(name, role):
+        return supervisor_shift_for_weekday(dt.weekday())
     try:
         row, _ = await schedule.find_row(
             name, dt.day, dt.month, dt.year, target_role=role,
@@ -381,10 +389,9 @@ async def get_week_schedule(user_id: int, week_offset: int = 0) -> dict:
         return {"error": "not_registered"}
 
     role = user[4] if len(user) > 4 else None
-    data = await _week_schedule_for(user[1], role, week_offset)
-    if _is_supervisor(user[1], role):
-        await _enrich_with_roster_counts(data)
-    return data
+    if uses_fixed_schedule(user[1], role):
+        return supervisor_week_schedule(user[1], role, week_offset)
+    return await _week_schedule_for(user[1], role, week_offset)
 
 
 async def get_month_schedule(user_id: int, month_offset: int = 0) -> dict:
@@ -393,10 +400,9 @@ async def get_month_schedule(user_id: int, month_offset: int = 0) -> dict:
         return {"error": "not_registered"}
 
     role = user[4] if len(user) > 4 else None
-    data = await _month_schedule_for(user[1], role, month_offset)
-    if _is_supervisor(user[1], role):
-        await _enrich_with_roster_counts(data)
-    return data
+    if uses_fixed_schedule(user[1], role):
+        return supervisor_month_schedule(user[1], role, month_offset)
+    return await _month_schedule_for(user[1], role, month_offset)
 
 
 async def _month_schedule_for(name: str, role: str | None, month_offset: int = 0) -> dict:
@@ -454,6 +460,8 @@ async def _month_schedule_for(name: str, role: str | None, month_offset: int = 0
 
 
 async def get_colleague_month(name: str, role: str | None, month_offset: int = 0) -> dict:
+    if uses_fixed_schedule(name, role):
+        return supervisor_month_schedule(name, role, month_offset)
     return await _month_schedule_for(name, role, month_offset)
 
 
@@ -799,6 +807,8 @@ async def get_colleagues(user_id: int) -> dict:
 
 
 async def get_colleague_week(name: str, role: str | None, week_offset: int = 0) -> dict:
+    if uses_fixed_schedule(name, role):
+        return supervisor_week_schedule(name, role, week_offset)
     return await _week_schedule_for(name, role, week_offset)
 
 
@@ -817,6 +827,17 @@ async def compare_with_colleagues(
     my_name = user[1]
     my_role = user[4] if len(user) > 4 else None
     roster = [(my_name, my_role)] + [(c["name"], c.get("role")) for c in colleagues]
+    tz = now_local().tzinfo
+
+    def _is_working(val) -> bool:
+        if isinstance(val, dict) and "working" in val:
+            return bool(val["working"])
+        return is_work_shift(val)
+
+    def _shift_label(val) -> str:
+        if isinstance(val, dict):
+            return val.get("label") or ("смена" if val.get("working") else "вых")
+        return detect_shift(val)
 
     common_work: list[dict] = []
     common_off: list[dict] = []
@@ -824,6 +845,11 @@ async def compare_with_colleagues(
     for day in range(period_start, period_end + 1):
         values: dict[str, object] = {}
         for name, role in roster:
+            if uses_fixed_schedule(name, role):
+                dt = datetime(year, month, day, tzinfo=tz)
+                values[name] = supervisor_shift_for_weekday(dt.weekday())
+                continue
+
             target_role = role
             row = None
             try:
@@ -850,13 +876,13 @@ async def compare_with_colleagues(
         if len(values) != len(roster):
             continue
 
-        if all(is_work_shift(v) for v in values.values()):
+        if all(_is_working(v) for v in values.values()):
             common_work.append({
                 "day": day,
                 "date": format_date(day, month, year),
-                "shifts": {name: detect_shift(values[name]) for name in values},
+                "shifts": {name: _shift_label(values[name]) for name in values},
             })
-        elif all(not is_work_shift(v) for v in values.values()):
+        elif all(not _is_working(v) for v in values.values()):
             common_off.append({
                 "day": day,
                 "date": format_date(day, month, year),

@@ -124,6 +124,10 @@ def test_imports():
     assert hasattr(fsm_context, "resolve_compare_role")
     assert hasattr(schedule_service, "find_row")
     assert hasattr(salary_service, "build_salary_stats_text")
+    from services import supervisor_schedule
+    assert supervisor_schedule.DEFAULT_FIXED_SCHEDULE["version"] == 2
+    assert supervisor_schedule.uses_fixed_schedule("Владислав Байкалов", "Управляющий")
+    assert not supervisor_schedule.uses_fixed_schedule("Владислав", "Официант")
 
 
 def test_salary_service():
@@ -400,7 +404,47 @@ def test_miniapp_week_today_stays_real_when_offset_changes():
     assert data["tomorrow"]["day"] == 5
 
 
-def test_supervisor_week_keeps_personal_schedule():
+def test_supervisor_fixed_schedule():
+    from datetime import datetime
+    from unittest.mock import patch
+    from zoneinfo import ZoneInfo
+
+    from services import supervisor_schedule as ss
+
+    tz = ZoneInfo("Europe/Moscow")
+    months = {
+        1: "января", 2: "февраля", 3: "марта", 4: "апреля",
+        5: "мая", 6: "июня", 7: "июля", 8: "августа",
+        9: "сентября", 10: "октября", 11: "ноября", 12: "декабря",
+    }
+    with patch.object(ss, "now_local", return_value=datetime(2026, 7, 20, 10, 0, tzinfo=tz)):
+        week = ss.week_schedule(
+            "Тест Управляющий", "Управляющий", week_offset=0, months=months,
+        )
+
+    assert week["fixed_schedule"] is True
+    mon, tue, wed, thu, fri, sat, sun = week["days"]
+    assert mon["working"] and "11:00" in (mon["label"] or "")
+    assert mon["shift_type"] == "morning"
+    assert tue["working"] and len(tue["blocks"]) == 2
+    assert tue["blocks"][0]["kind"] == "meeting"
+    assert "11:00" in tue["blocks"][0]["label"]
+    assert tue["blocks"][1]["kind"] == "shift"
+    assert "16:00" in tue["blocks"][1]["label"]
+    assert "19:00" in tue["blocks"][1]["label"]
+    assert tue["shift_type"] == "evening"
+    assert wed["working"] and "11:00" in (wed["label"] or "")
+    assert wed["shift_type"] == "morning"
+    assert not thu["working"]
+    assert fri["working"] and "01:00" in (fri["label"] or "")
+    assert sat["working"] and "01:00" in (sat["label"] or "")
+    assert not sun["working"]
+    assert ss.MEETING_REMINDER_WEEKDAY == 0
+    assert ss.MEETING_REMINDER_TIME == "22:00"
+    assert "собрание" in ss.MEETING_REMINDER_TEXT.lower()
+
+
+def test_supervisor_week_uses_fixed_schedule_not_sheets():
     from datetime import datetime
     from unittest.mock import patch
     from zoneinfo import ZoneInfo
@@ -409,10 +453,6 @@ def test_supervisor_week_keeps_personal_schedule():
 
     tz = ZoneInfo("Europe/Moscow")
     now = datetime(2026, 8, 19, 12, 0, tzinfo=tz)
-    months = [""] + [
-        "января", "февраля", "марта", "апреля", "мая", "июня",
-        "июля", "августа", "сентября", "октября", "ноября", "декабря",
-    ]
 
     async def fake_get_user(user_id):
         return (
@@ -420,40 +460,70 @@ def test_supervisor_week_keeps_personal_schedule():
             0, 0, None, "alice_dark",
         )
 
-    async def fake_shift(_name, _role, _dt):
-        return {
-            "working": True,
-            "shift_type": "morning",
-            "label": "утро",
-            "hours": 12.5,
-            "raw": "11:00",
-            "in_sheet": True,
-        }
-
-    async def fake_people(day, month=None, year=None):
-        return {
-            "Официант": ["Владислав — 11:00 — утро", "Юлия — 16:00 — вечер"],
-            "Бармен": ["Дарья — 11:00 — утро"],
-        }
+    async def boom(*_args, **_kwargs):
+        raise AssertionError("supervisor must not be read from sheets")
 
     with patch.object(miniapp_service, "get_user", fake_get_user), \
             patch.object(miniapp_service, "now_local", return_value=now), \
-            patch.object(miniapp_service, "_shift_for_person", fake_shift), \
-            patch.object(miniapp_service.schedule, "is_day_published", return_value=True), \
-            patch.object(miniapp_service.schedule, "get_people_for_day", fake_people), \
-            patch.object(miniapp_service.schedule, "MONTHS", months):
+            patch("services.supervisor_schedule.now_local", return_value=now), \
+            patch.object(miniapp_service.schedule, "find_row", boom), \
+            patch.object(miniapp_service.schedule, "get_day_value", boom), \
+            patch.object(miniapp_service.schedule, "get_people_for_day", boom):
         data = asyncio.run(miniapp_service.get_week_schedule(1, 0))
 
     assert data.get("venue") is None
+    assert data["fixed_schedule"] is True
     assert data["name"] == "Владислав Байкалов"
+    # 2026-08-19 — среда: 11:00–19:00
     assert data["today"]["working"] is True
     assert data["today"]["shift_type"] == "morning"
-    assert data["today"]["label"] == "утро"
-    assert data["today"]["total_working"] == 3
-    assert data["today"]["roster_morning"] == 2
-    assert data["today"]["roster_evening"] == 1
-    assert all(day["label"] == "утро" for day in data["days"])
-    assert data["days"][2]["total_working"] == 3
+    assert "11:00" in (data["today"]["label"] or "")
+    assert data["today"].get("total_working") is None
+    assert data["days"][1]["blocks"][0]["kind"] == "meeting"
+    assert data["days"][3]["working"] is False
+
+
+def test_supervisor_compare_uses_fixed_schedule():
+    from unittest.mock import patch
+
+    from services import miniapp_service
+
+    async def fake_get_user(uid):
+        return (
+            uid, "Владислав Байкалов", 1, "09:00", "Управляющий",
+            0, 0, None, "alice_dark",
+        )
+
+    async def fake_find_row(name, day, month, year, target_role=None):
+        if name == "Владислав Байкалов":
+            raise AssertionError("supervisor must not be read from sheets")
+        return ["row"], 0
+
+    async def fake_get_day_value(row, day, month, year):
+        return "16:00" if day in {20, 21, 22, 24} else ""
+
+    with patch.object(miniapp_service, "get_user", fake_get_user), patch.object(
+        miniapp_service.schedule, "find_row", fake_find_row,
+    ), patch.object(
+        miniapp_service.schedule, "get_day_value", fake_get_day_value,
+    ), patch.object(
+        miniapp_service, "person_has_ambiguous_role", lambda _n: False,
+    ), patch.object(
+        miniapp_service, "format_date", lambda d, m, y: f"{d}.{m}.{y}",
+    ):
+        data = asyncio.run(
+            miniapp_service.compare_with_colleagues(
+                1,
+                [{"name": "Рина Евгеньевна", "role": "Менеджеры"}],
+                2026, 7, 20, 26,
+            ),
+        )
+
+    work_days = [w["day"] for w in data["common_work"]]
+    off_days = [w["day"] for w in data["common_off"]]
+    assert 20 in work_days and 21 in work_days and 22 in work_days
+    assert 23 in off_days and 26 in off_days
+    assert "11:00" in data["common_work"][0]["shifts"]["Владислав Байкалов"]
 
 
 def test_supervisor_skipped_from_day_roster_off():
@@ -1064,7 +1134,9 @@ def main():
         ("message_format", test_message_format),
         ("miniapp_auth", test_miniapp_auth),
         ("miniapp_week_today", test_miniapp_week_today_stays_real_when_offset_changes),
-        ("supervisor_week_personal", test_supervisor_week_keeps_personal_schedule),
+        ("supervisor_fixed_schedule", test_supervisor_fixed_schedule),
+        ("supervisor_week_fixed", test_supervisor_week_uses_fixed_schedule_not_sheets),
+        ("supervisor_compare_fixed", test_supervisor_compare_uses_fixed_schedule),
         ("supervisor_roster_off", test_supervisor_skipped_from_day_roster_off),
         ("miniapp_profile_role_normalization", test_miniapp_profile_role_normalization),
         ("gen_cleaning_schedule", test_gen_cleaning_schedule),
