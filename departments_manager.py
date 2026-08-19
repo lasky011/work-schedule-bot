@@ -4,9 +4,9 @@ from typing import Awaitable, Callable
 from app_config import now_local
 from schedule_utils import clean_value
 
-SHEET_ROLES = ["Менеджеры", "Менеджер", "Официант", "Стажер", "Бармен", "Кальян", "Хостес"]
+SHEET_ROLES = ["Менеджеры", "Менеджер", "Официант", "Стажер", "Бармен", "Кальян", "Хостес", "Управляющий"]
 
-ROLE_ORDER = ["Менеджеры", "Менеджер", "Официант", "Стажер", "Бармен", "Кальян", "Кальянщик", "Хостес"]
+ROLE_ORDER = ["Менеджеры", "Менеджер", "Официант", "Стажер", "Бармен", "Кальян", "Кальянщик", "Хостес", "Управляющий"]
 
 DEPARTMENTS_FALLBACK: dict[str, list[str]] = {
     "👔 Менеджер": [
@@ -53,6 +53,7 @@ DEPT_EMOJIS: dict[str, str] = {
     "Бармен": "🍸 Бармен",
     "Кальян": "💨 Кальян",
     "Хостес": "🙋 Хостес",
+    "Управляющий": "👑 Управляющий",
 }
 
 DEPARTMENTS: dict[str, list[str]] = {}
@@ -71,9 +72,17 @@ def configure_departments_manager(clean_person_name_fn, sheet_loader):
     _apply_departments({k: list(v) for k, v in DEPARTMENTS_FALLBACK.items()})
 
 
+def _supervisor_department() -> dict[str, list[str]]:
+    from app_config import SUPERVISOR_NAMES
+    if not SUPERVISOR_NAMES:
+        return {}
+    return {"👑 Управляющий": sorted(SUPERVISOR_NAMES)}
+
+
 def _apply_departments(new_departments: dict[str, list[str]]) -> None:
     DEPARTMENTS.clear()
     DEPARTMENTS.update(new_departments)
+    DEPARTMENTS.update(_supervisor_department())
     ALL_NAMES.clear()
     ALL_NAMES.extend(name for names in DEPARTMENTS.values() for name in names)
 
@@ -144,6 +153,8 @@ def normalize_role_name(role: str | None) -> str | None:
         "Кальянщики": "Кальян",
         "Кальян": "Кальян",
         "Хостес": "Хостес",
+        "Управляющий": "Управляющий",
+        "Управляющие": "Управляющий",
     }
 
     return aliases.get(text, text)
@@ -164,6 +175,7 @@ def role_display_label(role: str) -> str:
         "Бармен": "🍸 Бармен",
         "Кальян": "💨 Кальян",
         "Хостес": "🙋 Хостес",
+        "Управляющий": "👑 Управляющий",
     }
 
     return emoji_map.get(display_role, DEPT_EMOJIS.get(display_role, DEPT_EMOJIS.get(role, role)))

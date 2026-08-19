@@ -78,17 +78,116 @@ async function loadProfile() {
     applyTheme("alice_dark");
     hideSplash();
     document.getElementById("nav")?.classList.add("hidden");
-    document.getElementById("screen-title").textContent = "кто ты?";
-    document.getElementById("screen-subtitle").textContent = "выбери отдел и имя";
-    await renderNamePicker("main", { onboarding: true });
+    await renderOnboardingNamePicker();
     return false;
   }
   applyTheme(profile.theme || "alice_dark");
+  applyRoleUi();
   refreshNavBadges();
   return true;
 }
 
+function applyRoleUi() {
+  const supervisor = !!profile?.supervisor;
+  document.body.classList.toggle("is-supervisor", supervisor);
+  document.querySelector('.nav-btn[data-tab="salary"]')?.classList.toggle("hidden", supervisor);
+}
+
+async function renderOnboardingNamePicker() {
+  const root = onboardingRoot();
+  root.classList.remove("hidden");
+  root.classList.add("centered");
+  document.getElementById("nav")?.classList.add("hidden");
+  root.innerHTML = `
+    <div class="onb-backdrop"></div>
+    <div class="onb-dialog onb-anim">
+      <div class="card onb-panel">
+        <div class="onb-cards" aria-hidden="true">${cardLoaderHtml()}</div>
+        <div class="onb-brandline">TNG · Alice</div>
+        <div class="onb-h2">кто ты?</div>
+      </div>
+    </div>
+  `;
+
+  const data = await api("/api/departments");
+
+  if (!namePickRole) {
+    const depts = (data.departments || []).map((d) => `
+      <button type="button" class="name-pick-dept" data-role="${escapeAttr(d.role)}">${escapeHtml(d.role_label)}</button>
+    `).join("");
+    root.innerHTML = `
+      <div class="onb-backdrop"></div>
+      <div class="onb-dialog onb-scroll onb-anim">
+        <div class="onb-head">
+          <div class="onb-brandline">шаг 1 · кто ты</div>
+          <div class="onb-h2">выбери подразделение</div>
+          <div class="onb-sub">сначала отдел, потом имя — так бот найдёт твой график.</div>
+        </div>
+        <div class="card">${depts}</div>
+      </div>
+    `;
+    root.querySelectorAll(".name-pick-dept").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        hapticLight();
+        namePickRole = btn.dataset.role;
+        renderOnboardingNamePicker();
+      });
+    });
+    return;
+  }
+
+  const dept = (data.departments || []).find((d) => d.role === namePickRole);
+  const names = (dept?.names || []).map((n) => `
+    <button type="button" class="name-pick-btn" data-name="${escapeAttr(n)}">${escapeHtml(n)}</button>
+  `).join("");
+  root.innerHTML = `
+    <div class="onb-backdrop"></div>
+    <div class="onb-dialog onb-scroll onb-anim">
+      <div class="onb-head">
+        <div class="onb-brandline">шаг 1 · кто ты</div>
+        <div class="onb-h2">${escapeHtml(dept?.role_label || namePickRole)}</div>
+        <div class="onb-sub">выбери своё имя в списке.</div>
+      </div>
+      <div class="card">
+        <div class="name-pick-names">${names}</div>
+      </div>
+      <div class="onb-actions">
+        <button type="button" class="btn onb-ghost" id="name-pick-back">← отдел</button>
+      </div>
+    </div>
+  `;
+  document.getElementById("name-pick-back")?.addEventListener("click", () => {
+    hapticLight();
+    namePickRole = null;
+    renderOnboardingNamePicker();
+  });
+  root.querySelectorAll(".name-pick-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      try {
+        profile = await api("/api/me/profile", {
+          method: "PATCH",
+          body: JSON.stringify({ name: btn.dataset.name, role: namePickRole }),
+        });
+        namePickRole = null;
+        applyTheme(profile.theme || "alice_dark");
+        applyRoleUi();
+        tg?.HapticFeedback?.notificationOccurred("success");
+        root.classList.add("hidden");
+        document.getElementById("nav")?.classList.remove("hidden");
+        refreshNavBadges();
+        startOnboarding();
+      } catch (e) {
+        tg?.showAlert?.(e.message);
+      }
+    });
+  });
+}
+
 async function renderNamePicker(targetId, { onboarding = false } = {}) {
+  if (onboarding) {
+    await renderOnboardingNamePicker();
+    return;
+  }
   const el = document.getElementById(targetId);
   if (!el) return;
   el.innerHTML = `<div class="loading-wrap">${cardLoaderHtml()}</div>`;
@@ -872,6 +971,7 @@ function renderSettingsContent() {
       </div>
       <button type="button" class="btn btn-primary" id="save-notify-time" style="width:100%;margin-top:8px">сохранить время</button>
     </div>
+    ${p.supervisor ? "" : `
     <div class="card">
       <div class="card-label">учёт часов</div>
       <div class="setting-row">
@@ -888,7 +988,7 @@ function renderSettingsContent() {
         </div>
         <button type="button" class="btn toggle-btn${p.notify_hours ? " on" : ""}" id="toggle-notify-hours">${p.notify_hours ? "вкл" : "выкл"}</button>
       </div>
-    </div>
+    </div>`}
     <div class="card" id="settings-theme-card">
       <div class="card-label">тема</div>
       <div class="theme-grid">
@@ -1730,6 +1830,7 @@ function updateSubtitle() {
 }
 
 function setTab(next) {
+  if (profile?.supervisor && next === "salary") next = "schedule";
   const main = document.getElementById("main");
   if (tab === next && next === "people" && peopleScreen !== "list") {
     hapticLight();
@@ -1809,6 +1910,13 @@ const ONBOARDING_TABS = [
   { tab: "analytics", label: "стат", text: "смены и часы за период — вся статистика в цифрах." },
 ];
 
+function onboardingTabs() {
+  if (profile?.supervisor) {
+    return ONBOARDING_TABS.filter((step) => step.tab !== "salary");
+  }
+  return ONBOARDING_TABS;
+}
+
 function onboardingRoot() {
   let root = document.getElementById("onboarding");
   if (!root) {
@@ -1821,6 +1929,7 @@ function onboardingRoot() {
 }
 
 function startOnboarding() {
+  applyRoleUi();
   document.getElementById("nav")?.classList.remove("hidden");
   try { setTab("schedule"); } catch (_) { /* noop */ }
   renderOnboardingWelcome();
@@ -1896,6 +2005,7 @@ function renderOnboardingWizard() {
         </div>
       </div>
 
+      ${p.supervisor ? "" : `
       <div class="card">
         <div class="card-label">часы и зарплата</div>
         <div class="setting-row">
@@ -1912,7 +2022,7 @@ function renderOnboardingWizard() {
           </div>
           <button type="button" class="btn toggle-btn${p.notify_hours ? " on" : ""}" id="onb-notify-hours">${p.notify_hours ? "вкл" : "выкл"}</button>
         </div>
-      </div>
+      </div>`}
 
       <div class="card">
         <div class="card-label">тема оформления</div>
@@ -1973,14 +2083,15 @@ function startOnboardingTour(index) {
   const root = onboardingRoot();
   root.classList.remove("hidden");
   root.classList.remove("centered");
-  const step = ONBOARDING_TABS[index];
+  const steps = onboardingTabs();
+  const step = steps[index];
   if (!step) { finishOnboarding(); return; }
 
   try { setTab(step.tab); } catch (_) { /* noop */ }
 
   const btn = document.querySelector(`.nav-btn[data-tab="${step.tab}"]`);
   const rect = btn ? btn.getBoundingClientRect() : null;
-  const isLast = index === ONBOARDING_TABS.length - 1;
+  const isLast = index === steps.length - 1;
 
   document.getElementById("nav")?.classList.add("onb-touring");
   document.querySelectorAll(".nav-btn").forEach((b) => {
@@ -1990,7 +2101,7 @@ function startOnboardingTour(index) {
   root.innerHTML = `
     <div class="onb-backdrop tour"></div>
     <div class="onb-bubble card onb-anim" id="onb-bubble">
-      <div class="onb-brandline">${index + 1} / ${ONBOARDING_TABS.length}</div>
+      <div class="onb-brandline">${index + 1} / ${steps.length}</div>
       <div class="onb-bubble-title">${escapeHtml(step.label)}</div>
       <div class="onb-bubble-text">${escapeHtml(step.text)}</div>
       <div class="onb-actions">

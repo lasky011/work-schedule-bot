@@ -3,7 +3,7 @@
 import calendar
 from datetime import date, datetime, timedelta
 
-from app_config import now_local
+from app_config import is_supervisor_name, now_local
 from departments_manager import (
     DEPARTMENTS,
     is_person_name,
@@ -71,6 +71,7 @@ async def get_profile(user_id: int) -> dict:
     theme = user[8] if len(user) > 8 and user[8] else "alice_dark"
     role_label = role_display_label(role) if role else None
     onboarding_seen = await get_onboarding_seen(user_id)
+    supervisor = is_supervisor_name(user[1]) or (normalize_role_name(role) == "Управляющий")
 
     return {
         "registered": True,
@@ -84,6 +85,7 @@ async def get_profile(user_id: int) -> dict:
         "notify_hours": notify_hours,
         "theme": theme,
         "onboarding_seen": onboarding_seen,
+        "supervisor": supervisor,
     }
 
 

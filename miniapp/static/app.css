@@ -1265,6 +1265,18 @@ body {
   line-height: 1;
 }
 
+.nav-btn.hidden {
+  display: none;
+}
+
+body.is-supervisor .nav {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+.onb-dialog .name-pick-dept:last-child {
+  margin-bottom: 0;
+}
+
 .nav-btn:active {
   opacity: 0.85;
 }
