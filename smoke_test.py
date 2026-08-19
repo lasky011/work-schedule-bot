@@ -400,6 +400,85 @@ def test_miniapp_week_today_stays_real_when_offset_changes():
     assert data["tomorrow"]["day"] == 5
 
 
+def test_supervisor_week_uses_venue_roster():
+    from datetime import datetime
+    from unittest.mock import patch
+    from zoneinfo import ZoneInfo
+
+    from services import miniapp_service
+
+    tz = ZoneInfo("Europe/Moscow")
+    now = datetime(2026, 8, 19, 12, 0, tzinfo=tz)
+    months = [""] + [
+        "января", "февраля", "марта", "апреля", "мая", "июня",
+        "июля", "августа", "сентября", "октября", "ноября", "декабря",
+    ]
+
+    async def fake_get_user(user_id):
+        return (
+            user_id, "Владислав Байкалов", 1, "09:00", "Управляющий",
+            0, 0, None, "alice_dark",
+        )
+
+    async def fake_people(day, month=None, year=None):
+        return {
+            "Официант": ["Владислав — 11:00 — утро", "Юлия — 16:00 — вечер"],
+            "Бармен": ["Дарья — 11:00 — утро"],
+        }
+
+    with patch.object(miniapp_service, "get_user", fake_get_user), \
+            patch.object(miniapp_service, "now_local", return_value=now), \
+            patch.object(miniapp_service.schedule, "is_day_published", return_value=True), \
+            patch.object(miniapp_service.schedule, "get_people_for_day", fake_people), \
+            patch.object(miniapp_service.schedule, "MONTHS", months):
+        data = asyncio.run(miniapp_service.get_week_schedule(1, 0))
+
+    assert data["venue"] is True
+    assert data["today"]["venue"] is True
+    assert data["today"]["day"] == 19
+    assert data["today"]["total_working"] == 3
+    assert data["today"]["morning"] == 2
+    assert data["today"]["evening"] == 1
+    assert data["today"]["working"] is True
+    assert data["today"]["label"] == "3 чел"
+    assert all(day.get("venue") for day in data["days"])
+    assert data["days"][2]["day"] == 19
+    assert data["days"][2]["total_working"] == 3
+
+
+def test_supervisor_skipped_from_day_roster_off():
+    from unittest.mock import AsyncMock, patch
+
+    import departments_manager
+    from services import miniapp_service
+
+    departments_manager.configure_departments_manager(
+        lambda name: str(name).strip(), None,
+    )
+    departments_manager.DEPARTMENTS["👑 Управляющий"] = ["Владислав Байкалов"]
+
+    async def fake_shift(name, role, dt):
+        return {"working": False, "shift_type": None, "label": "вых", "hours": None}
+
+    async def run():
+        with patch.object(
+            miniapp_service.schedule, "is_day_published", return_value=True,
+        ), patch.object(
+            miniapp_service.schedule, "get_people_for_day",
+            new=AsyncMock(return_value={"Официант": ["Владислав — 11:00 — утро"]}),
+        ), patch.object(
+            miniapp_service, "_shift_for_person", new=fake_shift,
+        ):
+            return await miniapp_service.get_day_roster("2026-08-19")
+
+    try:
+        data = asyncio.run(run())
+    finally:
+        departments_manager.DEPARTMENTS.pop("👑 Управляющий", None)
+
+    assert not any(p["name"] == "Владислав Байкалов" for p in data["off"]), data["off"]
+
+
 def test_miniapp_profile_role_normalization():
     import services.schedule_watch_service as schedule_watch_service
     from services import miniapp_service
@@ -975,6 +1054,8 @@ def main():
         ("message_format", test_message_format),
         ("miniapp_auth", test_miniapp_auth),
         ("miniapp_week_today", test_miniapp_week_today_stays_real_when_offset_changes),
+        ("supervisor_week_venue", test_supervisor_week_uses_venue_roster),
+        ("supervisor_roster_off", test_supervisor_skipped_from_day_roster_off),
         ("miniapp_profile_role_normalization", test_miniapp_profile_role_normalization),
         ("gen_cleaning_schedule", test_gen_cleaning_schedule),
         ("schedule_gen_cleaning_flag", test_schedule_gen_cleaning_flag),

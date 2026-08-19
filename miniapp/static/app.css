@@ -1409,6 +1409,13 @@ body.is-supervisor .nav {
 
 .day-shift.off { color: var(--text-muted); }
 
+.day-shift.venue {
+  color: var(--gold);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+}
+
 .week-nav {
   display: flex;
   justify-content: space-between;
@@ -1520,6 +1527,13 @@ body.is-supervisor .nav {
 }
 
 .month-cell.off .month-mark { color: var(--text-muted); }
+
+.month-cell.venue .month-mark {
+  color: var(--gold);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  font-size: 10px;
+}
 
 .month-legend .legend-morning {
   color: var(--shift-morning);

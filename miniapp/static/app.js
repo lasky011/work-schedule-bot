@@ -30,6 +30,10 @@ function parseStartParams() {
 }
 
 function shiftLabel(day) {
+  if (day.venue) {
+    if (!day.published) return "·";
+    return `${day.total_working || 0}`;
+  }
   if (!day.working) return "—";
   if (day.shift_type === "morning") return "♠ утро";
   if (day.shift_type === "evening") return "♥ вечер";
@@ -37,6 +41,7 @@ function shiftLabel(day) {
 }
 
 function shiftClass(day) {
+  if (day.venue) return day.working ? "venue" : "off";
   if (!day.working) return "off";
   return day.shift_type === "morning" ? "morning" : "evening";
 }
@@ -281,7 +286,11 @@ function todayCardHtml(today, tomorrow) {
   let todayLine = "нет данных";
   if (today) {
     const dayLabel = formatScheduleDay(today);
-    if (today.working) {
+    if (today.venue) {
+      todayLine = today.published === false
+        ? `${dayLabel} · график не опубликован`
+        : `${dayLabel} · ${today.total_working || 0} на смене`;
+    } else if (today.working) {
       todayLine = `${dayLabel} · ${shiftLabel(today)}`;
       if (today.hours) todayLine += ` · ${today.hours} ч`;
     } else if (today.published === false) {
@@ -294,7 +303,11 @@ function todayCardHtml(today, tomorrow) {
 
   let tomorrowLine = "";
   if (tomorrow) {
-    if (tomorrow.working) {
+    if (tomorrow.venue) {
+      tomorrowLine = tomorrow.published === false
+        ? "завтра · график не опубликован"
+        : `завтра · ${tomorrow.total_working || 0} на смене`;
+    } else if (tomorrow.working) {
       tomorrowLine = `завтра · ${shiftLabel(tomorrow)}`;
       if (tomorrow.hours) tomorrowLine += ` · ${tomorrow.hours} ч`;
     } else if (tomorrow.published === false) {
@@ -334,11 +347,24 @@ function weekViewHintHtml(header) {
 }
 
 function monthShiftShort(day) {
+  if (day.venue) {
+    if (!day.published) return "·";
+    return String(day.total_working ?? 0);
+  }
   if (!day.published) return "·";
   if (!day.working) return "—";
   if (day.shift_type === "morning") return "♠";
   if (day.shift_type === "evening") return "♥";
   return "•";
+}
+
+function scheduleLegendHtml() {
+  if (profile?.supervisor) {
+    return `<div class="month-legend"><span>цифра — сколько человек на смене</span><span>· нет графика</span></div>`;
+  }
+  return `<div class="month-legend">
+      <span class="legend-morning">♠ утро</span><span class="legend-evening">♥ вечер</span><span>— вых</span><span class="legend-gen">🧹 ген</span><span>· нет графика</span>
+    </div>`;
 }
 
 function weekDayCellHtml(d) {
@@ -467,6 +493,7 @@ async function renderSchedule() {
       ${scheduleModeToggleHtml()}
       <div class="card-label">неделя · ${data.header}</div>
       <div class="week-grid">${daysHtml}</div>
+      ${profile?.supervisor ? scheduleLegendHtml() : ""}
       <div class="week-nav">
         <button type="button" class="btn" id="prev-week">← пред</button>
         <button type="button" class="btn btn-primary" id="next-week">след →</button>
@@ -511,9 +538,7 @@ async function renderScheduleMonth() {
     ${topCard}
     ${scheduleModeToggleHtml()}
     <div class="card-label">${data.header}</div>
-    <div class="month-legend">
-      <span class="legend-morning">♠ утро</span><span class="legend-evening">♥ вечер</span><span>— вых</span><span class="legend-gen">🧹 ген</span><span>· нет графика</span>
-    </div>
+    ${scheduleLegendHtml()}
     <div class="month-grid">
       ${wdHeader}
       ${pad}
@@ -700,7 +725,7 @@ async function renderTeam() {
           <div class="card-label">${escapeHtml(data.weekday)} · ${escapeHtml(data.header)}</div>
           ${data.published ? `<div class="team-total">${data.total} чел.</div>` : ""}
         </div>
-        <div class="my-shift-line ${myClass}">ты · ${myLine}</div>
+        ${profile?.supervisor ? "" : `<div class="my-shift-line ${myClass}">ты · ${myLine}</div>`}
         <div class="card-meta" style="margin-bottom:8px">тап по имени — график коллеги</div>
         ${body}
       </div>
@@ -1912,10 +1937,15 @@ const ONBOARDING_TABS = [
 ];
 
 function onboardingTabs() {
-  if (profile?.supervisor) {
-    return ONBOARDING_TABS.filter((step) => step.tab !== "salary" && step.tab !== "analytics");
-  }
-  return ONBOARDING_TABS;
+  const tabs = profile?.supervisor
+    ? ONBOARDING_TABS.filter((step) => step.tab !== "salary" && step.tab !== "analytics")
+    : ONBOARDING_TABS;
+  if (!profile?.supervisor) return tabs;
+  return tabs.map((step) => (
+    step.tab === "schedule"
+      ? { ...step, text: "график зала: сколько человек на смене в каждый день. тапни день — увидишь состав." }
+      : step
+  ));
 }
 
 function onboardingRoot() {

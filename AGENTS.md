@@ -42,3 +42,6 @@ cur.close(); conn.close()
 ```
 
 Then reopen the **test** bot Mini App (URL `https://work-schedule-bot-test.fly.dev`).
+
+### Supervisor Mini App
+Managers listed in `SUPERVISOR_NAMES` (or with role `Управляющий`) are usually **not** a row in Google Sheets. Their «график» tab is a venue roster (headcount per day), not personal ♠/♥ shifts. Do not match them to a waiter with the same first name.
