@@ -39,6 +39,18 @@ def _parse_admin_ids(raw: str | None) -> set[int]:
 
 ADMIN_IDS = _parse_admin_ids(os.getenv("ADMIN_IDS"))
 
+def _parse_name_list(raw: str | None) -> set[str]:
+    if not raw:
+        return set()
+    return {part.strip() for part in raw.split(",") if part.strip()}
+
+
+SUPERVISOR_NAMES = _parse_name_list(os.getenv("SUPERVISOR_NAMES"))
+
+
+def is_supervisor_name(name: str | None) -> bool:
+    return bool(name) and str(name).strip() in SUPERVISOR_NAMES
+
 MINIAPP_ENABLED = os.getenv("MINIAPP_ENABLED", "").lower() in ("1", "true", "yes")
 MINIAPP_PORT = int(os.getenv("MINIAPP_PORT", "8080"))
 MINIAPP_URL = (os.getenv("MINIAPP_URL") or "").rstrip("/")

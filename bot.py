@@ -94,7 +94,8 @@ def init_db():
         track_hours INTEGER DEFAULT 0,
         notify_hours INTEGER DEFAULT 0,
         notify_hours_time TEXT,
-        theme       TEXT
+        theme       TEXT,
+        onboarding_seen INTEGER DEFAULT 0
     )
     """)
 
@@ -104,6 +105,7 @@ def init_db():
         ("notify_hours", "INTEGER DEFAULT 0"),
         ("notify_hours_time", "TEXT"),
         ("theme", "TEXT"),
+        ("onboarding_seen", "INTEGER DEFAULT 0"),
     ]
     for col, col_type in extra_user_cols:
         try:
