@@ -91,6 +91,7 @@ function applyRoleUi() {
   const supervisor = !!profile?.supervisor;
   document.body.classList.toggle("is-supervisor", supervisor);
   document.querySelector('.nav-btn[data-tab="salary"]')?.classList.toggle("hidden", supervisor);
+  document.querySelector('.nav-btn[data-tab="analytics"]')?.classList.toggle("hidden", supervisor);
 }
 
 async function renderOnboardingNamePicker() {
@@ -1830,7 +1831,7 @@ function updateSubtitle() {
 }
 
 function setTab(next) {
-  if (profile?.supervisor && next === "salary") next = "schedule";
+  if (profile?.supervisor && (next === "salary" || next === "analytics")) next = "schedule";
   const main = document.getElementById("main");
   if (tab === next && next === "people" && peopleScreen !== "list") {
     hapticLight();
@@ -1912,7 +1913,7 @@ const ONBOARDING_TABS = [
 
 function onboardingTabs() {
   if (profile?.supervisor) {
-    return ONBOARDING_TABS.filter((step) => step.tab !== "salary");
+    return ONBOARDING_TABS.filter((step) => step.tab !== "salary" && step.tab !== "analytics");
   }
   return ONBOARDING_TABS;
 }
