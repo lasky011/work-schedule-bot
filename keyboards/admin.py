@@ -1,6 +1,7 @@
 """Клавиатуры admin-бота."""
 
 import calendar
+from datetime import date
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
 
@@ -18,6 +19,7 @@ BTN_RECONCILE = "⚖️ Сверка"
 BTN_ALERTS = "🔔 Проверка"
 BTN_BROADCAST = "📢 Рассылка"
 BTN_PERIODS = "📅 Периоды"
+BTN_GEN_CLEANING = "🧹 Ген уборка"
 BTN_ADD_PERIOD = "➕ Добавить период"
 BTN_RELOAD_SHEETS = "🔄 Листы"
 BTN_RELOAD_PERIODS = "🔄 Периоды"
@@ -42,6 +44,10 @@ CB_USER_RESET_SNAP = "usr:snap:"
 CB_USER_CHECK = "usr:chk:"
 CB_RECONCILE = "adm:reconcile"
 CB_EDIT_RATE = "rate:edit:"
+CB_GC_DAY = "gc:d:"
+CB_GC_MONTH = "gc:m:"
+CB_GC_RESET = "gc:r:"
+CB_GC_NOOP = "gc:noop"
 
 BC_AUD_ALL = "all"
 BC_AUD_NOTIFY = "notify"
@@ -69,12 +75,13 @@ BC_AUDIENCE_LABELS = {
 def admin_main_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text=BTN_PERIODS), KeyboardButton(text=BTN_ADD_PERIOD)],
+            [KeyboardButton(text=BTN_PERIODS), KeyboardButton(text=BTN_GEN_CLEANING)],
+            [KeyboardButton(text=BTN_ADD_PERIOD), KeyboardButton(text=BTN_RATES)],
             [KeyboardButton(text=BTN_DASHBOARD), KeyboardButton(text=BTN_USERS)],
             [KeyboardButton(text=BTN_USER_LOOKUP), KeyboardButton(text=BTN_MONITOR)],
             [KeyboardButton(text=BTN_RECONCILE), KeyboardButton(text=BTN_ALERTS)],
             [KeyboardButton(text=BTN_STATS), KeyboardButton(text=BTN_LOGS)],
-            [KeyboardButton(text=BTN_RATES), KeyboardButton(text=BTN_BROADCAST)],
+            [KeyboardButton(text=BTN_BROADCAST)],
             [KeyboardButton(text=BTN_RELOAD_SHEETS), KeyboardButton(text=BTN_RELOAD_PERIODS)],
             [KeyboardButton(text=BTN_STATUS), KeyboardButton(text=BTN_CACHE)],
             [KeyboardButton(text=BTN_HELP)],
@@ -286,4 +293,62 @@ def rates_inline_kb() -> InlineKeyboardMarkup:
         for role_key, label in ROLE_CATALOG
     ]
     rows.append([InlineKeyboardButton(text="❌ Отмена", callback_data=CB_CANCEL)])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _shift_month(year: int, month: int, delta: int) -> tuple[int, int]:
+    total = (month - 1) + delta
+    return year + total // 12, (total % 12) + 1
+
+
+def gen_cleaning_month_kb(
+    year: int,
+    month: int,
+    selected_days: list[int] | set[int],
+    *,
+    has_override: bool,
+) -> InlineKeyboardMarkup:
+    selected = set(selected_days)
+    last = calendar.monthrange(year, month)[1]
+    first_wd = date(year, month, 1).weekday()
+    rows: list[list[InlineKeyboardButton]] = [[
+        InlineKeyboardButton(text=label, callback_data=CB_GC_NOOP)
+        for label in ("пн", "вт", "ср", "чт", "пт", "сб", "вс")
+    ]]
+
+    row: list[InlineKeyboardButton] = [
+        InlineKeyboardButton(text="·", callback_data=CB_GC_NOOP)
+        for _ in range(first_wd)
+    ]
+    for day in range(1, last + 1):
+        label = f"🧹{day}" if day in selected else str(day)
+        row.append(InlineKeyboardButton(
+            text=label,
+            callback_data=f"{CB_GC_DAY}{year}:{month}:{day}",
+        ))
+        if len(row) == 7:
+            rows.append(row)
+            row = []
+    if row:
+        while len(row) < 7:
+            row.append(InlineKeyboardButton(text="·", callback_data=CB_GC_NOOP))
+        rows.append(row)
+
+    prev_y, prev_m = _shift_month(year, month, -1)
+    next_y, next_m = _shift_month(year, month, 1)
+    rows.append([
+        InlineKeyboardButton(text="←", callback_data=f"{CB_GC_MONTH}{prev_y}:{prev_m}"),
+        InlineKeyboardButton(
+            text=f"{month_label(month)} {year}",
+            callback_data=CB_GC_NOOP,
+        ),
+        InlineKeyboardButton(text="→", callback_data=f"{CB_GC_MONTH}{next_y}:{next_m}"),
+    ])
+    if has_override:
+        rows.append([
+            InlineKeyboardButton(
+                text="↩ сбросить на формулу",
+                callback_data=f"{CB_GC_RESET}{year}:{month}",
+            ),
+        ])
     return InlineKeyboardMarkup(inline_keyboard=rows)
