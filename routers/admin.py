@@ -21,6 +21,7 @@ from keyboards.admin import (
     BTN_CACHE,
     BTN_CANCEL,
     BTN_DASHBOARD,
+    BTN_GEN_CLEANING,
     BTN_HELP,
     BTN_MONITOR,
     BTN_RECONCILE,
@@ -46,6 +47,10 @@ from keyboards.admin import (
     CB_DELETE_PERIOD,
     CB_EDIT_PERIOD,
     CB_EDIT_RATE,
+    CB_GC_DAY,
+    CB_GC_MONTH,
+    CB_GC_NOOP,
+    CB_GC_RESET,
     CB_RECONCILE,
     CB_RELOAD_PERIODS,
     CB_RELOAD_SHEETS,
@@ -61,6 +66,7 @@ from keyboards.admin import (
     broadcast_confirm_kb,
     broadcast_format_kb,
     confirm_delete_kb,
+    gen_cleaning_month_kb,
     monitor_kb,
     periods_inline_kb,
     rates_inline_kb,
@@ -131,6 +137,8 @@ _ACTION_LABELS = {
     "reconcile_shifts": "⚖️ сверка",
     "health_check": "🔔 проверка",
     "update_rate": "💰 ставка",
+    "save_gen_cleaning": "🧹 ген уборка",
+    "reset_gen_cleaning": "🧹 ген уборка ← формула",
 }
 
 
@@ -538,6 +546,7 @@ async def admin_start(message: Message, state: FSMContext):
         "📢 Рассылка — HTML и кнопка Mini App\n"
         "📈 Статистика — смены по месяцам\n"
         "💰 Ставки — ₽/час по ролям\n"
+        "🧹 Ген уборка — дни месяца, напоминание всем накануне в 22:00\n"
         "📜 Логи — последние действия админа",
         reply_markup=admin_main_kb(),
     )
@@ -709,6 +718,175 @@ async def admin_periods(message: Message, state: FSMContext):
         _format_periods_text(),
         reply_markup=periods_inline_kb(keys) if keys else admin_main_kb(),
     )
+
+
+def _format_gen_cleaning_month(year: int, month: int) -> str:
+    from services.gen_cleaning_service import (
+        cadence_days_in_month,
+        effective_days_in_month,
+        month_has_override,
+    )
+
+    formula = cadence_days_in_month(year, month)
+    current = effective_days_in_month(year, month)
+    formula_txt = ", ".join(str(d) for d in formula) or "нет"
+    current_txt = ", ".join(str(d) for d in current) or "нет дней"
+    mode = "ручной список" if month_has_override(year, month) else "по формуле"
+    return (
+        f"🧹 Ген уборка · {month_label(month)} {year}\n\n"
+        f"Формула (каждая 2-я среда с 8 июля): {formula_txt}\n"
+        f"Сейчас ({mode}): {current_txt}\n\n"
+        "Тап по дню — включить или выключить.\n"
+        "Накануне в 22:00 всем уходит «завтра ген уборка в 9:00».\n"
+        "Убрали день — напоминания не будет. Поставили в этот вечер — уйдёт всем."
+    )
+
+
+async def _show_gen_cleaning_month(target, year: int, month: int, *, edit: bool = False) -> None:
+    from services.gen_cleaning_service import (
+        effective_days_in_month,
+        month_has_override,
+        reload_from_db,
+    )
+
+    await reload_from_db(quiet=True)
+    text = _format_gen_cleaning_month(year, month)
+    markup = gen_cleaning_month_kb(
+        year,
+        month,
+        effective_days_in_month(year, month),
+        has_override=month_has_override(year, month),
+    )
+    if edit:
+        await target.edit_text(text, reply_markup=markup)
+        return
+    await target.answer(text, reply_markup=markup)
+
+
+@router.message(F.text == BTN_GEN_CLEANING)
+@router.message(F.text == "/gen_cleaning")
+async def admin_gen_cleaning(message: Message, state: FSMContext):
+    if _deny(message):
+        return
+    await state.clear()
+    now = now_local()
+    await _show_gen_cleaning_month(message, now.year, now.month)
+
+
+@router.callback_query(F.data == CB_GC_NOOP)
+async def admin_gen_cleaning_noop(callback: CallbackQuery):
+    if await _deny_callback(callback):
+        return
+    await callback.answer()
+
+
+def _parse_gc_parts(data: str, prefix: str) -> list[int]:
+    try:
+        return [int(p) for p in data[len(prefix):].split(":") if p]
+    except ValueError:
+        return []
+
+
+@router.callback_query(F.data.startswith(CB_GC_MONTH))
+async def admin_gen_cleaning_month(callback: CallbackQuery):
+    if await _deny_callback(callback):
+        return
+    parts = _parse_gc_parts(callback.data, CB_GC_MONTH)
+    if len(parts) != 2:
+        return await callback.answer("Некорректный месяц", show_alert=True)
+    year, month = parts
+    await callback.answer()
+    try:
+        await _show_gen_cleaning_month(callback.message, year, month, edit=True)
+    except Exception:
+        await _show_gen_cleaning_month(callback.message, year, month)
+
+
+@router.callback_query(F.data.startswith(CB_GC_DAY))
+async def admin_gen_cleaning_toggle(callback: CallbackQuery):
+    if await _deny_callback(callback):
+        return
+    parts = _parse_gc_parts(callback.data, CB_GC_DAY)
+    if len(parts) != 3:
+        return await callback.answer("Некорректный день", show_alert=True)
+    year, month, day = parts
+    last = calendar.monthrange(year, month)[1]
+    if day < 1 or day > last:
+        return await callback.answer("Нет такого дня", show_alert=True)
+
+    from repositories.gen_cleaning_repo import clear_notify, upsert_month
+    from services.gen_cleaning_service import (
+        effective_days_in_month,
+        reload_from_db,
+    )
+
+    await reload_from_db(quiet=True)
+    previous = set(effective_days_in_month(year, month))
+    nxt = set(previous)
+    if day in nxt:
+        nxt.remove(day)
+    else:
+        nxt.add(day)
+
+    try:
+        await upsert_month(year, month, sorted(nxt))
+        await reload_from_db(quiet=True)
+        for gone in previous - nxt:
+            await clear_notify(date(year, month, gone))
+    except Exception as e:
+        logging.exception("admin gen_cleaning toggle failed")
+        return await callback.answer(f"Не сохранилось: {e}", show_alert=True)
+
+    await record_action(
+        callback.from_user.id,
+        "save_gen_cleaning",
+        f"{year}-{month:02d} days={sorted(nxt)}",
+    )
+    await callback.answer("убрали" if day in previous else "поставили")
+    try:
+        await _show_gen_cleaning_month(callback.message, year, month, edit=True)
+    except Exception:
+        await _show_gen_cleaning_month(callback.message, year, month)
+
+
+@router.callback_query(F.data.startswith(CB_GC_RESET))
+async def admin_gen_cleaning_reset(callback: CallbackQuery):
+    if await _deny_callback(callback):
+        return
+    parts = _parse_gc_parts(callback.data, CB_GC_RESET)
+    if len(parts) != 2:
+        return await callback.answer("Некорректный месяц", show_alert=True)
+    year, month = parts
+
+    from repositories.gen_cleaning_repo import clear_notify, delete_month
+    from services.gen_cleaning_service import (
+        cadence_days_in_month,
+        effective_days_in_month,
+        reload_from_db,
+    )
+
+    await reload_from_db(quiet=True)
+    previous = set(effective_days_in_month(year, month))
+    try:
+        await delete_month(year, month)
+        await reload_from_db(quiet=True)
+        formula = set(cadence_days_in_month(year, month))
+        for gone in previous - formula:
+            await clear_notify(date(year, month, gone))
+    except Exception as e:
+        logging.exception("admin gen_cleaning reset failed")
+        return await callback.answer(f"Не сбросилось: {e}", show_alert=True)
+
+    await record_action(
+        callback.from_user.id,
+        "reset_gen_cleaning",
+        f"{year}-{month:02d}",
+    )
+    await callback.answer("снова по формуле")
+    try:
+        await _show_gen_cleaning_month(callback.message, year, month, edit=True)
+    except Exception:
+        await _show_gen_cleaning_month(callback.message, year, month)
 
 
 @router.message(F.text == BTN_ADD_PERIOD)

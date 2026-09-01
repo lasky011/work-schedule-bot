@@ -124,6 +124,10 @@ def test_imports():
     assert hasattr(fsm_context, "resolve_compare_role")
     assert hasattr(schedule_service, "find_row")
     assert hasattr(salary_service, "build_salary_stats_text")
+    from services import gen_cleaning_service
+    assert gen_cleaning_service.CADENCE_DAYS == 14
+    from keyboards.admin import BTN_GEN_CLEANING, gen_cleaning_month_kb
+    assert BTN_GEN_CLEANING
 
 
 def test_salary_service():
@@ -461,16 +465,23 @@ def test_miniapp_profile_role_normalization():
 
 
 def test_gen_cleaning_schedule():
-    from datetime import date
+    from datetime import date, datetime
+    from zoneinfo import ZoneInfo
 
     from services.gen_cleaning_service import (
         FIRST_GEN_CLEANING,
         GEN_CLEANING_NOTIFY_TIME,
+        apply_overrides,
+        cadence_days_in_month,
+        cleaning_date_due_for_notice,
+        effective_days_in_month,
         gen_cleaning_notification_text,
         is_gen_cleaning_day,
         is_gen_cleaning_notify_evening,
+        reset_overrides,
     )
 
+    reset_overrides()
     assert FIRST_GEN_CLEANING == date(2026, 7, 8)
     assert FIRST_GEN_CLEANING.weekday() == 2
     assert is_gen_cleaning_day(date(2026, 7, 8))
@@ -481,6 +492,66 @@ def test_gen_cleaning_schedule():
     assert not is_gen_cleaning_notify_evening(date(2026, 7, 8))
     assert GEN_CLEANING_NOTIFY_TIME == "22:00"
     assert "будильник" in gen_cleaning_notification_text().lower()
+    assert cadence_days_in_month(2026, 9) == [2, 16, 30]
+
+    apply_overrides([(2026, 9, [3, 17])])
+    assert not is_gen_cleaning_day(date(2026, 9, 2))
+    assert is_gen_cleaning_day(date(2026, 9, 3))
+    assert is_gen_cleaning_day(date(2026, 9, 17))
+    assert not is_gen_cleaning_notify_evening(date(2026, 9, 1))
+    assert is_gen_cleaning_notify_evening(date(2026, 9, 2))
+    assert effective_days_in_month(2026, 9) == [3, 17]
+    # Другой месяц без ручной правки — как раньше.
+    assert is_gen_cleaning_day(date(2026, 7, 8))
+
+    apply_overrides([(2026, 9, [])])
+    assert effective_days_in_month(2026, 9) == []
+    assert not is_gen_cleaning_day(date(2026, 9, 2))
+
+    tz = ZoneInfo("Europe/Moscow")
+    reset_overrides()
+    assert cleaning_date_due_for_notice(
+        datetime(2026, 9, 1, 21, 59, tzinfo=tz),
+    ) is None
+    assert cleaning_date_due_for_notice(
+        datetime(2026, 9, 1, 22, 0, tzinfo=tz),
+    ) == date(2026, 9, 2)
+
+    apply_overrides([(2026, 9, [3])])
+    assert cleaning_date_due_for_notice(
+        datetime(2026, 9, 1, 22, 30, tzinfo=tz),
+    ) is None
+    assert cleaning_date_due_for_notice(
+        datetime(2026, 9, 2, 22, 5, tzinfo=tz),
+    ) == date(2026, 9, 3)
+    reset_overrides()
+
+
+def test_gen_cleaning_admin_keyboard():
+    from keyboards.admin import (
+        BTN_GEN_CLEANING,
+        CB_GC_DAY,
+        admin_main_kb,
+        gen_cleaning_month_kb,
+    )
+    import ui_utils
+
+    ui_utils.configure_ui_utils(
+        {9: "сентября"},
+        {9: "Сентябрь"},
+    )
+    texts = [btn.text for row in admin_main_kb().keyboard for btn in row]
+    assert BTN_GEN_CLEANING in texts
+
+    kb = gen_cleaning_month_kb(2026, 9, [3, 17], has_override=True)
+    payload = []
+    for row in kb.inline_keyboard:
+        for btn in row:
+            payload.append((btn.text, btn.callback_data))
+    assert any(text.startswith("🧹3") and CB_GC_DAY in data for text, data in payload)
+    assert any(data == f"{CB_GC_DAY}2026:9:3" for _, data in payload)
+    assert any("формулу" in (text or "") for text, _ in payload)
+    assert not any(text.startswith("🧹2") for text, _ in payload)
 
 
 def test_schedule_gen_cleaning_flag():
@@ -489,6 +560,9 @@ def test_schedule_gen_cleaning_flag():
 
     import services.miniapp_service as miniapp_service
     from app_config import now_local
+    from services.gen_cleaning_service import reset_overrides
+
+    reset_overrides()
 
     async def run():
         tz = now_local().tzinfo
@@ -971,6 +1045,7 @@ def main():
         ("miniapp_week_today", test_miniapp_week_today_stays_real_when_offset_changes),
         ("miniapp_profile_role_normalization", test_miniapp_profile_role_normalization),
         ("gen_cleaning_schedule", test_gen_cleaning_schedule),
+        ("gen_cleaning_admin_kb", test_gen_cleaning_admin_keyboard),
         ("schedule_gen_cleaning_flag", test_schedule_gen_cleaning_flag),
         ("miniapp_static_assets", test_miniapp_static_assets),
         ("miniapp_health_endpoint", test_miniapp_health_endpoint),
