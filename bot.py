@@ -400,6 +400,13 @@ async def gen_cleaning_notification_loop(bot) -> None:
                         users = await get_registered_users()
                     except Exception as e:
                         logging.error("gen_cleaning_notification_loop DB error: %s", e)
+                        try:
+                            from repositories.gen_cleaning_repo import clear_notify
+                            await clear_notify(due)
+                        except Exception:
+                            logging.exception(
+                                "gen_cleaning_notification_loop: не удалось снять блокировку"
+                            )
                         await asyncio.sleep(60)
                         continue
 

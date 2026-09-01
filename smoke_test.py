@@ -524,6 +524,16 @@ def test_gen_cleaning_schedule():
     assert cleaning_date_due_for_notice(
         datetime(2026, 9, 2, 22, 5, tzinfo=tz),
     ) == date(2026, 9, 3)
+    # Убрали день вечером накануне — окно 22:00 уже открыто, но слать нельзя.
+    apply_overrides([(2026, 9, [17])])
+    assert cleaning_date_due_for_notice(
+        datetime(2026, 9, 2, 22, 10, tzinfo=tz),
+    ) is None
+    # Поставили день после 22:00 — напоминание ещё должно уйти.
+    apply_overrides([(2026, 9, [3, 17])])
+    assert cleaning_date_due_for_notice(
+        datetime(2026, 9, 2, 22, 45, tzinfo=tz),
+    ) == date(2026, 9, 3)
     reset_overrides()
 
 
