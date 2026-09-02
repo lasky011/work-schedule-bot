@@ -12,7 +12,7 @@ Do not run two processes with the same `BOT_TOKEN`. Prod and test must use diffe
 
 Hosting is **not Fly-first** anymore. Fly apps may still be running until the ruble host is live; do not deploy to Fly unless asked.
 
-New deploys: **Amvera** (`amvera.yaml`, both bots in one container) or **docker compose** (`docker-compose.yml`, two services). Runbook: `deploy/README.md`.
+New deploys: **Timeweb Apps** (Docker/Compose, region AMS-1 or FRA-1) or **Amvera** (`amvera.yaml`). Runbook: `deploy/README.md`. **Vercel cannot host these bots** (long polling + in-process notify loops).
 
 Postgres is Supabase (`DATABASE_URL`). Google Sheets is public CSV, no service account.
 
