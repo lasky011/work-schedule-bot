@@ -960,13 +960,13 @@ def test_hosting_manifests():
     root = Path(__file__).resolve().parent
     compose = (root / "docker-compose.yml").read_text(encoding="utf-8")
     amvera = (root / "amvera.yaml").read_text(encoding="utf-8")
-    script = (root / "deploy/run-both.sh").read_text(encoding="utf-8")
+    script = (root / "run_both.py").read_text(encoding="utf-8")
     assert "command: python3 bot.py" in compose
     assert "command: python3 admin_bot.py" in compose
     assert "8080:8080" in compose
-    assert "python3 bot.py" in script
-    assert "python3 admin_bot.py" in script
-    assert "deploy/run-both.sh" in amvera
+    assert "bot.py" in script
+    assert "admin_bot.py" in script
+    assert "scriptName: run_both.py" in amvera
     assert "3.12" in amvera
     assert "containerPort: 8080" in amvera
     example = (root / ".env.example").read_text(encoding="utf-8")

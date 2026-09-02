@@ -14,5 +14,5 @@ build:
   useCache: true
 
 run:
-  command: sh deploy/run-both.sh
+  scriptName: run_both.py
   containerPort: 8080
