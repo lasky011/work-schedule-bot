@@ -40,7 +40,7 @@ def _parse_admin_ids(raw: str | None) -> set[int]:
 ADMIN_IDS = _parse_admin_ids(os.getenv("ADMIN_IDS"))
 
 MINIAPP_ENABLED = os.getenv("MINIAPP_ENABLED", "").lower() in ("1", "true", "yes")
-MINIAPP_PORT = int(os.getenv("MINIAPP_PORT", "8080"))
+MINIAPP_PORT = int(os.getenv("MINIAPP_PORT") or os.getenv("PORT") or "8080")
 MINIAPP_URL = (os.getenv("MINIAPP_URL") or "").rstrip("/")
 
 # Как часто prod/test подтягивают gid из sheet_periods (секунды).

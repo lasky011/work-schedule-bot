@@ -954,6 +954,26 @@ def test_message_format():
     assert "👉" in row and "Вт" in row
 
 
+def test_hosting_manifests():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent
+    compose = (root / "docker-compose.yml").read_text(encoding="utf-8")
+    amvera = (root / "amvera.yaml").read_text(encoding="utf-8")
+    script = (root / "deploy/run-both.sh").read_text(encoding="utf-8")
+    assert "command: python3 bot.py" in compose
+    assert "command: python3 admin_bot.py" in compose
+    assert "8080:8080" in compose
+    assert "python3 bot.py" in script
+    assert "python3 admin_bot.py" in script
+    assert "deploy/run-both.sh" in amvera
+    assert "3.12" in amvera
+    assert "containerPort: 8080" in amvera
+    example = (root / ".env.example").read_text(encoding="utf-8")
+    for key in ("BOT_TOKEN", "DATABASE_URL", "ADMIN_BOT_TOKEN", "ADMIN_IDS", "MINIAPP_URL"):
+        assert key in example
+
+
 def main():
     checks = [
         ("bot_import", test_bot_import),
@@ -967,6 +987,7 @@ def main():
         ("departments_manager", test_departments_manager),
         ("intern_shift_times", test_intern_shift_times),
         ("message_format", test_message_format),
+        ("hosting_manifests", test_hosting_manifests),
         ("miniapp_auth", test_miniapp_auth),
         ("miniapp_week_today", test_miniapp_week_today_stays_real_when_offset_changes),
         ("miniapp_profile_role_normalization", test_miniapp_profile_role_normalization),
