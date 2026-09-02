@@ -1,18 +1,13 @@
-# Amvera Cloud: one project, both Telegram bots, Mini App on 8080.
-# Region: Warsaw (or Miami). Moscow works via Amvera Telegram proxy, EU is more stable.
-# Plan: "Начальный Плюс" (1 GB) — two Python processes need ~400–500 MB.
-# Env vars: see .env.example (set them in the Amvera dashboard, not in git).
-
+---
 meta:
   environment: python
   toolchain:
     name: pip
-    version: "3.12"
-
+    version: 3.12
 build:
   requirementsPath: requirements.txt
   useCache: true
-
 run:
-  scriptName: run_both.py
+  command: python3 run_both.py
   containerPort: 8080
+  persistenceMount: /data
