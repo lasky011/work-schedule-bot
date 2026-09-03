@@ -991,6 +991,14 @@ def test_hosting_manifests():
         assert key in example
 
 
+def test_parse_listen_port():
+    from app_config import _parse_listen_port
+
+    assert _parse_listen_port("8080") == 8080
+    assert _parse_listen_port("80808") == 8080
+    assert _parse_listen_port("abc") == 8080
+
+
 def main():
     checks = [
         ("bot_import", test_bot_import),
@@ -1006,6 +1014,7 @@ def main():
         ("message_format", test_message_format),
         ("postgres_dsn", test_postgres_dsn_rewrites_supabase_direct),
         ("hosting_manifests", test_hosting_manifests),
+        ("parse_listen_port", test_parse_listen_port),
         ("miniapp_auth", test_miniapp_auth),
         ("miniapp_week_today", test_miniapp_week_today_stays_real_when_offset_changes),
         ("miniapp_profile_role_normalization", test_miniapp_profile_role_normalization),

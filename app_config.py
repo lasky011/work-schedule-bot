@@ -39,8 +39,21 @@ def _parse_admin_ids(raw: str | None) -> set[int]:
 
 ADMIN_IDS = _parse_admin_ids(os.getenv("ADMIN_IDS"))
 
+
+def _parse_listen_port(raw: str | None, fallback: int = 8080) -> int:
+    try:
+        port = int((raw or "").strip() or fallback)
+    except ValueError:
+        logging.warning("Некорректный порт %r, используем %s", raw, fallback)
+        return fallback
+    if not 1 <= port <= 65535:
+        logging.warning("Порт %s вне 1–65535, используем %s", port, fallback)
+        return fallback
+    return port
+
+
 MINIAPP_ENABLED = os.getenv("MINIAPP_ENABLED", "").lower() in ("1", "true", "yes")
-MINIAPP_PORT = int(os.getenv("MINIAPP_PORT") or os.getenv("PORT") or "8080")
+MINIAPP_PORT = _parse_listen_port(os.getenv("MINIAPP_PORT") or os.getenv("PORT"))
 MINIAPP_URL = (os.getenv("MINIAPP_URL") or "").rstrip("/")
 
 # Как часто prod/test подтягивают gid из sheet_periods (секунды).
