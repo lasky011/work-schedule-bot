@@ -954,6 +954,23 @@ def test_message_format():
     assert "👉" in row and "Вт" in row
 
 
+def test_postgres_dsn_rewrites_supabase_direct():
+    from postgres_dsn import postgres_dsn
+
+    raw = (
+        "postgresql://postgres:p%40ss@db.bflnbvkqwtwrpsujhqcg.supabase.co:5432/postgres"
+    )
+    out = postgres_dsn(raw)
+    assert "pooler.supabase.com" in out
+    assert "postgres.bflnbvkqwtwrpsujhqcg" in out
+    assert "db.bflnbvkqwtwrpsujhqcg.supabase.co" not in out
+    assert ":p%40ss@" in out
+    assert "%2540" not in out
+    assert postgres_dsn(
+        "postgresql://postgres.abc:x@aws-1-eu-central-1.pooler.supabase.com:5432/postgres"
+    ).startswith("postgresql://postgres.abc:")
+
+
 def test_hosting_manifests():
     from pathlib import Path
 
@@ -987,6 +1004,7 @@ def main():
         ("departments_manager", test_departments_manager),
         ("intern_shift_times", test_intern_shift_times),
         ("message_format", test_message_format),
+        ("postgres_dsn", test_postgres_dsn_rewrites_supabase_direct),
         ("hosting_manifests", test_hosting_manifests),
         ("miniapp_auth", test_miniapp_auth),
         ("miniapp_week_today", test_miniapp_week_today_stays_real_when_offset_changes),

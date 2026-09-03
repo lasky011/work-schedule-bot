@@ -77,4 +77,6 @@ curl -sS http://127.0.0.1:8080/api/health
 Обязательные: `BOT_TOKEN`, `DATABASE_URL`, `ADMIN_BOT_TOKEN`, `ADMIN_IDS`.
 Для Mini App: `MINIAPP_ENABLED`, `MINIAPP_PORT`, `MINIAPP_URL`.
 
+`DATABASE_URL` бери из Supabase **Connect → Session pooler** (`*.pooler.supabase.com`, пользователь `postgres.<project-ref>`). Direct `db.*.supabase.co` с Amvera не достучится: у хоста нет IPv6. Если всё же вставили Direct URI, код сам перепишет его на pooler.
+
 Админ-бот тоже должен знать `BOT_TOKEN` — рассылки сотрудникам идут от штатного бота.
