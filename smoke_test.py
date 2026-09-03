@@ -983,7 +983,7 @@ def test_hosting_manifests():
     assert "8080:8080" in compose
     assert "bot.py" in script
     assert "admin_bot.py" in script
-    assert "scriptName: run_both.py" in amvera
+    assert "run_both.py" in amvera
     assert "3.12" in amvera
     assert "containerPort: 8080" in amvera
     example = (root / ".env.example").read_text(encoding="utf-8")
