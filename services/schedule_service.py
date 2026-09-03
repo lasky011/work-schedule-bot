@@ -234,6 +234,22 @@ async def get_people_for_day(day, month=None, year=None):
     except Exception:
         current_day_col = None
 
+    # Если первая строка листа — пустая/пробел (нет заголовка блока),
+    # а в ней присутствует номер нужного дня → это неявный блок «Менеджеры».
+    # Пример: лист «Авг 16-31», где строка 0 = ' ' вместо 'Менеджеры'.
+    if len(df) > 0:
+        first_cell = str(df.iat[0, 0] or "").replace("\xa0", " ").strip()
+        if not first_cell or first_cell.lower() == "nan":
+            # строка выглядит как шапка дат без заголовка роли
+            day_col_row0 = find_day_col_in_row(0)
+            if day_col_row0 is not None:
+                current_role = "Менеджеры"
+                current_day_col = day_col_row0
+                logging.debug(
+                    "get_people_for_day: implicit Менеджеры block at row 0, day_col=%s",
+                    day_col_row0,
+                )
+
     for i in range(len(df)):
         raw_first = df.iat[i, 0] if len(df.columns) > 0 else ""
         first_text = str(raw_first or "").replace("\xa0", " ").strip()
