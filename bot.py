@@ -7,11 +7,13 @@ from datetime import timedelta
 
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import MenuButtonWebApp, WebAppInfo
 
 from app_config import (
     BOT_TOKEN,
     MINIAPP_ENABLED,
     MINIAPP_PORT,
+    MINIAPP_URL,
     SHEET_PERIODS_REFRESH_SECONDS,
     now_local,
     validate_required_env,
@@ -486,6 +488,19 @@ async def global_error_handler(event) -> bool:
     return True
 
 
+async def configure_miniapp_menu(bot: Bot) -> None:
+    if not MINIAPP_URL:
+        logging.warning("MINIAPP_URL не задан — кнопка Mini App в Telegram не появится")
+        return
+    await bot.set_chat_menu_button(
+        menu_button=MenuButtonWebApp(
+            text="TNG Alice",
+            web_app=WebAppInfo(url=MINIAPP_URL.rstrip("/") + "/"),
+        )
+    )
+    logging.info("Mini App menu button → %s", MINIAPP_URL)
+
+
 async def start_miniapp_server() -> None:
     import uvicorn
     from api.app import create_app
@@ -511,6 +526,7 @@ async def main():
         return
 
     bot = Bot(token=BOT_TOKEN)
+    await configure_miniapp_menu(bot)
 
     miniapp_task = None
     if MINIAPP_ENABLED:
