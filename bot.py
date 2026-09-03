@@ -44,9 +44,9 @@ from services.compare_service import configure_compare_service
 from services.salary_service import configure_salary_service
 from services.cache_signal_service import maybe_refresh_sheet_cache
 from services.gen_cleaning_service import (
-    GEN_CLEANING_NOTIFY_TIME,
+    cleaning_date_due_for_notice,
     gen_cleaning_notification_text,
-    is_gen_cleaning_notify_evening,
+    reload_from_db as reload_gen_cleaning,
 )
 from services.sheet_loader import CACHE_REFRESH_SECONDS, load_full_sheet, load_sheet
 from services.sheet_periods_service import load_from_db_sync, sync_from_db
@@ -106,6 +106,7 @@ def init_db():
         ("notify_hours", "INTEGER DEFAULT 0"),
         ("notify_hours_time", "TEXT"),
         ("theme", "TEXT"),
+        ("onboarding_seen", "INTEGER DEFAULT 0"),
     ]
     for col, col_type in extra_user_cols:
         try:
@@ -118,7 +119,21 @@ def init_db():
         except Exception:
             pass
 
+    # Уже зарегистрированные не должны увидеть экскурсию после деплоя.
+    try:
+        cursor.execute(
+            """
+            UPDATE users SET onboarding_seen = 1
+            WHERE COALESCE(onboarding_seen, 0) = 0
+              AND name IS NOT NULL AND TRIM(name) != ''
+            """
+        )
+    except Exception:
+        pass
+
     if USE_POSTGRES:
+        from repositories.gen_cleaning_repo import ensure_schema_sync
+        ensure_schema_sync()
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS shifts (
             id          SERIAL PRIMARY KEY,
@@ -377,51 +392,46 @@ async def notification_loop(bot):
 
 
 async def gen_cleaning_notification_loop(bot) -> None:
-    sent = {}
-    last_cleanup = now_local().date()
-
     while True:
         try:
+            await reload_gen_cleaning(quiet=True)
             now = now_local()
-            current_time = now.strftime("%H:%M")
-            today = now.date()
-
-            if today != last_cleanup:
-                cutoff = (today - timedelta(days=3)).strftime("%Y-%m-%d")
-                sent = {
-                    k: v for k, v in sent.items()
-                    if k.rsplit("-", 1)[-1] >= cutoff
-                }
-                last_cleanup = today
-
-            if (
-                current_time == GEN_CLEANING_NOTIFY_TIME
-                and is_gen_cleaning_notify_evening(today)
-            ):
-                cleaning_date = today + timedelta(days=1)
-                cleaning_key = cleaning_date.strftime("%Y-%m-%d")
-                text = gen_cleaning_notification_text()
+            due = cleaning_date_due_for_notice(now)
+            if due is not None:
+                from repositories.gen_cleaning_repo import try_claim_notify
 
                 try:
-                    users = await get_registered_users()
+                    claimed = await try_claim_notify(due)
                 except Exception as e:
-                    logging.error("gen_cleaning_notification_loop DB error: %s", e)
+                    logging.error("gen_cleaning_notification_loop claim error: %s", e)
                     await asyncio.sleep(60)
                     continue
 
-                for user_row in users:
-                    user_id = user_row[0]
-                    key = f"{user_id}-gen-cleaning-{cleaning_key}"
-                    if sent.get(key):
-                        continue
+                if claimed:
+                    text = gen_cleaning_notification_text()
                     try:
-                        await bot.send_message(user_id, text)
-                        sent[key] = True
+                        users = await get_registered_users()
                     except Exception as e:
-                        logging.exception(
-                            "gen_cleaning_notification_loop: user_id=%s: %s",
-                            user_id, e,
-                        )
+                        logging.error("gen_cleaning_notification_loop DB error: %s", e)
+                        try:
+                            from repositories.gen_cleaning_repo import clear_notify
+                            await clear_notify(due)
+                        except Exception:
+                            logging.exception(
+                                "gen_cleaning_notification_loop: не удалось снять блокировку"
+                            )
+                        await asyncio.sleep(60)
+                        continue
+
+                    for user_row in users:
+                        user_id = user_row[0]
+                        try:
+                            await bot.send_message(user_id, text)
+                        except Exception as e:
+                            logging.exception(
+                                "gen_cleaning_notification_loop: user_id=%s: %s",
+                                user_id, e,
+                            )
         except Exception:
             logging.exception("gen_cleaning_notification_loop: критическая ошибка")
 
@@ -534,6 +544,7 @@ async def main():
     init_pg_pool()
     await asyncio.to_thread(load_from_db_sync)
     await asyncio.to_thread(load_rates_sync)
+    await reload_gen_cleaning(quiet=True)
 
     if not BOT_TOKEN:
         print("Ошибка: BOT_TOKEN не найден в .env")

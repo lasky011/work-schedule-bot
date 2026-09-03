@@ -175,6 +175,7 @@ class SettingsPatch(BaseModel):
     track_hours: bool | None = None
     notify_hours: bool | None = None
     theme: str | None = None
+    onboarding_seen: bool | None = None
 
 
 class ProfilePatch(BaseModel):
@@ -256,6 +257,7 @@ def create_app() -> FastAPI:
             track_hours=body.track_hours,
             notify_hours=body.notify_hours,
             theme=body.theme,
+            onboarding_seen=body.onboarding_seen,
         )
         if data.get("error") == "not_registered":
             raise HTTPException(status_code=403, detail="Сначала выбери имя в боте")

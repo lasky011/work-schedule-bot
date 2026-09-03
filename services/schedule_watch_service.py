@@ -10,6 +10,7 @@ from repositories.schedule_snapshots_repo import delete_snapshot, get_snapshot, 
 from repositories.users_repo import get_registered_users
 from schedule_utils import WEEKDAYS, detect_shift, detect_shift_type, is_work_shift
 from services import schedule_service as schedule
+from services.supervisor_schedule import uses_fixed_schedule
 from services.telegram_notify import send_user_message
 
 WATCH_DAYS = 45
@@ -111,6 +112,8 @@ def _format_change(kind: str, dt: datetime, old: str, new: str) -> str:
 
 
 async def check_user_schedule(user_id: int, name: str, role: str | None) -> None:
+    if uses_fixed_schedule(name, role):
+        return
     new_snap = await build_snapshot(name, role)
     old_raw = await get_snapshot(user_id)
     if old_raw is None:

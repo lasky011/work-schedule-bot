@@ -6,7 +6,7 @@ from db import USE_POSTGRES, get_db_connection, db_placeholder
 def _save_user_sync(
     user_id, name=None, notify=None, notify_time=None,
     role=None, track_hours=None, notify_hours=None, notify_hours_time=None,
-    theme=None,
+    theme=None, onboarding_seen=None,
 ):
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -29,6 +29,8 @@ def _save_user_sync(
             updates["notify_hours_time"] = notify_hours_time
         if theme is not None:
             updates["theme"] = theme
+        if onboarding_seen is not None:
+            updates["onboarding_seen"] = onboarding_seen
 
         if updates:
             set_clause = ", ".join(f"{k} = EXCLUDED.{k}" for k in updates)
@@ -71,6 +73,8 @@ def _save_user_sync(
                 cursor.execute("UPDATE users SET notify_hours_time=? WHERE user_id=?", (notify_hours_time, user_id))
             if theme is not None:
                 cursor.execute("UPDATE users SET theme=? WHERE user_id=?", (theme, user_id))
+            if onboarding_seen is not None:
+                cursor.execute("UPDATE users SET onboarding_seen=? WHERE user_id=?", (onboarding_seen, user_id))
 
     conn.commit()
     cursor.close()
@@ -80,11 +84,12 @@ def _save_user_sync(
 async def save_user(
     user_id, name=None, notify=None, notify_time=None,
     role=None, track_hours=None, notify_hours=None, notify_hours_time=None,
-    theme=None,
+    theme=None, onboarding_seen=None,
 ):
     await asyncio.to_thread(
         _save_user_sync, user_id, name, notify, notify_time,
-        role, track_hours, notify_hours, notify_hours_time, theme
+        role, track_hours, notify_hours, notify_hours_time, theme,
+        onboarding_seen,
     )
 
 
@@ -109,6 +114,37 @@ def _get_user_sync(user_id):
 
 async def get_user(user_id):
     return await asyncio.to_thread(_get_user_sync, user_id)
+
+
+def _get_onboarding_seen_sync(user_id) -> bool:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    ph = db_placeholder()
+    try:
+        cursor.execute(
+            f"SELECT onboarding_seen FROM users WHERE user_id={ph}",
+            (user_id,),
+        )
+        row = cursor.fetchone()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        # Колонки нет — считаем экскурсию уже пройденной, чтобы не всплыла у всех.
+        return True
+    finally:
+        cursor.close()
+        conn.close()
+    if not row:
+        return False
+    if row[0] is None:
+        return True
+    return bool(row[0])
+
+
+async def get_onboarding_seen(user_id) -> bool:
+    return await asyncio.to_thread(_get_onboarding_seen_sync, user_id)
 
 
 async def get_user_name(user_id):

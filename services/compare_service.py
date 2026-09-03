@@ -14,6 +14,7 @@ from fsm_context import (
 )
 from repositories.users_repo import get_user
 from schedule_utils import current_period, detect_shift, format_date, is_work_shift
+from services.supervisor_schedule import shift_for_weekday, uses_fixed_schedule
 from ui_utils import month_label
 import message_format as mf
 
@@ -53,11 +54,27 @@ async def compare_multiple(user_id: int, state: FSMContext) -> str:
     common_work = []
     common_off = []
 
+    def _is_working(val) -> bool:
+        if isinstance(val, dict) and "working" in val:
+            return bool(val["working"])
+        return is_work_shift(val)
+
+    def _shift_label(val) -> str:
+        if isinstance(val, dict):
+            return val.get("label") or ("смена" if val.get("working") else "вых")
+        return detect_shift(val)
+
     for day in range(period_start, period_end + 1):
         values = {}
 
         for name in all_people:
             target_role = await resolve_compare_role(name, state, user)
+            if uses_fixed_schedule(name, target_role):
+                from datetime import datetime
+                dt = datetime(year, month, day, tzinfo=now_local().tzinfo)
+                values[name] = shift_for_weekday(dt.weekday())
+                continue
+
             ambiguous = person_has_ambiguous_role(name)
 
             row = None
@@ -105,12 +122,12 @@ async def compare_multiple(user_id: int, state: FSMContext) -> str:
         if len(values) < len(all_people):
             continue
 
-        if all(is_work_shift(v) for v in values.values()):
+        if all(_is_working(v) for v in values.values()):
             shifts_text = " / ".join(
-                f"{name}: {detect_shift(values[name])}" for name in all_people
+                f"{name}: {_shift_label(values[name])}" for name in all_people
             )
             common_work.append(f"{format_date(day, month, year)} — {shifts_text}")
-        elif all(not is_work_shift(v) for v in values.values()):
+        elif all(not _is_working(v) for v in values.values()):
             common_off.append(format_date(day, month, year))
 
     month_name = month_label(month)

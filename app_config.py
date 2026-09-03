@@ -40,6 +40,20 @@ def _parse_admin_ids(raw: str | None) -> set[int]:
 ADMIN_IDS = _parse_admin_ids(os.getenv("ADMIN_IDS"))
 
 
+def _parse_name_list(raw: str | None) -> set[str]:
+    if not raw:
+        return set()
+    return {part.strip() for part in raw.split(",") if part.strip()}
+
+
+# Личный график управляющего не из Google Sheets. Официант «Владислав» — другой человек.
+SUPERVISOR_NAMES = _parse_name_list(os.getenv("SUPERVISOR_NAMES")) or {"Владислав Байкалов"}
+
+
+def is_supervisor_name(name: str | None) -> bool:
+    return bool(name) and str(name).strip() in SUPERVISOR_NAMES
+
+
 def _parse_listen_port(raw: str | None, fallback: int = 8080) -> int:
     try:
         port = int((raw or "").strip() or fallback)
