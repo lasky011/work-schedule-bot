@@ -492,13 +492,16 @@ async def configure_miniapp_menu(bot: Bot) -> None:
     if not MINIAPP_URL:
         logging.warning("MINIAPP_URL не задан — кнопка Mini App в Telegram не появится")
         return
-    await bot.set_chat_menu_button(
-        menu_button=MenuButtonWebApp(
-            text="TNG Alice",
-            web_app=WebAppInfo(url=MINIAPP_URL.rstrip("/") + "/"),
+    try:
+        await bot.set_chat_menu_button(
+            menu_button=MenuButtonWebApp(
+                text="TNG Alice",
+                web_app=WebAppInfo(url=MINIAPP_URL.rstrip("/") + "/"),
+            )
         )
-    )
-    logging.info("Mini App menu button → %s", MINIAPP_URL)
+        logging.info("Mini App menu button → %s", MINIAPP_URL)
+    except Exception:
+        logging.exception("Не удалось поставить кнопку Mini App (бот продолжит работу)")
 
 
 async def start_miniapp_server() -> None:
@@ -516,6 +519,17 @@ async def start_miniapp_server() -> None:
 
 
 async def main():
+    miniapp_task = None
+    if MINIAPP_ENABLED:
+        miniapp_task = asyncio.create_task(start_miniapp_server())
+        miniapp_task.add_done_callback(
+            lambda t: logging.exception(
+                "miniapp_server: фоновая задача завершилась с ошибкой",
+                exc_info=t.exception(),
+            ) if not t.cancelled() and t.exception() else None
+        )
+        logging.info("Mini App HTTP на порту %s", MINIAPP_PORT)
+
     await asyncio.to_thread(init_db)
     init_pg_pool()
     await asyncio.to_thread(load_from_db_sync)
@@ -527,17 +541,6 @@ async def main():
 
     bot = Bot(token=BOT_TOKEN)
     await configure_miniapp_menu(bot)
-
-    miniapp_task = None
-    if MINIAPP_ENABLED:
-        miniapp_task = asyncio.create_task(start_miniapp_server())
-        miniapp_task.add_done_callback(
-            lambda t: logging.exception(
-                "miniapp_server: фоновая задача завершилась с ошибкой",
-                exc_info=t.exception(),
-            ) if not t.cancelled() and t.exception() else None
-        )
-        logging.info("Mini App HTTP на порту %s", MINIAPP_PORT)
 
     await load_full_sheet()
 

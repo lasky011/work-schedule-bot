@@ -15,6 +15,7 @@ from app_config import (
     BOT_TOKEN,
     MINIAPP_ENABLED,
     MINIAPP_PORT,
+    MINIAPP_URL,
     SHEET_PERIODS_REFRESH_SECONDS,
     now_local,
 )
@@ -227,6 +228,7 @@ def create_app() -> FastAPI:
             },
             "flags": {
                 "miniapp_enabled": MINIAPP_ENABLED,
+                "miniapp_url_set": bool(MINIAPP_URL),
                 "sheet_periods_refresh_seconds": SHEET_PERIODS_REFRESH_SECONDS,
             },
             "ready": ready,
