@@ -29,7 +29,31 @@ function parseStartParams() {
   };
 }
 
+function hasBlocks(day) {
+  return Array.isArray(day?.blocks) && day.blocks.length > 0;
+}
+
+function blockTone(block) {
+  if ((block?.kind || "shift") === "meeting") return "meeting";
+  const hour = parseInt(String(block?.start || "").split(":")[0], 10);
+  if (Number.isFinite(hour) && hour < 14) return "morning";
+  return "evening";
+}
+
+function blocksHtml(day, { compact = false } = {}) {
+  if (!hasBlocks(day)) return "";
+  const items = day.blocks.map((block) => {
+    const mark = block.kind === "meeting" ? "◎ " : "";
+    const text = compact ? (block.time || block.label) : block.label;
+    return `<div class="day-block ${blockTone(block)}">${mark}${escapeHtml(text || "")}</div>`;
+  }).join("");
+  return `<div class="my-shift-stack">${items}</div>`;
+}
+
 function shiftLabel(day) {
+  if (hasBlocks(day)) {
+    return day.blocks.map((b) => b.label).join(" · ");
+  }
   if (!day.working) return "—";
   if (day.shift_type === "morning") return "♠ утро";
   if (day.shift_type === "evening") return "♥ вечер";
@@ -78,17 +102,117 @@ async function loadProfile() {
     applyTheme("alice_dark");
     hideSplash();
     document.getElementById("nav")?.classList.add("hidden");
-    document.getElementById("screen-title").textContent = "кто ты?";
-    document.getElementById("screen-subtitle").textContent = "выбери отдел и имя";
-    await renderNamePicker("main", { onboarding: true });
+    await renderOnboardingNamePicker();
     return false;
   }
   applyTheme(profile.theme || "alice_dark");
+  applyRoleUi();
   refreshNavBadges();
   return true;
 }
 
+function applyRoleUi() {
+  const supervisor = !!profile?.supervisor;
+  document.body.classList.toggle("is-supervisor", supervisor);
+  document.querySelector('.nav-btn[data-tab="salary"]')?.classList.toggle("hidden", supervisor);
+  document.querySelector('.nav-btn[data-tab="analytics"]')?.classList.toggle("hidden", supervisor);
+}
+
+async function renderOnboardingNamePicker() {
+  const root = onboardingRoot();
+  root.classList.remove("hidden");
+  root.classList.add("centered");
+  document.getElementById("nav")?.classList.add("hidden");
+  root.innerHTML = `
+    <div class="onb-backdrop"></div>
+    <div class="onb-dialog onb-anim">
+      <div class="card onb-panel">
+        <div class="onb-cards" aria-hidden="true">${cardLoaderHtml()}</div>
+        <div class="onb-brandline">TNG · Alice</div>
+        <div class="onb-h2">кто ты?</div>
+      </div>
+    </div>
+  `;
+
+  const data = await api("/api/departments");
+
+  if (!namePickRole) {
+    const depts = (data.departments || []).map((d) => `
+      <button type="button" class="name-pick-dept" data-role="${escapeAttr(d.role)}">${escapeHtml(d.role_label)}</button>
+    `).join("");
+    root.innerHTML = `
+      <div class="onb-backdrop"></div>
+      <div class="onb-dialog onb-scroll onb-anim">
+        <div class="onb-head">
+          <div class="onb-brandline">шаг 1 · кто ты</div>
+          <div class="onb-h2">выбери подразделение</div>
+          <div class="onb-sub">сначала отдел, потом имя — так бот найдёт твой график.</div>
+        </div>
+        <div class="card">${depts}</div>
+      </div>
+    `;
+    root.querySelectorAll(".name-pick-dept").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        hapticLight();
+        namePickRole = btn.dataset.role;
+        renderOnboardingNamePicker();
+      });
+    });
+    return;
+  }
+
+  const dept = (data.departments || []).find((d) => d.role === namePickRole);
+  const names = (dept?.names || []).map((n) => `
+    <button type="button" class="name-pick-btn" data-name="${escapeAttr(n)}">${escapeHtml(n)}</button>
+  `).join("");
+  root.innerHTML = `
+    <div class="onb-backdrop"></div>
+    <div class="onb-dialog onb-scroll onb-anim">
+      <div class="onb-head">
+        <div class="onb-brandline">шаг 1 · кто ты</div>
+        <div class="onb-h2">${escapeHtml(dept?.role_label || namePickRole)}</div>
+        <div class="onb-sub">выбери своё имя в списке.</div>
+      </div>
+      <div class="card">
+        <div class="name-pick-names">${names}</div>
+      </div>
+      <div class="onb-actions">
+        <button type="button" class="btn onb-ghost" id="name-pick-back">← отдел</button>
+      </div>
+    </div>
+  `;
+  document.getElementById("name-pick-back")?.addEventListener("click", () => {
+    hapticLight();
+    namePickRole = null;
+    renderOnboardingNamePicker();
+  });
+  root.querySelectorAll(".name-pick-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      try {
+        profile = await api("/api/me/profile", {
+          method: "PATCH",
+          body: JSON.stringify({ name: btn.dataset.name, role: namePickRole }),
+        });
+        namePickRole = null;
+        applyTheme(profile.theme || "alice_dark");
+        applyRoleUi();
+        tg?.HapticFeedback?.notificationOccurred("success");
+        root.classList.add("hidden");
+        document.getElementById("nav")?.classList.remove("hidden");
+        refreshNavBadges();
+        startOnboarding();
+      } catch (e) {
+        tg?.showAlert?.(e.message);
+      }
+    });
+  });
+}
+
 async function renderNamePicker(targetId, { onboarding = false } = {}) {
+  if (onboarding) {
+    await renderOnboardingNamePicker();
+    return;
+  }
   const el = document.getElementById(targetId);
   if (!el) return;
   el.innerHTML = `<div class="loading-wrap">${cardLoaderHtml()}</div>`;
@@ -148,7 +272,7 @@ async function renderNamePicker(targetId, { onboarding = false } = {}) {
         if (onboarding) {
           document.getElementById("nav")?.classList.remove("hidden");
           refreshNavBadges();
-          setTab("schedule");
+          startOnboarding();
           return;
         }
         renderSettingsContent();
@@ -179,9 +303,13 @@ function bindScheduleModeToggle() {
 
 function todayCardHtml(today, tomorrow) {
   let todayLine = "нет данных";
+  let todayBlocks = "";
   if (today) {
     const dayLabel = formatScheduleDay(today);
-    if (today.working) {
+    if (hasBlocks(today)) {
+      todayLine = dayLabel;
+      todayBlocks = blocksHtml(today);
+    } else if (today.working) {
       todayLine = `${dayLabel} · ${shiftLabel(today)}`;
       if (today.hours) todayLine += ` · ${today.hours} ч`;
     } else if (today.published === false) {
@@ -193,8 +321,12 @@ function todayCardHtml(today, tomorrow) {
   }
 
   let tomorrowLine = "";
+  let tomorrowBlocks = "";
   if (tomorrow) {
-    if (tomorrow.working) {
+    if (hasBlocks(tomorrow)) {
+      tomorrowLine = "завтра";
+      tomorrowBlocks = blocksHtml(tomorrow, { compact: true });
+    } else if (tomorrow.working) {
       tomorrowLine = `завтра · ${shiftLabel(tomorrow)}`;
       if (tomorrow.hours) tomorrowLine += ` · ${tomorrow.hours} ч`;
     } else if (tomorrow.published === false) {
@@ -215,7 +347,8 @@ function todayCardHtml(today, tomorrow) {
     <div class="card today-card">
       <div class="card-label">сегодня</div>
       <div class="card-title">${escapeHtml(todayLine)}</div>
-      ${tomorrowLine ? `<div class="card-divider"></div><div class="card-meta">${escapeHtml(tomorrowLine)}</div>` : ""}
+      ${todayBlocks}
+      ${tomorrowLine ? `<div class="card-divider"></div><div class="card-meta">${escapeHtml(tomorrowLine)}</div>${tomorrowBlocks}` : ""}
       ${actions}
     </div>
   `;
@@ -234,6 +367,12 @@ function weekViewHintHtml(header) {
 }
 
 function monthShiftShort(day) {
+  if (hasBlocks(day)) {
+    if (day.blocks.some((b) => b.kind === "meeting")) return "◎";
+    if (day.shift_type === "morning") return "♠";
+    if (day.shift_type === "evening") return "♥";
+    return "•";
+  }
   if (!day.published) return "·";
   if (!day.working) return "—";
   if (day.shift_type === "morning") return "♠";
@@ -241,15 +380,25 @@ function monthShiftShort(day) {
   return "•";
 }
 
+function scheduleLegendHtml() {
+  return `<div class="month-legend">
+      <span class="legend-morning">♠ утро</span><span class="legend-evening">♥ вечер</span><span>— вых</span><span class="legend-gen">🧹 ген</span><span>· нет графика</span>
+      ${profile?.supervisor ? `<span class="legend-muted">◎ собрание</span>` : ""}
+    </div>`;
+}
+
 function weekDayCellHtml(d) {
   const genMark = d.gen_cleaning
     ? '<div class="day-gen-cleaning" title="ген уборка 9:00">🧹</div>'
     : "";
+  const shiftInner = hasBlocks(d)
+    ? blocksHtml(d, { compact: true })
+    : `<div class="day-shift ${shiftClass(d)}">${shiftLabel(d)}</div>`;
   return `
     <div class="day-cell day-pick${d.is_today ? " today" : ""}${d.gen_cleaning ? " gen-cleaning" : ""}" data-date="${d.date}" role="button">
       <div class="day-wd">${d.weekday}</div>
       <div class="day-num">${d.day}</div>
-      <div class="day-shift ${shiftClass(d)}">${shiftLabel(d)}</div>
+      ${shiftInner}
       ${genMark}
     </div>
   `;
@@ -367,6 +516,7 @@ async function renderSchedule() {
       ${scheduleModeToggleHtml()}
       <div class="card-label">неделя · ${data.header}</div>
       <div class="week-grid">${daysHtml}</div>
+      ${profile?.supervisor ? scheduleLegendHtml() : ""}
       <div class="week-nav">
         <button type="button" class="btn" id="prev-week">← пред</button>
         <button type="button" class="btn btn-primary" id="next-week">след →</button>
@@ -411,9 +561,7 @@ async function renderScheduleMonth() {
     ${topCard}
     ${scheduleModeToggleHtml()}
     <div class="card-label">${data.header}</div>
-    <div class="month-legend">
-      <span class="legend-morning">♠ утро</span><span class="legend-evening">♥ вечер</span><span>— вых</span><span class="legend-gen">🧹 ген</span><span>· нет графика</span>
-    </div>
+    ${scheduleLegendHtml()}
     <div class="month-grid">
       ${wdHeader}
       ${pad}
@@ -568,7 +716,12 @@ async function renderTeam() {
     const my = data.my_shift;
     let myLine = "выходной";
     let myClass = "";
-    if (my?.working) {
+    let myBlocks = "";
+    if (hasBlocks(my)) {
+      myClass = `working ${my.shift_type || ""}`;
+      myLine = "ты";
+      myBlocks = blocksHtml(my, { compact: true });
+    } else if (my?.working) {
       myClass = `working ${my.shift_type || ""}`;
       myLine = shiftLabel(my);
       if (my.hours) myLine += ` · ${my.hours} ч`;
@@ -600,7 +753,8 @@ async function renderTeam() {
           <div class="card-label">${escapeHtml(data.weekday)} · ${escapeHtml(data.header)}</div>
           ${data.published ? `<div class="team-total">${data.total} чел.</div>` : ""}
         </div>
-        <div class="my-shift-line ${myClass}">ты · ${myLine}</div>
+        <div class="my-shift-line ${myClass}">${hasBlocks(my) ? "ты" : `ты · ${myLine}`}</div>
+        ${myBlocks}
         <div class="card-meta" style="margin-bottom:8px">тап по имени — график коллеги</div>
         ${body}
       </div>
@@ -872,6 +1026,7 @@ function renderSettingsContent() {
       </div>
       <button type="button" class="btn btn-primary" id="save-notify-time" style="width:100%;margin-top:8px">сохранить время</button>
     </div>
+    ${p.supervisor ? "" : `
     <div class="card">
       <div class="card-label">учёт часов</div>
       <div class="setting-row">
@@ -888,11 +1043,21 @@ function renderSettingsContent() {
         </div>
         <button type="button" class="btn toggle-btn${p.notify_hours ? " on" : ""}" id="toggle-notify-hours">${p.notify_hours ? "вкл" : "выкл"}</button>
       </div>
-    </div>
+    </div>`}
     <div class="card" id="settings-theme-card">
       <div class="card-label">тема</div>
       <div class="theme-grid">
         ${themeOptionsHtml(p.theme || "alice_dark")}
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-label">обучение</div>
+      <div class="setting-row">
+        <div class="setting-info">
+          <div class="setting-title">знакомство с ботом</div>
+          <div class="setting-desc">приветствие, настройки и тур по вкладкам</div>
+        </div>
+        <button type="button" class="btn" id="replay-onboarding">пройти</button>
       </div>
     </div>
   `;
@@ -910,6 +1075,12 @@ function renderSettingsContent() {
   document.getElementById("change-name")?.addEventListener("click", () => {
     namePickRole = null;
     renderNamePicker("settings-content");
+  });
+
+  document.getElementById("replay-onboarding")?.addEventListener("click", () => {
+    hapticLight();
+    closeSettingsSheet();
+    startOnboarding();
   });
 
   content.querySelectorAll(".theme-option").forEach((btn) => {
@@ -1714,6 +1885,7 @@ function updateSubtitle() {
 }
 
 function setTab(next) {
+  if (profile?.supervisor && (next === "salary" || next === "analytics")) next = "schedule";
   const main = document.getElementById("main");
   if (tab === next && next === "people" && peopleScreen !== "list") {
     hapticLight();
@@ -1760,6 +1932,11 @@ document.querySelectorAll(".nav-btn").forEach((btn) => {
     hideSplash();
     if (!ok) return;
 
+    if (!profile.onboarding_seen) {
+      startOnboarding();
+      return;
+    }
+
     if (start.view === "team") {
       teamDayOffset = start.teamOffset;
       setTab("team");
@@ -1777,3 +1954,258 @@ document.querySelectorAll(".nav-btn").forEach((btn) => {
     renderError(e.message);
   }
 })();
+
+// ---------- Онбординг нового пользователя ----------
+
+const ONBOARDING_TABS = [
+  { tab: "schedule", label: "график", text: "твой график на неделю и месяц. тапни день — увидишь детали смены." },
+  { tab: "team", label: "смена", text: "кто ещё работает в выбранный день — вся команда на смене." },
+  { tab: "people", label: "коллеги", text: "коллеги и совпадения графиков. можно сравнить свои смены с чужими." },
+  { tab: "salary", label: "зп", text: "примерный расчёт зарплаты за период по твоим сменам." },
+  { tab: "analytics", label: "стат", text: "смены и часы за период — вся статистика в цифрах." },
+];
+
+function onboardingTabs() {
+  if (profile?.supervisor) {
+    return ONBOARDING_TABS.filter((step) => step.tab !== "salary" && step.tab !== "analytics");
+  }
+  return ONBOARDING_TABS;
+}
+
+function onboardingRoot() {
+  let root = document.getElementById("onboarding");
+  if (!root) {
+    root = document.createElement("div");
+    root.id = "onboarding";
+    root.className = "onboarding hidden";
+    document.body.appendChild(root);
+  }
+  return root;
+}
+
+function startOnboarding() {
+  applyRoleUi();
+  document.getElementById("nav")?.classList.remove("hidden");
+  try { setTab("schedule"); } catch (_) { /* noop */ }
+  renderOnboardingWelcome();
+}
+
+function renderOnboardingWelcome() {
+  const root = onboardingRoot();
+  root.classList.remove("hidden");
+  root.classList.add("centered");
+  const name = escapeHtml(profile?.name || "");
+  root.innerHTML = `
+    <div class="onb-backdrop"></div>
+    <div class="onb-dialog onb-anim">
+      <div class="card onb-panel">
+        <div class="onb-cards" aria-hidden="true">
+          <div class="card-loader">
+            <div class="card-stack">
+              <span class="playing-card c1">♠</span>
+              <span class="playing-card c2">♥</span>
+              <span class="playing-card c3">♦</span>
+            </div>
+          </div>
+        </div>
+        <div class="onb-brandline">TNG · Alice</div>
+        <div class="onb-h1">добро пожаловать${name ? ",<br>" + name : ""}</div>
+        <div class="onb-sub">давай настроим бота под тебя и покажем, что где живёт. это займёт минуту.</div>
+        <button type="button" class="btn btn-primary onb-btn-wide" id="onb-start">настроить</button>
+        <button type="button" class="btn onb-btn-wide onb-ghost" id="onb-skip">пропустить</button>
+      </div>
+    </div>
+  `;
+  document.getElementById("onb-start")?.addEventListener("click", () => { hapticLight(); renderOnboardingWizard(); });
+  document.getElementById("onb-skip")?.addEventListener("click", () => finishOnboarding());
+}
+
+async function onbPatch(body) {
+  try {
+    await patchSettings(body);
+    return true;
+  } catch (e) {
+    tg?.showAlert?.(e.message);
+    return false;
+  }
+}
+
+function renderOnboardingWizard() {
+  const root = onboardingRoot();
+  root.classList.remove("hidden");
+  root.classList.add("centered");
+  const p = profile || {};
+  const t = p.notify_time || "09:00";
+  root.innerHTML = `
+    <div class="onb-backdrop"></div>
+    <div class="onb-dialog onb-scroll onb-anim">
+      <div class="onb-head">
+        <div class="onb-brandline">шаг 1 · настройки</div>
+        <div class="onb-h2">настроим под тебя</div>
+        <div class="onb-sub">включи только то, что нужно — потом всё можно поменять в настройках.</div>
+      </div>
+
+      <div class="card">
+        <div class="card-label">уведомления</div>
+        <div class="setting-row">
+          <div class="setting-info">
+            <div class="setting-title">🔔 ежедневное напоминание</div>
+            <div class="setting-desc">утром пишу в чат, во сколько ты сегодня на смене</div>
+          </div>
+          <button type="button" class="btn toggle-btn${p.notify ? " on" : ""}" id="onb-notify">${p.notify ? "вкл" : "выкл"}</button>
+        </div>
+        <div class="setting-row onb-time-row${p.notify ? "" : " hidden"}" id="onb-time-row">
+          <div class="setting-info"><div class="setting-title">время</div></div>
+          <input class="hours-input settings-time" id="onb-notify-time" value="${escapeAttr(t)}" placeholder="09:00" />
+        </div>
+      </div>
+
+      ${p.supervisor ? "" : `
+      <div class="card">
+        <div class="card-label">часы и зарплата</div>
+        <div class="setting-row">
+          <div class="setting-info">
+            <div class="setting-title">💰 учёт часов</div>
+            <div class="setting-desc">считаю зарплату и аналитику по реально отработанным сменам</div>
+          </div>
+          <button type="button" class="btn toggle-btn${p.track_hours ? " on" : ""}" id="onb-track">${p.track_hours ? "вкл" : "выкл"}</button>
+        </div>
+        <div class="setting-row${p.track_hours ? "" : " onb-dim"}">
+          <div class="setting-info">
+            <div class="setting-title">⏰ напоминание внести часы</div>
+            <div class="setting-desc">после смены пришлю кнопку — быстро отметить часы</div>
+          </div>
+          <button type="button" class="btn toggle-btn${p.notify_hours ? " on" : ""}" id="onb-notify-hours">${p.notify_hours ? "вкл" : "выкл"}</button>
+        </div>
+      </div>`}
+
+      <div class="card">
+        <div class="card-label">тема оформления</div>
+        <div class="theme-grid">${themeOptionsHtml(p.theme || "alice_dark")}</div>
+      </div>
+
+      <div class="onb-actions">
+        <button type="button" class="btn onb-ghost" id="onb-skip2">пропустить</button>
+        <button type="button" class="btn btn-primary" id="onb-next">далее →</button>
+      </div>
+    </div>
+  `;
+
+  document.getElementById("onb-notify")?.addEventListener("click", async () => {
+    hapticLight();
+    if (p.notify) {
+      if (await onbPatch({ notify: false })) renderOnboardingWizard();
+    } else {
+      const time = document.getElementById("onb-notify-time")?.value?.trim() || "09:00";
+      if (await onbPatch({ notify: true, notify_time: time })) renderOnboardingWizard();
+    }
+  });
+
+  document.getElementById("onb-track")?.addEventListener("click", async () => {
+    hapticLight();
+    if (await onbPatch({ track_hours: !p.track_hours })) {
+      refreshNavBadges();
+      renderOnboardingWizard();
+    }
+  });
+
+  document.getElementById("onb-notify-hours")?.addEventListener("click", async () => {
+    if (!p.track_hours) {
+      tg?.showAlert?.("Сначала включи учёт часов");
+      return;
+    }
+    hapticLight();
+    if (await onbPatch({ notify_hours: !p.notify_hours })) renderOnboardingWizard();
+  });
+
+  root.querySelectorAll(".theme-option").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const nextTheme = btn.dataset.theme;
+      if (!nextTheme || nextTheme === p.theme) return;
+      hapticLight();
+      if (await onbPatch({ theme: nextTheme })) {
+        applyTheme(profile.theme || nextTheme);
+        renderOnboardingWizard();
+      }
+    });
+  });
+
+  document.getElementById("onb-next")?.addEventListener("click", () => { hapticLight(); startOnboardingTour(0); });
+  document.getElementById("onb-skip2")?.addEventListener("click", () => finishOnboarding());
+}
+
+function startOnboardingTour(index) {
+  const root = onboardingRoot();
+  root.classList.remove("hidden");
+  root.classList.remove("centered");
+  const steps = onboardingTabs();
+  const step = steps[index];
+  if (!step) { finishOnboarding(); return; }
+
+  try { setTab(step.tab); } catch (_) { /* noop */ }
+
+  const btn = document.querySelector(`.nav-btn[data-tab="${step.tab}"]`);
+  const rect = btn ? btn.getBoundingClientRect() : null;
+  const isLast = index === steps.length - 1;
+
+  document.getElementById("nav")?.classList.add("onb-touring");
+  document.querySelectorAll(".nav-btn").forEach((b) => {
+    b.classList.toggle("onb-tab-highlight", b.dataset.tab === step.tab);
+  });
+
+  root.innerHTML = `
+    <div class="onb-backdrop tour"></div>
+    <div class="onb-bubble card onb-anim" id="onb-bubble">
+      <div class="onb-brandline">${index + 1} / ${steps.length}</div>
+      <div class="onb-bubble-title">${escapeHtml(step.label)}</div>
+      <div class="onb-bubble-text">${escapeHtml(step.text)}</div>
+      <div class="onb-actions">
+        <button type="button" class="btn onb-ghost" id="onb-tour-skip">пропустить</button>
+        <button type="button" class="btn btn-primary" id="onb-tour-next">${isLast ? "готово" : "далее"}</button>
+      </div>
+      <div class="onb-bubble-arrow" id="onb-arrow"></div>
+    </div>
+  `;
+
+  const bubble = document.getElementById("onb-bubble");
+  if (bubble) {
+    const bw = Math.min(320, window.innerWidth - 24);
+    bubble.style.width = bw + "px";
+    if (rect) {
+      let left = rect.left + rect.width / 2 - bw / 2;
+      left = Math.max(12, Math.min(left, window.innerWidth - bw - 12));
+      bubble.style.left = left + "px";
+      bubble.style.bottom = (window.innerHeight - rect.top + 16) + "px";
+      const arrow = document.getElementById("onb-arrow");
+      if (arrow) {
+        const ax = rect.left + rect.width / 2 - left;
+        arrow.style.left = Math.max(16, Math.min(ax, bw - 16)) + "px";
+      }
+    } else {
+      bubble.style.left = "50%";
+      bubble.style.transform = "translateX(-50%)";
+      bubble.style.bottom = "96px";
+      document.getElementById("onb-arrow")?.style.setProperty("display", "none");
+    }
+  }
+
+  document.getElementById("onb-tour-next")?.addEventListener("click", () => { hapticLight(); startOnboardingTour(index + 1); });
+  document.getElementById("onb-tour-skip")?.addEventListener("click", () => finishOnboarding());
+}
+
+async function finishOnboarding() {
+  document.getElementById("nav")?.classList.remove("onb-touring");
+  document.querySelectorAll(".nav-btn.onb-tab-highlight").forEach((b) => {
+    b.classList.remove("onb-tab-highlight");
+  });
+  const root = document.getElementById("onboarding");
+  if (root) {
+    root.classList.add("hidden");
+    root.classList.remove("centered");
+    root.innerHTML = "";
+  }
+  await onbPatch({ onboarding_seen: true });
+  applyTheme(profile?.theme || "alice_dark");
+  refreshNavBadges();
+  setTab("schedule");
+}

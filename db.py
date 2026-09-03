@@ -2,6 +2,7 @@ import sqlite3
 import logging
 
 from app_config import DATABASE_URL
+from postgres_dsn import postgres_dsn
 
 
 try:
@@ -70,7 +71,7 @@ def init_pg_pool():
         _pg_pool = _p.ThreadedConnectionPool(
             minconn=1,
             maxconn=5,
-            dsn=DATABASE_URL,
+            dsn=postgres_dsn(DATABASE_URL),
         )
 
 

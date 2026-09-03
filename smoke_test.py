@@ -124,6 +124,14 @@ def test_imports():
     assert hasattr(fsm_context, "resolve_compare_role")
     assert hasattr(schedule_service, "find_row")
     assert hasattr(salary_service, "build_salary_stats_text")
+    from services import supervisor_schedule
+    assert supervisor_schedule.DEFAULT_FIXED_SCHEDULE["version"] == 2
+    assert supervisor_schedule.uses_fixed_schedule("Владислав Байкалов", "Управляющий")
+    assert not supervisor_schedule.uses_fixed_schedule("Владислав", "Официант")
+    from services import gen_cleaning_service
+    assert gen_cleaning_service.CADENCE_DAYS == 14
+    from keyboards.admin import BTN_GEN_CLEANING
+    assert BTN_GEN_CLEANING
 
 
 def test_salary_service():
@@ -269,6 +277,8 @@ def test_schedule_utils():
 
     assert schedule_utils.is_work_shift("11:00") is True
     assert schedule_utils.is_work_shift("16:00") is True
+    assert schedule_utils.is_work_shift("11–19") is True
+    assert schedule_utils.is_work_shift("11.00") is True
     assert schedule_utils.is_work_shift("") is False
     assert schedule_utils.is_work_shift(None) is False
 
@@ -400,6 +410,161 @@ def test_miniapp_week_today_stays_real_when_offset_changes():
     assert data["tomorrow"]["day"] == 5
 
 
+def test_supervisor_fixed_schedule():
+    from datetime import datetime
+    from unittest.mock import patch
+    from zoneinfo import ZoneInfo
+
+    from services import supervisor_schedule as ss
+
+    tz = ZoneInfo("Europe/Moscow")
+    months = {
+        1: "января", 2: "февраля", 3: "марта", 4: "апреля",
+        5: "мая", 6: "июня", 7: "июля", 8: "августа",
+        9: "сентября", 10: "октября", 11: "ноября", 12: "декабря",
+    }
+    with patch.object(ss, "now_local", return_value=datetime(2026, 7, 20, 10, 0, tzinfo=tz)):
+        week = ss.week_schedule(
+            "Тест Управляющий", "Управляющий", week_offset=0, months=months,
+        )
+
+    assert week["fixed_schedule"] is True
+    mon, tue, wed, thu, fri, sat, sun = week["days"]
+    assert mon["working"] and "11:00" in (mon["label"] or "")
+    assert mon["shift_type"] == "morning"
+    assert tue["working"] and len(tue["blocks"]) == 2
+    assert tue["blocks"][0]["kind"] == "meeting"
+    assert "11:00" in tue["blocks"][0]["label"]
+    assert tue["blocks"][1]["kind"] == "shift"
+    assert "16:00" in tue["blocks"][1]["label"]
+    assert "19:00" in tue["blocks"][1]["label"]
+    assert tue["shift_type"] == "evening"
+    assert wed["working"] and "11:00" in (wed["label"] or "")
+    assert wed["shift_type"] == "morning"
+    assert not thu["working"]
+    assert fri["working"] and "01:00" in (fri["label"] or "")
+    assert sat["working"] and "01:00" in (sat["label"] or "")
+    assert not sun["working"]
+    assert ss.MEETING_REMINDER_WEEKDAY == 0
+    assert ss.MEETING_REMINDER_TIME == "22:00"
+    assert "собрание" in ss.MEETING_REMINDER_TEXT.lower()
+
+
+def test_supervisor_week_uses_fixed_schedule_not_sheets():
+    from datetime import datetime
+    from unittest.mock import patch
+    from zoneinfo import ZoneInfo
+
+    from services import miniapp_service
+
+    tz = ZoneInfo("Europe/Moscow")
+    now = datetime(2026, 8, 19, 12, 0, tzinfo=tz)
+
+    async def fake_get_user(user_id):
+        return (
+            user_id, "Владислав Байкалов", 1, "09:00", "Управляющий",
+            0, 0, None, "alice_dark",
+        )
+
+    async def boom(*_args, **_kwargs):
+        raise AssertionError("supervisor must not be read from sheets")
+
+    with patch.object(miniapp_service, "get_user", fake_get_user), \
+            patch.object(miniapp_service, "now_local", return_value=now), \
+            patch("services.supervisor_schedule.now_local", return_value=now), \
+            patch.object(miniapp_service.schedule, "find_row", boom), \
+            patch.object(miniapp_service.schedule, "get_day_value", boom), \
+            patch.object(miniapp_service.schedule, "get_people_for_day", boom):
+        data = asyncio.run(miniapp_service.get_week_schedule(1, 0))
+
+    assert data.get("venue") is None
+    assert data["fixed_schedule"] is True
+    assert data["name"] == "Владислав Байкалов"
+    # 2026-08-19 — среда: 11:00–19:00
+    assert data["today"]["working"] is True
+    assert data["today"]["shift_type"] == "morning"
+    assert "11:00" in (data["today"]["label"] or "")
+    assert data["today"].get("total_working") is None
+    assert data["days"][1]["blocks"][0]["kind"] == "meeting"
+    assert data["days"][3]["working"] is False
+
+
+def test_supervisor_compare_uses_fixed_schedule():
+    from unittest.mock import patch
+
+    from services import miniapp_service
+
+    async def fake_get_user(uid):
+        return (
+            uid, "Владислав Байкалов", 1, "09:00", "Управляющий",
+            0, 0, None, "alice_dark",
+        )
+
+    async def fake_find_row(name, day, month, year, target_role=None):
+        if name == "Владислав Байкалов":
+            raise AssertionError("supervisor must not be read from sheets")
+        return ["row"], 0
+
+    async def fake_get_day_value(row, day, month, year):
+        return "16:00" if day in {20, 21, 22, 24} else ""
+
+    with patch.object(miniapp_service, "get_user", fake_get_user), patch.object(
+        miniapp_service.schedule, "find_row", fake_find_row,
+    ), patch.object(
+        miniapp_service.schedule, "get_day_value", fake_get_day_value,
+    ), patch.object(
+        miniapp_service, "person_has_ambiguous_role", lambda _n: False,
+    ), patch.object(
+        miniapp_service, "format_date", lambda d, m, y: f"{d}.{m}.{y}",
+    ):
+        data = asyncio.run(
+            miniapp_service.compare_with_colleagues(
+                1,
+                [{"name": "Рина Евгеньевна", "role": "Менеджеры"}],
+                2026, 7, 20, 26,
+            ),
+        )
+
+    work_days = [w["day"] for w in data["common_work"]]
+    off_days = [w["day"] for w in data["common_off"]]
+    assert 20 in work_days and 21 in work_days and 22 in work_days
+    assert 23 in off_days and 26 in off_days
+    assert "11:00" in data["common_work"][0]["shifts"]["Владислав Байкалов"]
+
+
+def test_supervisor_skipped_from_day_roster_off():
+    from unittest.mock import AsyncMock, patch
+
+    import departments_manager
+    from services import miniapp_service
+
+    departments_manager.configure_departments_manager(
+        lambda name: str(name).strip(), None,
+    )
+    departments_manager.DEPARTMENTS["👑 Управляющий"] = ["Владислав Байкалов"]
+
+    async def fake_shift(name, role, dt):
+        return {"working": False, "shift_type": None, "label": "вых", "hours": None}
+
+    async def run():
+        with patch.object(
+            miniapp_service.schedule, "is_day_published", return_value=True,
+        ), patch.object(
+            miniapp_service.schedule, "get_people_for_day",
+            new=AsyncMock(return_value={"Официант": ["Владислав — 11:00 — утро"]}),
+        ), patch.object(
+            miniapp_service, "_shift_for_person", new=fake_shift,
+        ):
+            return await miniapp_service.get_day_roster("2026-08-19")
+
+    try:
+        data = asyncio.run(run())
+    finally:
+        departments_manager.DEPARTMENTS.pop("👑 Управляющий", None)
+
+    assert not any(p["name"] == "Владислав Байкалов" for p in data["off"]), data["off"]
+
+
 def test_miniapp_profile_role_normalization():
     import services.schedule_watch_service as schedule_watch_service
     from services import miniapp_service
@@ -461,16 +626,23 @@ def test_miniapp_profile_role_normalization():
 
 
 def test_gen_cleaning_schedule():
-    from datetime import date
+    from datetime import date, datetime
+    from zoneinfo import ZoneInfo
 
     from services.gen_cleaning_service import (
         FIRST_GEN_CLEANING,
         GEN_CLEANING_NOTIFY_TIME,
+        apply_overrides,
+        cadence_days_in_month,
+        cleaning_date_due_for_notice,
+        effective_days_in_month,
         gen_cleaning_notification_text,
         is_gen_cleaning_day,
         is_gen_cleaning_notify_evening,
+        reset_overrides,
     )
 
+    reset_overrides()
     assert FIRST_GEN_CLEANING == date(2026, 7, 8)
     assert FIRST_GEN_CLEANING.weekday() == 2
     assert is_gen_cleaning_day(date(2026, 7, 8))
@@ -481,6 +653,113 @@ def test_gen_cleaning_schedule():
     assert not is_gen_cleaning_notify_evening(date(2026, 7, 8))
     assert GEN_CLEANING_NOTIFY_TIME == "22:00"
     assert "будильник" in gen_cleaning_notification_text().lower()
+    assert cadence_days_in_month(2026, 9) == [2, 16, 30]
+
+    apply_overrides([(2026, 9, [3, 17])])
+    assert not is_gen_cleaning_day(date(2026, 9, 2))
+    assert is_gen_cleaning_day(date(2026, 9, 3))
+    assert is_gen_cleaning_day(date(2026, 9, 17))
+    assert not is_gen_cleaning_notify_evening(date(2026, 9, 1))
+    assert is_gen_cleaning_notify_evening(date(2026, 9, 2))
+    assert effective_days_in_month(2026, 9) == [3, 17]
+    assert is_gen_cleaning_day(date(2026, 7, 8))
+
+    apply_overrides([(2026, 9, [])])
+    assert effective_days_in_month(2026, 9) == []
+    assert not is_gen_cleaning_day(date(2026, 9, 2))
+
+    tz = ZoneInfo("Europe/Moscow")
+    reset_overrides()
+    assert cleaning_date_due_for_notice(
+        datetime(2026, 9, 1, 21, 59, tzinfo=tz),
+    ) is None
+    assert cleaning_date_due_for_notice(
+        datetime(2026, 9, 1, 22, 0, tzinfo=tz),
+    ) == date(2026, 9, 2)
+
+    apply_overrides([(2026, 9, [3])])
+    assert cleaning_date_due_for_notice(
+        datetime(2026, 9, 1, 22, 30, tzinfo=tz),
+    ) is None
+    assert cleaning_date_due_for_notice(
+        datetime(2026, 9, 2, 22, 5, tzinfo=tz),
+    ) == date(2026, 9, 3)
+    apply_overrides([(2026, 9, [17])])
+    assert cleaning_date_due_for_notice(
+        datetime(2026, 9, 2, 22, 10, tzinfo=tz),
+    ) is None
+    apply_overrides([(2026, 9, [3, 17])])
+    assert cleaning_date_due_for_notice(
+        datetime(2026, 9, 2, 22, 45, tzinfo=tz),
+    ) == date(2026, 9, 3)
+    reset_overrides()
+
+
+def test_gen_cleaning_admin_keyboard():
+    from keyboards.admin import (
+        BTN_GEN_CLEANING,
+        CB_GC_DAY,
+        admin_main_kb,
+        gen_cleaning_month_kb,
+    )
+    import ui_utils
+
+    ui_utils.configure_ui_utils(
+        {9: "сентября"},
+        {9: "Сентябрь"},
+    )
+    texts = [btn.text for row in admin_main_kb().keyboard for btn in row]
+    assert BTN_GEN_CLEANING in texts
+
+    kb = gen_cleaning_month_kb(2026, 9, [3, 17], has_override=True)
+    payload = []
+    for row in kb.inline_keyboard:
+        for btn in row:
+            payload.append((btn.text, btn.callback_data))
+    assert any(text.startswith("🧹3") and CB_GC_DAY in data for text, data in payload)
+    assert any(data == f"{CB_GC_DAY}2026:9:3" for _, data in payload)
+    assert any("формулу" in (text or "") for text, _ in payload)
+    assert not any(text.startswith("🧹2") for text, _ in payload)
+
+
+def test_people_on_shift_includes_managers():
+    from unittest.mock import AsyncMock, patch
+
+    import departments_manager
+    import services.miniapp_service as miniapp_service
+
+    departments_manager.configure_departments_manager(
+        lambda name: str(name).strip(), None,
+    )
+
+    async def fake_shift(name, role, dt):
+        if name == "Рина Евгеньевна":
+            return {
+                "working": True, "shift_type": "morning",
+                "label": "утро", "hours": 8, "raw": "11:00",
+            }
+        return {"working": False, "shift_type": None, "label": "вых", "hours": None}
+
+    async def fake_user(_user_id):
+        return (1, "Виталий", 0, None, "Официант", 0, 0, None, "alice_dark")
+
+    async def run():
+        with patch.object(
+            miniapp_service.schedule, "is_day_published", return_value=True,
+        ), patch.object(
+            miniapp_service.schedule, "get_people_for_day",
+            new=AsyncMock(return_value={"Официант": ["Виталий — 11:00 — утро"]}),
+        ), patch.object(
+            miniapp_service, "_shift_for_person", new=fake_shift,
+        ), patch.object(
+            miniapp_service, "get_user", new=fake_user,
+        ):
+            return await miniapp_service.get_people_on_shift(1, 0)
+
+    data = asyncio.run(run())
+    names = [p for dep in data["departments"] for p in dep["people"]]
+    assert any("Рина Евгеньевна" in n for n in names), data["departments"]
+    assert any("Менедж" in (dep["role_label"] or dep["role"]) for dep in data["departments"]), data["departments"]
 
 
 def test_schedule_gen_cleaning_flag():
@@ -489,6 +768,9 @@ def test_schedule_gen_cleaning_flag():
 
     import services.miniapp_service as miniapp_service
     from app_config import now_local
+    from services.gen_cleaning_service import reset_overrides
+
+    reset_overrides()
 
     async def run():
         tz = now_local().tzinfo
@@ -821,9 +1103,10 @@ def test_day_roster_missed_working_person_not_lost():
 
 
 def test_period_coverage_missing():
-    from datetime import date
+    from datetime import date, datetime
     from unittest.mock import patch
 
+    from app_config import APP_TIMEZONE
     from services.period_coverage_service import (
         format_period_key,
         missing_period_alerts,
@@ -833,7 +1116,12 @@ def test_period_coverage_missing():
     sample = {
         (2026, 7, 1): "2125046654",
     }
-    with patch("services.period_coverage_service.SHEET_GID_MAP", sample):
+    # Фиксируем "сегодня" внутри периода 1–15 июля, иначе missing_period_keys()
+    # (которая опирается на now_local()) даёт разный результат в зависимости от
+    # реальной даты запуска теста.
+    fixed_now = datetime(2026, 7, 10, 12, 0, tzinfo=APP_TIMEZONE)
+    with patch("services.period_coverage_service.now_local", return_value=fixed_now), \
+            patch("services.period_coverage_service.SHEET_GID_MAP", sample):
         missing = missing_period_keys(days_ahead=14)
         assert (2026, 7, 16) in missing
         assert "июл" in format_period_key((2026, 7, 16))
@@ -954,6 +1242,51 @@ def test_message_format():
     assert "👉" in row and "Вт" in row
 
 
+def test_postgres_dsn_rewrites_supabase_direct():
+    from postgres_dsn import postgres_dsn
+
+    raw = (
+        "postgresql://postgres:p%40ss@db.bflnbvkqwtwrpsujhqcg.supabase.co:5432/postgres"
+    )
+    out = postgres_dsn(raw)
+    assert "pooler.supabase.com" in out
+    assert "postgres.bflnbvkqwtwrpsujhqcg" in out
+    assert "db.bflnbvkqwtwrpsujhqcg.supabase.co" not in out
+    assert ":p%40ss@" in out
+    assert "%2540" not in out
+    assert postgres_dsn(
+        "postgresql://postgres.abc:x@aws-1-eu-central-1.pooler.supabase.com:5432/postgres"
+    ).startswith("postgresql://postgres.abc:")
+
+
+def test_hosting_manifests():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent
+    compose = (root / "docker-compose.yml").read_text(encoding="utf-8")
+    amvera = (root / "amvera.yaml").read_text(encoding="utf-8")
+    script = (root / "run_both.py").read_text(encoding="utf-8")
+    assert "command: python3 bot.py" in compose
+    assert "command: python3 admin_bot.py" in compose
+    assert "8080:8080" in compose
+    assert "bot.py" in script
+    assert "admin_bot.py" in script
+    assert "run_both.py" in amvera
+    assert "3.12" in amvera
+    assert "containerPort: 8080" in amvera
+    example = (root / ".env.example").read_text(encoding="utf-8")
+    for key in ("BOT_TOKEN", "DATABASE_URL", "ADMIN_BOT_TOKEN", "ADMIN_IDS", "MINIAPP_URL"):
+        assert key in example
+
+
+def test_parse_listen_port():
+    from app_config import _parse_listen_port
+
+    assert _parse_listen_port("8080") == 8080
+    assert _parse_listen_port("80808") == 8080
+    assert _parse_listen_port("abc") == 8080
+
+
 def main():
     checks = [
         ("bot_import", test_bot_import),
@@ -967,10 +1300,19 @@ def main():
         ("departments_manager", test_departments_manager),
         ("intern_shift_times", test_intern_shift_times),
         ("message_format", test_message_format),
+        ("postgres_dsn", test_postgres_dsn_rewrites_supabase_direct),
+        ("hosting_manifests", test_hosting_manifests),
+        ("parse_listen_port", test_parse_listen_port),
         ("miniapp_auth", test_miniapp_auth),
         ("miniapp_week_today", test_miniapp_week_today_stays_real_when_offset_changes),
+        ("supervisor_fixed_schedule", test_supervisor_fixed_schedule),
+        ("supervisor_week_fixed", test_supervisor_week_uses_fixed_schedule_not_sheets),
+        ("supervisor_compare_fixed", test_supervisor_compare_uses_fixed_schedule),
+        ("supervisor_roster_off", test_supervisor_skipped_from_day_roster_off),
         ("miniapp_profile_role_normalization", test_miniapp_profile_role_normalization),
         ("gen_cleaning_schedule", test_gen_cleaning_schedule),
+        ("gen_cleaning_admin_kb", test_gen_cleaning_admin_keyboard),
+        ("people_on_shift_managers", test_people_on_shift_includes_managers),
         ("schedule_gen_cleaning_flag", test_schedule_gen_cleaning_flag),
         ("miniapp_static_assets", test_miniapp_static_assets),
         ("miniapp_health_endpoint", test_miniapp_health_endpoint),
