@@ -207,6 +207,9 @@ def test_ui_utils():
     assert ui_utils.fmt_hours(11.5) == "11.5"
     assert ui_utils.is_valid_time("09:30") is True
     assert ui_utils.is_valid_time("9.30") is False
+    assert ui_utils.normalize_hhmm("9:30") == "09:30"
+    assert ui_utils.normalize_hhmm("09:30") == "09:30"
+    assert ui_utils.normalize_hhmm(" 8:05 ") == "08:05"
     assert ui_utils.month_label(6) == "Июнь"
 
 

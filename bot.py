@@ -10,6 +10,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import MenuButtonWebApp, WebAppInfo
 
 from app_config import (
+    APP_TIMEZONE_NAME,
     BOT_TOKEN,
     MINIAPP_ENABLED,
     MINIAPP_PORT,
@@ -328,62 +329,89 @@ async def hours_notification_loop(bot) -> None:
 
 
 async def notification_loop(bot):
+    from ui_utils import normalize_hhmm
+
     sent = {}
     last_cleanup = now_local().date()
     last_dept_refresh = now_local()
     last_periods_refresh = now_local()
+    last_heartbeat = now_local()
 
     while True:
-        now = now_local()
-        current_time = now.strftime("%H:%M")
+        try:
+            now = now_local()
+            current_time = now.strftime("%H:%M")
 
-        if (now - last_dept_refresh).total_seconds() > 3600:
-            try:
-                await refresh_departments(force=True)
-                last_dept_refresh = now
-                logging.info("refresh_departments: обновлено")
-            except Exception as e:
-                logging.warning("refresh_departments error: %s", e)
-
-        if (now - last_periods_refresh).total_seconds() > SHEET_PERIODS_REFRESH_SECONDS:
-            try:
-                await sync_from_db()
-                last_periods_refresh = now
-            except Exception as e:
-                logging.warning("sheet_periods sync error: %s", e)
-
-        today_key = now.strftime("%Y-%m-%d")
-        today_date = now.date()
-        if today_date != last_cleanup:
-            cutoff = (today_date - timedelta(days=2)).strftime("%Y-%m-%d")
-            sent = {k: v for k, v in sent.items() if k.split("-", 1)[1][:10] >= cutoff}
-            last_cleanup = today_date
-
-        for _nr in await get_notify_users():
-            user_id, name, notify_time = _nr[0], _nr[1], _nr[2]
-            nr_role = _nr[3] if len(_nr) > 3 else None
-            if notify_time != current_time:
-                continue
-
-            key = f"{user_id}-{today_key}-{notify_time}"
-            if sent.get(key):
-                continue
-
-            try:
-                text = await schedule.get_notification_text(name, target_role=nr_role)
-                if text:
-                    await bot.send_message(user_id, text, reply_markup=daily_notify_kb())
-                    sent[key] = True
-                else:
-                    logging.warning(
-                        "notification_loop: пустой текст user_id=%s name=%s notify_time=%s role=%s",
-                        user_id, name, notify_time, nr_role,
-                    )
-            except Exception as e:
-                logging.exception(
-                    "notification_loop: ошибка user_id=%s name=%s notify_time=%s role=%s: %s",
-                    user_id, name, notify_time, nr_role, e,
+            if (now - last_heartbeat).total_seconds() >= 3600:
+                logging.info(
+                    "notification_loop: alive tz=%s now=%s",
+                    APP_TIMEZONE_NAME,
+                    now.isoformat(timespec="seconds"),
                 )
+                last_heartbeat = now
+
+            if (now - last_dept_refresh).total_seconds() > 3600:
+                try:
+                    await refresh_departments(force=True)
+                    last_dept_refresh = now
+                    logging.info("refresh_departments: обновлено")
+                except Exception as e:
+                    logging.warning("refresh_departments error: %s", e)
+
+            if (now - last_periods_refresh).total_seconds() > SHEET_PERIODS_REFRESH_SECONDS:
+                try:
+                    await sync_from_db()
+                    last_periods_refresh = now
+                except Exception as e:
+                    logging.warning("sheet_periods sync error: %s", e)
+
+            today_key = now.strftime("%Y-%m-%d")
+            today_date = now.date()
+            if today_date != last_cleanup:
+                cutoff = (today_date - timedelta(days=2)).strftime("%Y-%m-%d")
+                sent = {k: v for k, v in sent.items() if k.split("-", 1)[1][:10] >= cutoff}
+                last_cleanup = today_date
+
+            try:
+                users = await get_notify_users()
+            except Exception as e:
+                logging.error("notification_loop DB error: %s", e)
+                await asyncio.sleep(60)
+                continue
+
+            for _nr in users:
+                user_id, name, notify_time = _nr[0], _nr[1], _nr[2]
+                nr_role = _nr[3] if len(_nr) > 3 else None
+                notify_hhmm = normalize_hhmm(notify_time)
+                if not notify_hhmm or notify_hhmm != current_time:
+                    continue
+
+                key = f"{user_id}-{today_key}-{notify_hhmm}"
+                if sent.get(key):
+                    continue
+
+                try:
+                    text = await schedule.get_notification_text(name, target_role=nr_role)
+                    if text:
+                        await bot.send_message(user_id, text, reply_markup=daily_notify_kb())
+                        sent[key] = True
+                        logging.info(
+                            "notification_loop: sent user_id=%s name=%s time=%s",
+                            user_id, name, notify_hhmm,
+                        )
+                    else:
+                        logging.warning(
+                            "notification_loop: пустой текст user_id=%s name=%s notify_time=%s role=%s",
+                            user_id, name, notify_time, nr_role,
+                        )
+                except Exception as e:
+                    logging.exception(
+                        "notification_loop: ошибка user_id=%s name=%s notify_time=%s role=%s: %s",
+                        user_id, name, notify_time, nr_role, e,
+                    )
+
+        except Exception as e:
+            logging.exception("notification_loop: критическая ошибка цикла: %s", e)
 
         try:
             await asyncio.sleep(10)

@@ -18,7 +18,7 @@ from keyboards.compare import get_available_periods
 from repositories.shifts_repo import delete_shift, get_shift_for_date, get_shifts_for_month, save_shift
 from repositories.users_repo import get_onboarding_seen, get_user, save_user
 from schedule_utils import detect_shift, detect_shift_type, format_date, get_standard_hours, is_work_shift
-from ui_utils import is_valid_time
+from ui_utils import is_valid_time, normalize_hhmm
 from services import salary_service
 from services import schedule_service as schedule
 from services.gen_cleaning_service import is_gen_cleaning_day
@@ -168,13 +168,15 @@ async def update_user_settings(
 
     if notify_time is not None and not is_valid_time(notify_time):
         return {"error": "bad_time"}
+    if notify_time is not None:
+        notify_time = normalize_hhmm(notify_time) or notify_time
     if theme is not None and theme not in THEMES:
         return {"error": "bad_theme"}
 
     chat_msgs: list[str] = []
 
     if notify is True:
-        time_val = notify_time or user[3]
+        time_val = normalize_hhmm(notify_time or user[3]) or (notify_time or user[3])
         if not time_val:
             return {"error": "need_time"}
         await save_user(user_id, notify=1, notify_time=time_val)
