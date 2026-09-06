@@ -12,6 +12,7 @@ from departments_manager import (
     SHEET_ROLES,
     normalize_role_name,
     ordered_role_keys,
+    role_area,
     role_display_label,
 )
 from schedule_utils import clean_value, detect_shift, format_date, is_work_shift
@@ -24,6 +25,17 @@ ROLES = SHEET_ROLES
 MONTHS = None
 RU_HOLIDAYS = None
 _load_sheet = None
+
+
+def _area_totals_from_people(people_by_role: dict) -> tuple[int, int, int]:
+    hall = kitchen = 0
+    for role_key, people in people_by_role.items():
+        count = len(people or [])
+        if role_area(role_key) == "kitchen":
+            kitchen += count
+        else:
+            hall += count
+    return hall + kitchen, hall, kitchen
 
 
 def configure_schedule_service(load_sheet, months, ru_holidays):
@@ -202,6 +214,9 @@ async def get_people_for_day(day, month=None, year=None):
         "кальянщик": "Кальян",
         "кальянщики": "Кальян",
         "хостес": "Хостес",
+        "повар": "Повар",
+        "повара": "Повар",
+        "повары": "Повар",
     }
 
     weekdays = {"вт", "ср", "чт", "пт", "сб", "вс", "пн"}
@@ -405,8 +420,16 @@ async def get_day_schedule(name, day, month=None, year=None, target_role=None):
                 for people in [people_by_role.get(role_key, [])]
                 if people
             ]
-            total_on_shift = sum(len(v) for v in people_by_role.values())
-            team_section = mf.team_on_shift(total_on_shift, role_blocks) if role_blocks else None
+            total_on_shift, hall_total, kitchen_total = _area_totals_from_people(people_by_role)
+            team_section = (
+                mf.team_on_shift(
+                    total_on_shift,
+                    role_blocks,
+                    hall_total=hall_total,
+                    kitchen_total=kitchen_total,
+                )
+                if role_blocks else None
+            )
         return mf.day_schedule_card(
             format_date(day, month, year),
             name,
@@ -441,8 +464,16 @@ async def get_day_schedule(name, day, month=None, year=None, target_role=None):
         for people in [people_by_role.get(role_key, [])]
         if people
     ]
-    total_on_shift = sum(len(v) for v in people_by_role.values())
-    team_section = mf.team_on_shift(total_on_shift, role_blocks) if role_blocks else None
+    total_on_shift, hall_total, kitchen_total = _area_totals_from_people(people_by_role)
+    team_section = (
+        mf.team_on_shift(
+            total_on_shift,
+            role_blocks,
+            hall_total=hall_total,
+            kitchen_total=kitchen_total,
+        )
+        if role_blocks else None
+    )
 
     off_section = None
     if not working:
@@ -628,8 +659,15 @@ async def get_people(day, user_id, month=None, year=None):
         for role_key in ordered_role_keys(result)
         for people in [result.get(role_key, [])]
     ]
+    _total, hall_total, kitchen_total = _area_totals_from_people(result)
 
-    return mf.who_works_card(format_date(day, month, year), my_status, role_blocks)
+    return mf.who_works_card(
+        format_date(day, month, year),
+        my_status,
+        role_blocks,
+        hall_total=hall_total,
+        kitchen_total=kitchen_total,
+    )
 
 async def find_next_shift(name, from_day, from_month=None, from_year=None, target_role=None):
     """Ищет следующую смену начиная с from_day, переходит через месяц если нужно."""

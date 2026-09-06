@@ -459,14 +459,19 @@ async function openDaySheet(dateStr) {
       return;
     }
 
-    const working = (data.departments || []).map((dep) => `
-      <div class="role-block">
-        <div class="role-title">${escapeHtml(dep.role_label)} · ${dep.people.length}</div>
-        <div class="people-list">
-          ${dep.people.map((n) => personChipBtnHtml(n, dep.role, dep.role_label)).join("")}
-        </div>
-      </div>
-    `).join("") || `<div class="empty-team">никого на смене</div>`;
+    const working = (() => {
+      const areas = data.areas || [];
+      if (areas.length) {
+        return areas.map((area) => `
+          <div class="area-block">
+            <div class="area-title">${escapeHtml(area.label)} · ${area.total}</div>
+            ${departmentsBlocksHtml(area.departments)}
+          </div>
+        `).join("") || `<div class="empty-team">никого на смене</div>`;
+      }
+      return departmentsBlocksHtml(data.departments)
+        || `<div class="empty-team">никого на смене</div>`;
+    })();
 
     const offRows = (data.off || []).map((p) => `
       <div class="off-row">
@@ -479,10 +484,14 @@ async function openDaySheet(dateStr) {
       ? '<div class="gen-cleaning-banner">🧹 Ген уборка в 9:00</div>'
       : "";
 
+    const countsMeta = (data.hall_total || data.kitchen_total)
+      ? `зал ${data.hall_total || 0} · кухня ${data.kitchen_total || 0}`
+      : `${data.total_working} на смене`;
+
     content.innerHTML = `
       <div class="hours-title">${escapeHtml(data.weekday)} · ${escapeHtml(data.header)}</div>
       ${genBanner}
-      <div class="card-meta">${data.total_working} на смене</div>
+      <div class="card-meta">${countsMeta}</div>
       <div class="card" style="margin-top:12px">
         <div class="card-label">работают</div>
         ${working}
@@ -709,6 +718,41 @@ async function renderAnalytics() {
   }
 }
 
+function teamAreaCountsHtml(data) {
+  if (!data?.published) return "";
+  const hall = Number(data.hall_total || 0);
+  const kitchen = Number(data.kitchen_total || 0);
+  if (hall || kitchen) {
+    return `<div class="team-total">зал ${hall} · кухня ${kitchen}</div>`;
+  }
+  return `<div class="team-total">${data.total || 0} чел.</div>`;
+}
+
+function departmentsBlocksHtml(departments) {
+  return (departments || []).map((dep) => `
+    <div class="role-block">
+      <div class="role-title">${escapeHtml(dep.role_label)} · ${dep.people.length}</div>
+      <div class="people-list">
+        ${dep.people.map((name) => personChipBtnHtml(name, dep.role, dep.role_label)).join("")}
+      </div>
+    </div>
+  `).join("");
+}
+
+function teamAreasHtml(data) {
+  const areas = data.areas || [];
+  if (areas.length) {
+    return areas.map((area) => `
+      <div class="area-block">
+        <div class="area-title">${escapeHtml(area.label)} · ${area.total}</div>
+        ${departmentsBlocksHtml(area.departments)}
+      </div>
+    `).join("");
+  }
+  return departmentsBlocksHtml(data.departments)
+    || `<div class="empty-team">никого на смене</div>`;
+}
+
 async function renderTeam() {
   renderLoading();
   try {
@@ -733,14 +777,7 @@ async function renderTeam() {
     } else if (!data.total) {
       body = `<div class="empty-team">никого на смене</div>`;
     } else {
-      body = data.departments.map((dep) => `
-        <div class="role-block">
-          <div class="role-title">${escapeHtml(dep.role_label)} · ${dep.people.length}</div>
-          <div class="people-list">
-            ${dep.people.map((name) => personChipBtnHtml(name, dep.role, dep.role_label)).join("")}
-          </div>
-        </div>
-      `).join("");
+      body = teamAreasHtml(data);
     }
 
     document.getElementById("main").innerHTML = `
@@ -751,7 +788,7 @@ async function renderTeam() {
       <div class="card">
         <div class="team-header">
           <div class="card-label">${escapeHtml(data.weekday)} · ${escapeHtml(data.header)}</div>
-          ${data.published ? `<div class="team-total">${data.total} чел.</div>` : ""}
+          ${teamAreaCountsHtml(data)}
         </div>
         <div class="my-shift-line ${myClass}">${hasBlocks(my) ? "ты" : `ты · ${myLine}`}</div>
         ${myBlocks}

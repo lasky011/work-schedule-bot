@@ -1921,6 +1921,22 @@ body.is-supervisor .nav {
   color: var(--text-muted);
 }
 
+.area-block {
+  margin-bottom: 16px;
+}
+
+.area-block:last-child {
+  margin-bottom: 0;
+}
+
+.area-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 8px;
+  letter-spacing: 0.02em;
+}
+
 .team-toggle {
   display: flex;
   gap: 6px;

@@ -10,6 +10,7 @@ from departments_manager import (
     normalize_role_name,
     ordered_role_keys,
     person_has_ambiguous_role,
+    role_area,
     role_display_label,
     roles_for_person,
 )
@@ -38,6 +39,42 @@ def _roster_person_name(entry: str) -> str:
     if sep in entry:
         return entry.split(sep, 1)[0].strip()
     return entry.strip()
+
+
+def _department_people_count(dep: dict) -> int:
+    return len(dep.get("people") or [])
+
+
+def _group_departments_by_area(departments: list[dict]) -> list[dict]:
+    """Группирует роли в зоны «Зал» / «Кухня» с подсчётом людей."""
+    buckets: dict[str, list[dict]] = {"hall": [], "kitchen": []}
+    for dep in departments:
+        area = role_area(dep.get("role"))
+        buckets.setdefault(area, []).append(dep)
+
+    areas = []
+    for key, label in (("hall", "Зал"), ("kitchen", "Кухня")):
+        deps = buckets.get(key) or []
+        if not deps:
+            continue
+        total = sum(_department_people_count(d) for d in deps)
+        areas.append({
+            "key": key,
+            "label": label,
+            "total": total,
+            "departments": deps,
+        })
+    return areas
+
+
+def _area_totals(areas: list[dict]) -> tuple[int, int]:
+    hall = kitchen = 0
+    for area in areas:
+        if area.get("key") == "kitchen":
+            kitchen = int(area.get("total") or 0)
+        else:
+            hall = int(area.get("total") or 0)
+    return hall, kitchen
 
 
 def _is_supervisor(name: str | None, role: str | None = None) -> bool:
@@ -539,6 +576,9 @@ async def get_day_roster(date_str: str) -> dict:
 
     off_people.sort(key=lambda p: (p["role_label"] or "", p["name"]))
 
+    areas = _group_departments_by_area(departments)
+    hall_total, kitchen_total = _area_totals(areas)
+
     return {
         "date": date_str,
         "day": day,
@@ -549,6 +589,9 @@ async def get_day_roster(date_str: str) -> dict:
         "published": published,
         "gen_cleaning": is_gen_cleaning_day(dt.date()),
         "total_working": len(working_plain_names),
+        "hall_total": hall_total,
+        "kitchen_total": kitchen_total,
+        "areas": areas,
         "departments": departments,
         "off": off_people,
     }
@@ -667,9 +710,14 @@ async def get_people_on_shift(user_id: int, day_offset: int = 0) -> dict:
 
     roster = await get_day_roster(target.strftime("%Y-%m-%d"))
     departments = list(roster.get("departments") or [])
+    areas = list(roster.get("areas") or _group_departments_by_area(departments))
     total = int(roster.get("total_working") or 0)
     if not total:
         total = sum(len(dep.get("people") or []) for dep in departments)
+    hall_total = int(roster.get("hall_total") or 0)
+    kitchen_total = int(roster.get("kitchen_total") or 0)
+    if areas and not (hall_total or kitchen_total):
+        hall_total, kitchen_total = _area_totals(areas)
     published = bool(roster.get("published", published))
 
     return {
@@ -681,7 +729,10 @@ async def get_people_on_shift(user_id: int, day_offset: int = 0) -> dict:
         "header": f"{day} {schedule.MONTHS[month]}",
         "published": published,
         "total": total,
+        "hall_total": hall_total,
+        "kitchen_total": kitchen_total,
         "my_shift": my_shift,
+        "areas": areas,
         "departments": departments,
         "day_offset": day_offset,
     }

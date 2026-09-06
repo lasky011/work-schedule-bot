@@ -7,6 +7,7 @@ ROLE_RATE_ENV: dict[str, str] = {
     "Кальянщик": "RATE_HOOKAH",
     "Менеджеры": "RATE_MANAGER",
     "Стажер": "RATE_INTERN",
+    "Повар": "RATE_COOK",
 }
 
 

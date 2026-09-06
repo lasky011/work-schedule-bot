@@ -234,11 +234,19 @@ def test_departments_manager():
     assert departments_manager.role_display_label("Бармены") == "🍸 Бармен"
     assert departments_manager.role_display_label("Кальянщики") == "💨 Кальян"
     assert departments_manager.role_display_label("Стажер") == "🎓 Стажер"
+    assert departments_manager.normalize_role_name("ПОВАРА") == "Повар"
+    assert departments_manager.normalize_role_name("Повары") == "Повар"
+    assert departments_manager.role_display_label("Повар") == "👨‍🍳 Повар"
+    assert departments_manager.role_area("Официант") == "hall"
+    assert departments_manager.role_area("Повар") == "kitchen"
+    assert departments_manager.role_area("ПОВАРА") == "kitchen"
+    assert "👨‍🍳 Повар" in departments_manager.DEPARTMENTS
     assert departments_manager.is_department_label("🎓 Стажер") is True
     assert departments_manager.ordered_role_keys(
         {"Бармен": [], "Стажер": [], "Официант": []}
     )[:3] == ["Официант", "Стажер", "Бармен"]
     assert "Роберт Фролов стаж" in departments_manager.DEPARTMENTS["🎓 Стажер"]
+    assert "Азим" in departments_manager.DEPARTMENTS["👨‍🍳 Повар"]
 
 
 def test_intern_shift_times():
@@ -738,6 +746,11 @@ def test_people_on_shift_includes_managers():
                 "working": True, "shift_type": "morning",
                 "label": "утро", "hours": 8, "raw": "11:00",
             }
+        if name == "Азим":
+            return {
+                "working": True, "shift_type": "morning",
+                "label": "утро", "hours": 8, "raw": "12",
+            }
         return {"working": False, "shift_type": None, "label": "вых", "hours": None}
 
     async def fake_user(_user_id):
@@ -748,7 +761,10 @@ def test_people_on_shift_includes_managers():
             miniapp_service.schedule, "is_day_published", return_value=True,
         ), patch.object(
             miniapp_service.schedule, "get_people_for_day",
-            new=AsyncMock(return_value={"Официант": ["Виталий — 11:00 — утро"]}),
+            new=AsyncMock(return_value={
+                "Официант": ["Виталий — 11:00 — утро"],
+                "Повар": ["Азим — 12 — утро"],
+            }),
         ), patch.object(
             miniapp_service, "_shift_for_person", new=fake_shift,
         ), patch.object(
@@ -760,6 +776,23 @@ def test_people_on_shift_includes_managers():
     names = [p for dep in data["departments"] for p in dep["people"]]
     assert any("Рина Евгеньевна" in n for n in names), data["departments"]
     assert any("Менедж" in (dep["role_label"] or dep["role"]) for dep in data["departments"]), data["departments"]
+    assert any("Азим" in n for n in names), data["departments"]
+    assert data["kitchen_total"] >= 1, data
+    assert data["hall_total"] >= 1, data
+    area_keys = [a["key"] for a in data["areas"]]
+    assert "hall" in area_keys and "kitchen" in area_keys, data["areas"]
+
+
+def test_cook_role_aliases():
+    from departments_manager import normalize_role_name, role_area, role_display_label
+    from schedule_utils import detect_shift_type, is_work_shift
+
+    assert normalize_role_name("ПОВАРА") == "Повар"
+    assert role_area("Повар") == "kitchen"
+    assert role_display_label("Повары") == "👨‍🍳 Повар"
+    for value in ("11", "12", "15"):
+        assert is_work_shift(value)
+        assert detect_shift_type(value) in {"morning", "evening"}
 
 
 def test_schedule_gen_cleaning_flag():
@@ -1313,6 +1346,7 @@ def main():
         ("gen_cleaning_schedule", test_gen_cleaning_schedule),
         ("gen_cleaning_admin_kb", test_gen_cleaning_admin_keyboard),
         ("people_on_shift_managers", test_people_on_shift_includes_managers),
+        ("cook_role_aliases", test_cook_role_aliases),
         ("schedule_gen_cleaning_flag", test_schedule_gen_cleaning_flag),
         ("miniapp_static_assets", test_miniapp_static_assets),
         ("miniapp_health_endpoint", test_miniapp_health_endpoint),

@@ -4,9 +4,22 @@ from typing import Awaitable, Callable
 from app_config import now_local
 from schedule_utils import clean_value
 
-SHEET_ROLES = ["Менеджеры", "Менеджер", "Официант", "Стажер", "Бармен", "Кальян", "Хостес", "Управляющий"]
+SHEET_ROLES = [
+    "Менеджеры", "Менеджер", "Официант", "Стажер", "Бармен",
+    "Кальян", "Хостес", "Повар", "Повара", "Повары", "ПОВАРА", "Управляющий",
+]
 
-ROLE_ORDER = ["Менеджеры", "Менеджер", "Официант", "Стажер", "Бармен", "Кальян", "Кальянщик", "Хостес", "Управляющий"]
+ROLE_ORDER = [
+    "Менеджеры", "Менеджер", "Официант", "Стажер", "Бармен",
+    "Кальян", "Кальянщик", "Хостес", "Повар", "Управляющий",
+]
+
+# Зал — сервис гостей; кухня — повара.
+KITCHEN_ROLES = frozenset({"Повар"})
+HALL_ROLES = frozenset({
+    "Менеджеры", "Менеджер", "Официант", "Стажер", "Бармен",
+    "Кальян", "Кальянщик", "Хостес", "Управляющий",
+})
 
 DEPARTMENTS_FALLBACK: dict[str, list[str]] = {
     "👔 Менеджер": [
@@ -44,6 +57,14 @@ DEPARTMENTS_FALLBACK: dict[str, list[str]] = {
         "Екатерина",
         "Дарья",
     ],
+    "👨‍🍳 Повар": [
+        "Азим",
+        "Майя",
+        "Иброгим",
+        "Мухаммад",
+        "Бобур",
+        "Ислом",
+    ],
 }
 
 DEPT_EMOJIS: dict[str, str] = {
@@ -53,6 +74,7 @@ DEPT_EMOJIS: dict[str, str] = {
     "Бармен": "🍸 Бармен",
     "Кальян": "💨 Кальян",
     "Хостес": "🙋 Хостес",
+    "Повар": "👨‍🍳 Повар",
     "Управляющий": "👑 Управляющий",
 }
 
@@ -153,11 +175,23 @@ def normalize_role_name(role: str | None) -> str | None:
         "Кальянщики": "Кальян",
         "Кальян": "Кальян",
         "Хостес": "Хостес",
+        "Повар": "Повар",
+        "Повара": "Повар",
+        "Повары": "Повар",
+        "ПОВАРА": "Повар",
         "Управляющий": "Управляющий",
         "Управляющие": "Управляющий",
     }
 
     return aliases.get(text, text)
+
+
+def role_area(role: str | None) -> str:
+    """Зона работы: hall (зал) или kitchen (кухня)."""
+    key = normalize_role_name(role) or (str(role).strip() if role else "")
+    if key in KITCHEN_ROLES:
+        return "kitchen"
+    return "hall"
 
 
 def role_display_label(role: str) -> str:
@@ -175,6 +209,7 @@ def role_display_label(role: str) -> str:
         "Бармен": "🍸 Бармен",
         "Кальян": "💨 Кальян",
         "Хостес": "🙋 Хостес",
+        "Повар": "👨‍🍳 Повар",
         "Управляющий": "👑 Управляющий",
     }
 
@@ -221,9 +256,11 @@ def parse_departments(df) -> dict:
     current_role = None
     for i in range(len(df)):
         first = str(df.iloc[i, 0]).strip()
-        if first in SHEET_ROLES:
-            current_role = first
-            result[current_role] = []
+        if first in SHEET_ROLES or normalize_role_name(first) in {
+            "Менеджеры", "Официант", "Стажер", "Бармен", "Кальян", "Хостес", "Повар", "Управляющий",
+        }:
+            current_role = normalize_role_name(first) or first
+            result.setdefault(current_role, [])
             continue
         if current_role is None:
             continue
@@ -258,6 +295,9 @@ async def refresh_departments(force: bool = False) -> None:
         emoji_map = {label.split(" ", 1)[1]: label for label in DEPARTMENTS_FALLBACK}
         emoji_map["Менеджеры"] = "👔 Менеджер"
         emoji_map["Кальянщик"] = "💨 Кальян"
+        emoji_map["Повар"] = "👨‍🍳 Повар"
+        emoji_map["Повара"] = "👨‍🍳 Повар"
+        emoji_map["Повары"] = "👨‍🍳 Повар"
 
         new_departments = {
             emoji_map.get(role, role): names
