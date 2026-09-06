@@ -619,7 +619,15 @@ async def main():
         ) if not t.cancelled() and t.exception() else None
     )
 
-    await dp.start_polling(bot)
+    while True:
+        try:
+            await dp.start_polling(bot)
+            logging.warning("start_polling завершился без ошибки — перезапуск через 5 с")
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logging.exception("start_polling упал — перезапуск через 5 с")
+        await asyncio.sleep(5)
 
 
 if __name__ == "__main__":
