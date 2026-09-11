@@ -26,7 +26,12 @@ from db import USE_POSTGRES, get_db_connection, init_pg_pool
 from keyboards import configure_keyboard_context
 from keyboards.inline_miniapp import daily_notify_kb, hours_notify_kb
 from repositories.shifts_repo import get_shift_for_date
-from repositories.users_repo import get_notify_hours_users, get_notify_users, get_registered_users
+from repositories.users_repo import (
+    get_notify_hours_users,
+    get_notify_users,
+    get_registered_users,
+    get_supervisor_users,
+)
 from routers.colleagues import router as colleagues_router
 from routers.common import router as common_router
 from routers.fallback import router as fallback_router
@@ -53,6 +58,11 @@ from services.sheet_loader import CACHE_REFRESH_SECONDS, load_full_sheet, load_s
 from services.sheet_periods_service import load_from_db_sync, sync_from_db
 from services.rates_service import load_from_db_sync as load_rates_sync
 from services.schedule_watch_service import check_all_registered_users, configure_schedule_watch
+from services.supervisor_schedule import (
+    MEETING_REMINDER_TEXT,
+    MEETING_REMINDER_TIME,
+    MEETING_REMINDER_WEEKDAY,
+)
 from ui_utils import configure_ui_utils
 
 validate_required_env()
@@ -469,6 +479,57 @@ async def gen_cleaning_notification_loop(bot) -> None:
             break
 
 
+async def supervisor_meeting_reminder_loop(bot) -> None:
+    """Пн 22:00 — напоминание управляющему про завтрашнее собрание."""
+    sent = {}
+    last_cleanup = now_local().date()
+
+    while True:
+        try:
+            now = now_local()
+            today = now.date()
+            if today != last_cleanup:
+                cutoff = (today - timedelta(days=14)).strftime("%Y-%m-%d")
+                sent = {
+                    k: v for k, v in sent.items()
+                    if k.rsplit("-", 1)[-1] >= cutoff
+                }
+                last_cleanup = today
+
+            if (
+                now.weekday() == MEETING_REMINDER_WEEKDAY
+                and now.strftime("%H:%M") == MEETING_REMINDER_TIME
+            ):
+                week_key = today.strftime("%Y-%m-%d")
+                try:
+                    users = await get_supervisor_users()
+                except Exception as e:
+                    logging.error("supervisor_meeting_reminder_loop DB error: %s", e)
+                    await asyncio.sleep(60)
+                    continue
+
+                for user_row in users:
+                    user_id = user_row[0]
+                    key = f"{user_id}-meeting-{week_key}"
+                    if sent.get(key):
+                        continue
+                    try:
+                        await bot.send_message(user_id, MEETING_REMINDER_TEXT)
+                        sent[key] = True
+                    except Exception as e:
+                        logging.exception(
+                            "supervisor_meeting_reminder_loop: user_id=%s: %s",
+                            user_id, e,
+                        )
+        except Exception:
+            logging.exception("supervisor_meeting_reminder_loop: критическая ошибка")
+
+        try:
+            await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            break
+
+
 async def schedule_watch_loop() -> None:
     await asyncio.sleep(30)
     while True:
@@ -601,6 +662,13 @@ async def main():
     gen_cleaning_task.add_done_callback(
         lambda t: logging.exception(
             "gen_cleaning_notification_loop: фоновая задача завершилась с ошибкой",
+            exc_info=t.exception(),
+        ) if not t.cancelled() and t.exception() else None
+    )
+    meeting_reminder_task = asyncio.create_task(supervisor_meeting_reminder_loop(bot))
+    meeting_reminder_task.add_done_callback(
+        lambda t: logging.exception(
+            "supervisor_meeting_reminder_loop: фоновая задача завершилась с ошибкой",
             exc_info=t.exception(),
         ) if not t.cancelled() and t.exception() else None
     )

@@ -115,6 +115,8 @@ def get_day_column(df, day):
                     return col_index
 
     return None
+
+
 def normalize_person_lookup_name(name: str | None) -> str:
     """Нормализация имени для поиска сотрудника в Google Sheets."""
     if name is None:
@@ -125,6 +127,18 @@ def normalize_person_lookup_name(name: str | None) -> str:
     text = text.lower()
     text = re.sub(r"\s+", " ", text).strip()
     return text
+
+
+def person_names_match(a: str | None, b: str | None) -> bool:
+    """Совпадение имён с учётом короткого/полного («Никита» ≡ «Никита Рафаэлович»)."""
+    na = normalize_person_lookup_name(a)
+    nb = normalize_person_lookup_name(b)
+    if not na or not nb:
+        return False
+    if na == nb:
+        return True
+    short, long = (na, nb) if len(na) <= len(nb) else (nb, na)
+    return long.startswith(short + " ")
 
 
 async def find_row(name, day, month=None, year=None, target_role=None):

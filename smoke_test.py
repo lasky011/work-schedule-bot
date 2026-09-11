@@ -1414,6 +1414,97 @@ def test_parse_listen_port():
     assert _parse_listen_port("abc") == 8080
 
 
+def test_team_message_access_and_endpoints():
+    from unittest.mock import AsyncMock, patch
+
+    from app_config import is_team_message_extra_name
+    from services import miniapp_service
+    from services.telegram_notify import SendResult
+
+    assert is_team_message_extra_name("Виталий")
+    assert is_team_message_extra_name("Егор Корниенков")
+    assert not is_team_message_extra_name("Случайный")
+    assert miniapp_service._can_team_message("Владислав Байкалов", None)
+    assert miniapp_service._can_team_message("Алина", "Менеджеры")
+    assert not miniapp_service._can_team_message("Официант", "Официанты")
+
+    async def run():
+        with patch(
+            "services.miniapp_service.get_user",
+            new=AsyncMock(return_value=(1, "Владислав Байкалов", 0, None, "Управляющий", 0, 0, None, "alice_dark")),
+        ), patch(
+            "services.miniapp_service.get_registered_users",
+            new=AsyncMock(return_value=[
+                (10, "Алина", "Официанты"),
+                (11, "Борис", "Менеджеры"),
+            ]),
+        ), patch.object(
+            miniapp_service, "_departments_map",
+            return_value={
+                "🍽 Официанты": ["Алина", "Катя"],
+                "👑 Менеджеры": ["Борис"],
+            },
+        ), patch.object(
+            miniapp_service.schedule, "is_day_published", return_value=False,
+        ):
+            targets = await miniapp_service.list_supervisor_message_targets(1)
+            assert "error" not in targets
+            assert targets["reachable_total"] == 2
+            roles = {d["role"] for d in targets["departments"]}
+            assert "Официанты" in roles
+            assert "Менеджеры" in roles
+
+        with patch(
+            "services.miniapp_service.get_user",
+            new=AsyncMock(return_value=(2, "Катя", 0, None, "Официанты", 0, 0, None, "alice_dark")),
+        ):
+            denied = await miniapp_service.list_supervisor_message_targets(2)
+            assert denied.get("error") == "forbidden"
+
+        with patch(
+            "services.miniapp_service.get_user",
+            new=AsyncMock(return_value=(1, "Владислав Байкалов", 0, None, "Управляющий", 0, 0, None, "alice_dark")),
+        ), patch(
+            "services.miniapp_service.list_supervisor_message_targets",
+            new=AsyncMock(return_value={
+                "departments": [{
+                    "role": "Официанты",
+                    "role_label": "🍽 Официанты",
+                    "reachable": 1,
+                    "total": 1,
+                    "people": [{
+                        "name": "Алина",
+                        "role": "Официанты",
+                        "registered": True,
+                        "user_id": 10,
+                        "user_ids": [10],
+                        "accounts": 1,
+                    }],
+                }],
+                "reachable_total": 1,
+                "shift_today": {"reachable": 0, "published": False},
+                "shift_tomorrow": {"reachable": 0, "published": False},
+            }),
+        ), patch(
+            "services.miniapp_service.get_registered_users",
+            new=AsyncMock(return_value=[(10, "Алина", "Официанты")]),
+        ), patch(
+            "services.telegram_notify.send_user_message_result",
+            new=AsyncMock(return_value=SendResult(ok=True, dry_run=True)),
+        ), patch(
+            "services.notify_status_service.report_delivery_to_admins",
+            new=AsyncMock(return_value=0),
+        ):
+            res = await miniapp_service.send_supervisor_message(
+                1, "тест", send_all=True,
+            )
+            assert res.get("ok") is True
+            assert res.get("sent") == 1
+            assert res.get("dry_run") is True
+
+    asyncio.run(run())
+
+
 def main():
     checks = [
         ("bot_import", test_bot_import),
@@ -1462,6 +1553,7 @@ def main():
         ("period_gap_no_repeat", test_period_gap_alert_no_repeat),
         ("cache_signal", test_cache_signal_pending),
         ("admin_health_period_gap", test_admin_health_period_gap),
+        ("team_message", test_team_message_access_and_endpoints),
     ]
 
     for name, fn in checks:

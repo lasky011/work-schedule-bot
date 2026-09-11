@@ -2167,6 +2167,91 @@ body.is-supervisor .nav {
   font-weight: 600;
 }
 
+.msg-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+
+.msg-actions .btn.active {
+  color: var(--text);
+  border-color: var(--btn-primary-border);
+  background: var(--btn-primary-bg);
+}
+
+.msg-dept-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.msg-dept {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--btn-border);
+  background: var(--btn-bg);
+  color: var(--btn-text);
+  font-family: var(--font-ui);
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s, color 0.2s;
+}
+
+.msg-dept.selected {
+  border-color: var(--toggle-on-border);
+  background: var(--toggle-on-bg);
+  color: var(--toggle-on-text);
+}
+
+.msg-dept.person-pick {
+  border-color: var(--shift-evening);
+  background: var(--shift-evening-bg);
+  color: var(--shift-evening);
+}
+
+.msg-dept-title {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.msg-dept-meta {
+  font-size: 11px;
+  opacity: 0.7;
+  white-space: nowrap;
+}
+
+.msg-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 8px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid var(--btn-border);
+  background: var(--btn-bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 1.4;
+  resize: vertical;
+  min-height: 96px;
+}
+
+.msg-textarea:focus {
+  outline: none;
+  border-color: var(--gold);
+}
+
+.person-chip-btn.muted,
+.person-chip-btn:disabled {
+  opacity: 0.4;
+}
+
 .bar-fill.morning {
   background: var(--shift-morning);
   opacity: 0.85;

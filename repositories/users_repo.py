@@ -204,3 +204,15 @@ def _get_registered_users_sync():
 
 async def get_registered_users():
     return await asyncio.to_thread(_get_registered_users_sync)
+
+
+async def get_supervisor_users():
+    """Пользователи с фиксированным графиком управляющего (по имени/роли)."""
+    from services.supervisor_schedule import uses_fixed_schedule
+
+    users = await get_registered_users()
+    return [
+        (uid, name)
+        for uid, name, role in users
+        if uses_fixed_schedule(name, role)
+    ]

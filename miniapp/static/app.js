@@ -18,6 +18,11 @@ let addParticipantMode = false;
 let salaryPeriods = null;
 let salaryPeriodIndex = 0;
 let namePickRole = null;
+let msgSelectedRoles = [];
+let msgSendAll = false;
+let msgSelectedPerson = null;
+let msgShiftOffset = null;
+let msgTargets = null;
 
 function parseStartParams() {
   const p = new URLSearchParams(window.location.search);
@@ -1461,17 +1466,324 @@ async function renderPeopleList() {
       ? "тап — выбрать участника · внизу «перейти к сравнению»"
       : "тап — график · долгий тап — в сравнение · тап по выбранному — убрать";
 
+    const msgBtn = profile?.can_team_message
+      ? `<button type="button" class="btn btn-primary" id="open-team-message" style="width:100%;margin-bottom:12px">написать команде</button>`
+      : "";
+
     document.getElementById("main").innerHTML = `
+      ${msgBtn}
       <div class="card-label">${hint}</div>
       <div class="card">${blocks || '<div class="empty-team">нет коллег в списке</div>'}</div>
       <p class="quote">everyone's mad here</p>
     `;
 
+    document.getElementById("open-team-message")?.addEventListener("click", () => {
+      hapticLight();
+      openTeamMessageScreen();
+    });
     document.querySelectorAll(".person-chip-btn").forEach((btn) => bindPersonChip(btn));
     renderCompareDock();
   } catch (e) {
     renderError(e.message);
   }
+}
+
+async function openTeamMessageScreen() {
+  msgSelectedRoles = [];
+  msgSendAll = false;
+  msgSelectedPerson = null;
+  msgShiftOffset = null;
+  msgTargets = null;
+  peopleScreen = "message";
+  document.getElementById("screen-title").textContent = "сообщение";
+  document.getElementById("screen-subtitle").textContent = "отдел · смена · всем";
+  renderCompareDock();
+  await renderTeamMessage();
+}
+
+function msgRecipientSummary() {
+  if (!msgTargets) return "загрузка…";
+  if (msgSelectedPerson) {
+    return `только · ${msgSelectedPerson.name}`;
+  }
+  if (msgShiftOffset === 0) {
+    const n = msgTargets.shift_today?.reachable || 0;
+    return `сегодня на смене · ${n} чел.`;
+  }
+  if (msgShiftOffset === 1) {
+    const n = msgTargets.shift_tomorrow?.reachable || 0;
+    return `завтра на смене · ${n} чел.`;
+  }
+  if (msgSendAll) {
+    return `всем · ${msgTargets.reachable_total || 0} чел.`;
+  }
+  if (!msgSelectedRoles.length) return "выбери отдел, смену или человека";
+  let count = 0;
+  for (const dep of msgTargets.departments || []) {
+    if (msgSelectedRoles.includes(dep.role)) count += dep.reachable || 0;
+  }
+  const labels = (msgTargets.departments || [])
+    .filter((d) => msgSelectedRoles.includes(d.role))
+    .map((d) => d.role_label);
+  return `${labels.join(" · ") || "отделы"} · ${count} чел.`;
+}
+
+function toggleMsgRole(role) {
+  msgSelectedPerson = null;
+  msgSendAll = false;
+  msgShiftOffset = null;
+  const idx = msgSelectedRoles.indexOf(role);
+  if (idx >= 0) msgSelectedRoles.splice(idx, 1);
+  else msgSelectedRoles.push(role);
+}
+
+function selectMsgShift(offset) {
+  msgSelectedPerson = null;
+  msgSendAll = false;
+  msgSelectedRoles = [];
+  msgShiftOffset = msgShiftOffset === offset ? null : offset;
+}
+
+async function renderTeamMessage() {
+  const prevText = document.getElementById("msg-text")?.value || "";
+  renderLoading();
+  try {
+    if (!msgTargets) {
+      msgTargets = await api("/api/supervisor/message/targets");
+    }
+    const deps = msgTargets.departments || [];
+    const todayShift = msgTargets.shift_today || {};
+    const tomorrowShift = msgTargets.shift_tomorrow || {};
+    const deptHtml = deps.map((dep) => {
+      const selected = msgShiftOffset == null
+        && !msgSelectedPerson
+        && (msgSendAll || msgSelectedRoles.includes(dep.role));
+      const personHit = msgSelectedPerson
+        && msgSelectedPerson.role === dep.role
+        && dep.people.some((p) => p.name === msgSelectedPerson.name);
+      const cls = [
+        "msg-dept",
+        selected ? "selected" : "",
+        personHit ? "person-pick" : "",
+      ].filter(Boolean).join(" ");
+      return `
+        <button type="button" class="${cls}" data-role="${escapeAttr(dep.role)}" data-label="${escapeAttr(dep.role_label)}">
+          <span class="msg-dept-title">${escapeHtml(dep.role_label)}</span>
+          <span class="msg-dept-meta">${dep.reachable}/${dep.total} в системе</span>
+        </button>
+      `;
+    }).join("");
+
+    const todayLabel = todayShift.published
+      ? `сегодня на смене · ${todayShift.reachable || 0}`
+      : "сегодня · нет графика";
+    const tomorrowLabel = tomorrowShift.published
+      ? `завтра на смене · ${tomorrowShift.reachable || 0}`
+      : "завтра · нет графика";
+
+    document.getElementById("main").innerHTML = `
+      <button type="button" class="btn back-btn" id="msg-back">← к коллегам</button>
+      <div class="card-label">кому</div>
+      <div class="msg-actions">
+        <button type="button" class="btn${msgSendAll && msgShiftOffset == null && !msgSelectedPerson ? " active" : ""}" id="msg-all">всем</button>
+        <button type="button" class="btn${msgShiftOffset === 0 ? " active" : ""}" id="msg-shift-today"${todayShift.published === false ? " disabled" : ""}>${escapeHtml(todayLabel)}</button>
+        <button type="button" class="btn${msgShiftOffset === 1 ? " active" : ""}" id="msg-shift-tomorrow"${tomorrowShift.published === false ? " disabled" : ""}>${escapeHtml(tomorrowLabel)}</button>
+        ${msgSelectedPerson ? `<button type="button" class="btn" id="msg-clear-person">сбросить человека</button>` : ""}
+      </div>
+      <div class="card-meta" style="margin:8px 0 10px">тап — отдел · зажать — человек</div>
+      <div class="msg-dept-grid">${deptHtml || '<div class="empty-team">нет отделов</div>'}</div>
+      <div class="card" style="margin-top:14px">
+        <div class="card-label">получатели</div>
+        <div class="card-title" id="msg-summary" style="font-size:15px">${escapeHtml(msgRecipientSummary())}</div>
+      </div>
+      <div class="card">
+        <div class="card-label">текст</div>
+        <textarea id="msg-text" class="msg-textarea" rows="4" maxlength="1000" placeholder="коротко и по делу…"></textarea>
+        <button type="button" class="btn btn-primary" id="msg-send" style="width:100%;margin-top:10px">отправить</button>
+      </div>
+    `;
+
+    document.getElementById("msg-back")?.addEventListener("click", () => {
+      peopleScreen = "list";
+      document.getElementById("screen-title").textContent = TITLES.people;
+      updateSubtitle();
+      renderPeople();
+    });
+
+    document.getElementById("msg-all")?.addEventListener("click", () => {
+      hapticLight();
+      msgSelectedPerson = null;
+      msgShiftOffset = null;
+      msgSendAll = !msgSendAll;
+      if (msgSendAll) msgSelectedRoles = (msgTargets.departments || []).map((d) => d.role);
+      else msgSelectedRoles = [];
+      renderTeamMessage();
+    });
+
+    document.getElementById("msg-shift-today")?.addEventListener("click", () => {
+      if (todayShift.published === false) return;
+      hapticLight();
+      selectMsgShift(0);
+      renderTeamMessage();
+    });
+
+    document.getElementById("msg-shift-tomorrow")?.addEventListener("click", () => {
+      if (tomorrowShift.published === false) return;
+      hapticLight();
+      selectMsgShift(1);
+      renderTeamMessage();
+    });
+
+    document.getElementById("msg-clear-person")?.addEventListener("click", () => {
+      msgSelectedPerson = null;
+      renderTeamMessage();
+    });
+
+    document.querySelectorAll(".msg-dept").forEach((btn) => bindMsgDept(btn));
+
+    const textEl = document.getElementById("msg-text");
+    if (textEl && prevText) textEl.value = prevText;
+
+    document.getElementById("msg-send")?.addEventListener("click", async () => {
+      const text = document.getElementById("msg-text")?.value?.trim() || "";
+      if (!text) {
+        tg?.showAlert?.("Введи текст сообщения");
+        return;
+      }
+      if (
+        !msgSelectedPerson
+        && msgShiftOffset == null
+        && !msgSendAll
+        && !msgSelectedRoles.length
+      ) {
+        tg?.showAlert?.("Выбери отдел, смену, человека или «всем»");
+        return;
+      }
+      const ok = await tgConfirm(`Отправить?\n${msgRecipientSummary()}`);
+      if (!ok) return;
+      try {
+        const payload = { text };
+        if (msgSelectedPerson) {
+          payload.people = [{
+            name: msgSelectedPerson.name,
+            role: msgSelectedPerson.role,
+            user_id: msgSelectedPerson.user_id || undefined,
+          }];
+        } else if (msgShiftOffset != null) {
+          payload.shift_offset = msgShiftOffset;
+        } else if (msgSendAll) {
+          payload.send_all = true;
+        } else {
+          payload.roles = [...msgSelectedRoles];
+        }
+        const res = await api("/api/supervisor/message", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+        hapticLight();
+        let alertText = `Отправлено: ${res.sent} из ${res.total}`;
+        if (res.failed) {
+          const names = (res.failed_names || []).join(", ");
+          alertText += `\nНе дошло: ${names || res.failed}`;
+          alertText += "\nНужен /start в этом боте";
+        }
+        tg?.showAlert?.(alertText);
+        if (res.sent) document.getElementById("msg-text").value = "";
+      } catch (e) {
+        tg?.showAlert?.(e.message);
+      }
+    });
+  } catch (e) {
+    renderError(e.message);
+  }
+}
+
+function bindMsgDept(btn) {
+  let pressTimer = null;
+  let longPressed = false;
+  const role = btn.dataset.role;
+  const label = btn.dataset.label || role;
+
+  const clear = () => {
+    if (pressTimer) {
+      clearTimeout(pressTimer);
+      pressTimer = null;
+    }
+  };
+
+  const startPress = () => {
+    longPressed = false;
+    pressTimer = setTimeout(() => {
+      longPressed = true;
+      openMsgPersonPicker(role, label);
+      hapticLight();
+    }, 450);
+  };
+
+  btn.addEventListener("touchstart", startPress, { passive: true });
+  btn.addEventListener("mousedown", startPress);
+  btn.addEventListener("touchend", clear);
+  btn.addEventListener("touchmove", clear);
+  btn.addEventListener("mouseup", clear);
+  btn.addEventListener("mouseleave", clear);
+  btn.addEventListener("click", (e) => {
+    if (longPressed) {
+      e.preventDefault();
+      longPressed = false;
+      return;
+    }
+    hapticLight();
+    toggleMsgRole(role);
+    renderTeamMessage();
+  });
+}
+
+async function openMsgPersonPicker(role, roleLabel) {
+  const sheet = document.getElementById("day-sheet");
+  const content = document.getElementById("day-content");
+  if (!sheet || !content || !msgTargets) return;
+
+  const dep = (msgTargets.departments || []).find((d) => d.role === role);
+  if (!dep) return;
+
+  sheet.classList.remove("hidden");
+  content.innerHTML = `<div class="loading-wrap">${cardLoaderHtml()}</div>`;
+  requestAnimationFrame(() => sheet.classList.add("open"));
+
+  const people = dep.people || [];
+  const rows = people.map((p) => {
+    const disabled = !p.registered;
+    return `
+      <button type="button" class="person-chip person-chip-btn${disabled ? " muted" : ""}"
+        data-name="${escapeAttr(p.name)}" data-role="${escapeAttr(role)}"
+        ${disabled ? "disabled" : ""}>
+        ${escapeHtml(p.name)}${disabled ? " · нет в системе" : ""}
+      </button>
+    `;
+  }).join("");
+
+  content.innerHTML = `
+    <div class="hours-title">${escapeHtml(roleLabel)}</div>
+    <div class="card-meta" style="margin:8px 0 12px">выбери человека — сообщение только ему</div>
+    <div class="people-list">${rows || '<div class="empty-team">пусто</div>'}</div>
+  `;
+
+  content.querySelectorAll(".person-chip-btn:not([disabled])").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const person = (dep.people || []).find((p) => p.name === btn.dataset.name);
+      msgSelectedPerson = {
+        name: btn.dataset.name,
+        role: btn.dataset.role,
+        user_id: person?.user_id || null,
+      };
+      msgSendAll = false;
+      msgSelectedRoles = [];
+      msgShiftOffset = null;
+      closeDaySheet();
+      hapticLight();
+      renderTeamMessage();
+    });
+  });
 }
 
 function rosterDisplayName(entry) {
@@ -1758,6 +2070,11 @@ function backToPeopleList() {
   if (peopleScreen === "compare") comparePick = [];
   addParticipantMode = false;
   compareFromColleague = null;
+  msgTargets = null;
+  msgSelectedPerson = null;
+  msgSelectedRoles = [];
+  msgSendAll = false;
+  msgShiftOffset = null;
   peopleScreen = "list";
   colleagueView = null;
   colleagueReturnTab = null;
@@ -1861,6 +2178,7 @@ async function renderCompareResult() {
 function renderPeople() {
   if (peopleScreen === "person") return renderColleagueSchedule();
   if (peopleScreen === "compare") return renderCompareResult();
+  if (peopleScreen === "message") return renderTeamMessage();
   return renderPeopleList();
 }
 
