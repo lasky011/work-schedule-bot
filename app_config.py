@@ -39,8 +39,54 @@ def _parse_admin_ids(raw: str | None) -> set[int]:
 
 ADMIN_IDS = _parse_admin_ids(os.getenv("ADMIN_IDS"))
 
+
+def _parse_name_list(raw: str | None) -> set[str]:
+    if not raw:
+        return set()
+    return {part.strip() for part in raw.split(",") if part.strip()}
+
+
+# Личный график управляющего не из Google Sheets. Официант «Владислав» — другой человек.
+SUPERVISOR_NAMES = _parse_name_list(os.getenv("SUPERVISOR_NAMES")) or {"Владислав Байкалов"}
+
+# Доп. имена с доступом к «написать команде» (кроме управляющего и менеджеров).
+TEAM_MESSAGE_NAMES = _parse_name_list(
+    os.getenv("TEAM_MESSAGE_NAMES", "Виталий,Егор Корниенков"),
+)
+
+# Не слать в Telegram (только логи / отчёты админам).
+NOTIFY_DRY_RUN = os.getenv("NOTIFY_DRY_RUN", "").lower() in ("1", "true", "yes")
+
+
+def is_supervisor_name(name: str | None) -> bool:
+    return bool(name) and str(name).strip() in SUPERVISOR_NAMES
+
+
+def _norm_person_name(name: str | None) -> str:
+    return " ".join((name or "").replace("\xa0", " ").strip().lower().split())
+
+
+def is_team_message_extra_name(name: str | None) -> bool:
+    if not name or not TEAM_MESSAGE_NAMES:
+        return False
+    needle = _norm_person_name(name)
+    return any(_norm_person_name(item) == needle for item in TEAM_MESSAGE_NAMES)
+
+
+def _parse_listen_port(raw: str | None, fallback: int = 8080) -> int:
+    try:
+        port = int((raw or "").strip() or fallback)
+    except ValueError:
+        logging.warning("Некорректный порт %r, используем %s", raw, fallback)
+        return fallback
+    if not 1 <= port <= 65535:
+        logging.warning("Порт %s вне 1–65535, используем %s", port, fallback)
+        return fallback
+    return port
+
+
 MINIAPP_ENABLED = os.getenv("MINIAPP_ENABLED", "").lower() in ("1", "true", "yes")
-MINIAPP_PORT = int(os.getenv("MINIAPP_PORT", "8080"))
+MINIAPP_PORT = _parse_listen_port(os.getenv("MINIAPP_PORT") or os.getenv("PORT"))
 MINIAPP_URL = (os.getenv("MINIAPP_URL") or "").rstrip("/")
 
 # Как часто prod/test подтягивают gid из sheet_periods (секунды).

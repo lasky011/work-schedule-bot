@@ -1,5 +1,6 @@
-from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
+from aiogram.types import KeyboardButton, ReplyKeyboardMarkup, WebAppInfo
 
+from app_config import MINIAPP_URL
 from repositories.users_repo import get_user_name
 
 
@@ -8,6 +9,16 @@ def main_kb(user_id, name: str = "Моё имя"):
         [KeyboardButton(text="📅 Сегодня")],
         [KeyboardButton(text=f"👤 {name}")],
     ]
+    if MINIAPP_URL:
+        rows.insert(
+            0,
+            [
+                KeyboardButton(
+                    text="✨ TNG Alice",
+                    web_app=WebAppInfo(url=MINIAPP_URL.rstrip("/") + "/"),
+                )
+            ],
+        )
     return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
 
 

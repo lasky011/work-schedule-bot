@@ -78,11 +78,29 @@ def day_schedule_card(
     return "\n".join(lines)
 
 
-def team_on_shift(total: int, role_blocks: list[tuple[str, list[str]]]) -> str:
-    lines = [f"👥 На смене: <b>{total}</b>"]
+def team_on_shift(
+    total: int,
+    role_blocks: list[tuple[str, list[str]]],
+    *,
+    hall_total: int | None = None,
+    kitchen_total: int | None = None,
+) -> str:
+    if hall_total is not None or kitchen_total is not None:
+        lines = [
+            f"👥 На смене: зал <b>{hall_total or 0}</b> · кухня <b>{kitchen_total or 0}</b>",
+        ]
+    else:
+        lines = [f"👥 На смене: <b>{total}</b>"]
+
+    current_area = None
     for role_label, people in role_blocks:
         if not people:
             continue
+        area = "Кухня" if "Повар" in (role_label or "") else "Зал"
+        if area != current_area:
+            current_area = area
+            lines.append("")
+            lines.append(f"<b>{area}</b>")
         lines.append("")
         lines.append(f"<b>{esc(role_label)}</b>")
         for person in people:
@@ -167,7 +185,14 @@ def salary_dashboard(
     return "\n".join(lines)
 
 
-def who_works_card(date_line: str, my_status_html: str, role_blocks: list[tuple[str, int, list[str]]]) -> str:
+def who_works_card(
+    date_line: str,
+    my_status_html: str,
+    role_blocks: list[tuple[str, int, list[str]]],
+    *,
+    hall_total: int | None = None,
+    kitchen_total: int | None = None,
+) -> str:
     lines = [
         f"👥 <b>{esc(date_line)}</b>",
         "",
@@ -175,11 +200,22 @@ def who_works_card(date_line: str, my_status_html: str, role_blocks: list[tuple[
         "",
         SEP,
     ]
+    if hall_total is not None or kitchen_total is not None:
+        lines.append("")
+        lines.append(
+            f"Зал: <b>{hall_total or 0}</b> · Кухня: <b>{kitchen_total or 0}</b>"
+        )
     has_any = False
+    current_area = None
     for role_label, count, people in role_blocks:
         if not people:
             continue
         has_any = True
+        area = "Кухня" if "Повар" in (role_label or "") else "Зал"
+        if area != current_area:
+            current_area = area
+            lines.append("")
+            lines.append(f"<b>{area}</b>")
         lines.append("")
         lines.append(f"<b>{esc(role_label)}</b> ({count})")
         for person in people:

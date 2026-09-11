@@ -1,0 +1,32 @@
+# Timeweb App Platform / any VPS. First service gets the HTTPS domain.
+# Do not run a second copy of the same BOT_TOKEN (polling conflict).
+# Timeweb Apps: no `volumes`, no host ports 80/443.
+
+services:
+  bot:
+    build: .
+    command: python3 bot.py
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      BOT_TOKEN: ${BOT_TOKEN}
+      DATABASE_URL: ${DATABASE_URL}
+      ADMIN_BOT_TOKEN: ${ADMIN_BOT_TOKEN}
+      ADMIN_IDS: ${ADMIN_IDS}
+      MINIAPP_ENABLED: ${MINIAPP_ENABLED:-true}
+      MINIAPP_PORT: ${MINIAPP_PORT:-8080}
+      MINIAPP_URL: ${MINIAPP_URL:-}
+      APP_TIMEZONE: ${APP_TIMEZONE:-Europe/Moscow}
+
+  admin:
+    build: .
+    command: python3 admin_bot.py
+    restart: unless-stopped
+    environment:
+      BOT_TOKEN: ${BOT_TOKEN}
+      DATABASE_URL: ${DATABASE_URL}
+      ADMIN_BOT_TOKEN: ${ADMIN_BOT_TOKEN}
+      ADMIN_IDS: ${ADMIN_IDS}
+      MINIAPP_URL: ${MINIAPP_URL:-}
+      APP_TIMEZONE: ${APP_TIMEZONE:-Europe/Moscow}

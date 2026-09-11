@@ -186,6 +186,9 @@ async def save_notification_time(message: Message, state: FSMContext):
     if not is_valid_time(text):
         return await message.answer("Неверный формат. Напиши так: 09:30")
 
+    from ui_utils import normalize_hhmm
+    text = normalize_hhmm(text) or text
+
     await save_user(user_id, notify_time=text, notify=1)
     await state.clear()
 

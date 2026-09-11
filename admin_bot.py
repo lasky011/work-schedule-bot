@@ -23,6 +23,7 @@ from services.cache_signal_service import maybe_refresh_sheet_cache
 from services.sheet_loader import CACHE_REFRESH_SECONDS, load_full_sheet
 from services.sheet_periods_service import load_from_db_sync, sync_from_db
 from services.rates_service import load_from_db_sync as load_rates_sync
+from services.gen_cleaning_service import load_from_db_sync as load_gen_cleaning_sync
 from services.schedule_watch_service import configure_schedule_watch
 from ui_utils import configure_ui_utils
 
@@ -138,6 +139,7 @@ async def main():
     init_pg_pool()
     await asyncio.to_thread(load_from_db_sync)
     await asyncio.to_thread(load_rates_sync)
+    await asyncio.to_thread(load_gen_cleaning_sync)
     await load_full_sheet()
 
     bot = Bot(token=token)

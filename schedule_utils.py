@@ -64,8 +64,8 @@ def is_work_shift(value):
     if text.lower() in _WORK_SHIFT_WORDS:
         return True
 
-    # Начинается с цифры часа — рабочая смена
-    if re.match(r"^\d{1,2}[:\-\s]", text) or re.match(r"^\d{1,2}$", text):
+    # Начинается с цифры часа — рабочая смена (11:00, 11.00, 11–19)
+    if re.match(r"^\d{1,2}[:.\-–—\s]", text) or re.match(r"^\d{1,2}$", text):
         return True
 
     return False

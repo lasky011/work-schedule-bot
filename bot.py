@@ -7,11 +7,14 @@ from datetime import timedelta
 
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import MenuButtonWebApp, WebAppInfo
 
 from app_config import (
+    APP_TIMEZONE_NAME,
     BOT_TOKEN,
     MINIAPP_ENABLED,
     MINIAPP_PORT,
+    MINIAPP_URL,
     SHEET_PERIODS_REFRESH_SECONDS,
     now_local,
     validate_required_env,
@@ -23,7 +26,12 @@ from db import USE_POSTGRES, get_db_connection, init_pg_pool
 from keyboards import configure_keyboard_context
 from keyboards.inline_miniapp import daily_notify_kb, hours_notify_kb
 from repositories.shifts_repo import get_shift_for_date
-from repositories.users_repo import get_notify_hours_users, get_notify_users, get_registered_users
+from repositories.users_repo import (
+    get_notify_hours_users,
+    get_notify_users,
+    get_registered_users,
+    get_supervisor_users,
+)
 from routers.colleagues import router as colleagues_router
 from routers.common import router as common_router
 from routers.fallback import router as fallback_router
@@ -42,14 +50,19 @@ from services.compare_service import configure_compare_service
 from services.salary_service import configure_salary_service
 from services.cache_signal_service import maybe_refresh_sheet_cache
 from services.gen_cleaning_service import (
-    GEN_CLEANING_NOTIFY_TIME,
+    cleaning_date_due_for_notice,
     gen_cleaning_notification_text,
-    is_gen_cleaning_notify_evening,
+    reload_from_db as reload_gen_cleaning,
 )
 from services.sheet_loader import CACHE_REFRESH_SECONDS, load_full_sheet, load_sheet
 from services.sheet_periods_service import load_from_db_sync, sync_from_db
 from services.rates_service import load_from_db_sync as load_rates_sync
 from services.schedule_watch_service import check_all_registered_users, configure_schedule_watch
+from services.supervisor_schedule import (
+    MEETING_REMINDER_TEXT,
+    MEETING_REMINDER_TIME,
+    MEETING_REMINDER_WEEKDAY,
+)
 from ui_utils import configure_ui_utils
 
 validate_required_env()
@@ -104,6 +117,7 @@ def init_db():
         ("notify_hours", "INTEGER DEFAULT 0"),
         ("notify_hours_time", "TEXT"),
         ("theme", "TEXT"),
+        ("onboarding_seen", "INTEGER DEFAULT 0"),
     ]
     for col, col_type in extra_user_cols:
         try:
@@ -116,7 +130,21 @@ def init_db():
         except Exception:
             pass
 
+    # Уже зарегистрированные не должны увидеть экскурсию после деплоя.
+    try:
+        cursor.execute(
+            """
+            UPDATE users SET onboarding_seen = 1
+            WHERE COALESCE(onboarding_seen, 0) = 0
+              AND name IS NOT NULL AND TRIM(name) != ''
+            """
+        )
+    except Exception:
+        pass
+
     if USE_POSTGRES:
+        from repositories.gen_cleaning_repo import ensure_schema_sync
+        ensure_schema_sync()
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS shifts (
             id          SERIAL PRIMARY KEY,
@@ -311,62 +339,89 @@ async def hours_notification_loop(bot) -> None:
 
 
 async def notification_loop(bot):
+    from ui_utils import normalize_hhmm
+
     sent = {}
     last_cleanup = now_local().date()
     last_dept_refresh = now_local()
     last_periods_refresh = now_local()
+    last_heartbeat = now_local()
 
     while True:
-        now = now_local()
-        current_time = now.strftime("%H:%M")
+        try:
+            now = now_local()
+            current_time = now.strftime("%H:%M")
 
-        if (now - last_dept_refresh).total_seconds() > 3600:
-            try:
-                await refresh_departments(force=True)
-                last_dept_refresh = now
-                logging.info("refresh_departments: обновлено")
-            except Exception as e:
-                logging.warning("refresh_departments error: %s", e)
-
-        if (now - last_periods_refresh).total_seconds() > SHEET_PERIODS_REFRESH_SECONDS:
-            try:
-                await sync_from_db()
-                last_periods_refresh = now
-            except Exception as e:
-                logging.warning("sheet_periods sync error: %s", e)
-
-        today_key = now.strftime("%Y-%m-%d")
-        today_date = now.date()
-        if today_date != last_cleanup:
-            cutoff = (today_date - timedelta(days=2)).strftime("%Y-%m-%d")
-            sent = {k: v for k, v in sent.items() if k.split("-", 1)[1][:10] >= cutoff}
-            last_cleanup = today_date
-
-        for _nr in await get_notify_users():
-            user_id, name, notify_time = _nr[0], _nr[1], _nr[2]
-            nr_role = _nr[3] if len(_nr) > 3 else None
-            if notify_time != current_time:
-                continue
-
-            key = f"{user_id}-{today_key}-{notify_time}"
-            if sent.get(key):
-                continue
-
-            try:
-                text = await schedule.get_notification_text(name, target_role=nr_role)
-                if text:
-                    await bot.send_message(user_id, text, reply_markup=daily_notify_kb())
-                    sent[key] = True
-                else:
-                    logging.warning(
-                        "notification_loop: пустой текст user_id=%s name=%s notify_time=%s role=%s",
-                        user_id, name, notify_time, nr_role,
-                    )
-            except Exception as e:
-                logging.exception(
-                    "notification_loop: ошибка user_id=%s name=%s notify_time=%s role=%s: %s",
-                    user_id, name, notify_time, nr_role, e,
+            if (now - last_heartbeat).total_seconds() >= 3600:
+                logging.info(
+                    "notification_loop: alive tz=%s now=%s",
+                    APP_TIMEZONE_NAME,
+                    now.isoformat(timespec="seconds"),
                 )
+                last_heartbeat = now
+
+            if (now - last_dept_refresh).total_seconds() > 3600:
+                try:
+                    await refresh_departments(force=True)
+                    last_dept_refresh = now
+                    logging.info("refresh_departments: обновлено")
+                except Exception as e:
+                    logging.warning("refresh_departments error: %s", e)
+
+            if (now - last_periods_refresh).total_seconds() > SHEET_PERIODS_REFRESH_SECONDS:
+                try:
+                    await sync_from_db()
+                    last_periods_refresh = now
+                except Exception as e:
+                    logging.warning("sheet_periods sync error: %s", e)
+
+            today_key = now.strftime("%Y-%m-%d")
+            today_date = now.date()
+            if today_date != last_cleanup:
+                cutoff = (today_date - timedelta(days=2)).strftime("%Y-%m-%d")
+                sent = {k: v for k, v in sent.items() if k.split("-", 1)[1][:10] >= cutoff}
+                last_cleanup = today_date
+
+            try:
+                users = await get_notify_users()
+            except Exception as e:
+                logging.error("notification_loop DB error: %s", e)
+                await asyncio.sleep(60)
+                continue
+
+            for _nr in users:
+                user_id, name, notify_time = _nr[0], _nr[1], _nr[2]
+                nr_role = _nr[3] if len(_nr) > 3 else None
+                notify_hhmm = normalize_hhmm(notify_time)
+                if not notify_hhmm or notify_hhmm != current_time:
+                    continue
+
+                key = f"{user_id}-{today_key}-{notify_hhmm}"
+                if sent.get(key):
+                    continue
+
+                try:
+                    text = await schedule.get_notification_text(name, target_role=nr_role)
+                    if text:
+                        await bot.send_message(user_id, text, reply_markup=daily_notify_kb())
+                        sent[key] = True
+                        logging.info(
+                            "notification_loop: sent user_id=%s name=%s time=%s",
+                            user_id, name, notify_hhmm,
+                        )
+                    else:
+                        logging.warning(
+                            "notification_loop: пустой текст user_id=%s name=%s notify_time=%s role=%s",
+                            user_id, name, notify_time, nr_role,
+                        )
+                except Exception as e:
+                    logging.exception(
+                        "notification_loop: ошибка user_id=%s name=%s notify_time=%s role=%s: %s",
+                        user_id, name, notify_time, nr_role, e,
+                    )
+
+        except Exception as e:
+            logging.exception("notification_loop: критическая ошибка цикла: %s", e)
 
         try:
             await asyncio.sleep(10)
@@ -375,17 +430,66 @@ async def notification_loop(bot):
 
 
 async def gen_cleaning_notification_loop(bot) -> None:
+    while True:
+        try:
+            await reload_gen_cleaning(quiet=True)
+            now = now_local()
+            due = cleaning_date_due_for_notice(now)
+            if due is not None:
+                from repositories.gen_cleaning_repo import try_claim_notify
+
+                try:
+                    claimed = await try_claim_notify(due)
+                except Exception as e:
+                    logging.error("gen_cleaning_notification_loop claim error: %s", e)
+                    await asyncio.sleep(60)
+                    continue
+
+                if claimed:
+                    text = gen_cleaning_notification_text()
+                    try:
+                        users = await get_registered_users()
+                    except Exception as e:
+                        logging.error("gen_cleaning_notification_loop DB error: %s", e)
+                        try:
+                            from repositories.gen_cleaning_repo import clear_notify
+                            await clear_notify(due)
+                        except Exception:
+                            logging.exception(
+                                "gen_cleaning_notification_loop: не удалось снять блокировку"
+                            )
+                        await asyncio.sleep(60)
+                        continue
+
+                    for user_row in users:
+                        user_id = user_row[0]
+                        try:
+                            await bot.send_message(user_id, text)
+                        except Exception as e:
+                            logging.exception(
+                                "gen_cleaning_notification_loop: user_id=%s: %s",
+                                user_id, e,
+                            )
+        except Exception:
+            logging.exception("gen_cleaning_notification_loop: критическая ошибка")
+
+        try:
+            await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            break
+
+
+async def supervisor_meeting_reminder_loop(bot) -> None:
+    """Пн 22:00 — напоминание управляющему про завтрашнее собрание."""
     sent = {}
     last_cleanup = now_local().date()
 
     while True:
         try:
             now = now_local()
-            current_time = now.strftime("%H:%M")
             today = now.date()
-
             if today != last_cleanup:
-                cutoff = (today - timedelta(days=3)).strftime("%Y-%m-%d")
+                cutoff = (today - timedelta(days=14)).strftime("%Y-%m-%d")
                 sent = {
                     k: v for k, v in sent.items()
                     if k.rsplit("-", 1)[-1] >= cutoff
@@ -393,35 +497,32 @@ async def gen_cleaning_notification_loop(bot) -> None:
                 last_cleanup = today
 
             if (
-                current_time == GEN_CLEANING_NOTIFY_TIME
-                and is_gen_cleaning_notify_evening(today)
+                now.weekday() == MEETING_REMINDER_WEEKDAY
+                and now.strftime("%H:%M") == MEETING_REMINDER_TIME
             ):
-                cleaning_date = today + timedelta(days=1)
-                cleaning_key = cleaning_date.strftime("%Y-%m-%d")
-                text = gen_cleaning_notification_text()
-
+                week_key = today.strftime("%Y-%m-%d")
                 try:
-                    users = await get_registered_users()
+                    users = await get_supervisor_users()
                 except Exception as e:
-                    logging.error("gen_cleaning_notification_loop DB error: %s", e)
+                    logging.error("supervisor_meeting_reminder_loop DB error: %s", e)
                     await asyncio.sleep(60)
                     continue
 
                 for user_row in users:
                     user_id = user_row[0]
-                    key = f"{user_id}-gen-cleaning-{cleaning_key}"
+                    key = f"{user_id}-meeting-{week_key}"
                     if sent.get(key):
                         continue
                     try:
-                        await bot.send_message(user_id, text)
+                        await bot.send_message(user_id, MEETING_REMINDER_TEXT)
                         sent[key] = True
                     except Exception as e:
                         logging.exception(
-                            "gen_cleaning_notification_loop: user_id=%s: %s",
+                            "supervisor_meeting_reminder_loop: user_id=%s: %s",
                             user_id, e,
                         )
         except Exception:
-            logging.exception("gen_cleaning_notification_loop: критическая ошибка")
+            logging.exception("supervisor_meeting_reminder_loop: критическая ошибка")
 
         try:
             await asyncio.sleep(30)
@@ -486,6 +587,22 @@ async def global_error_handler(event) -> bool:
     return True
 
 
+async def configure_miniapp_menu(bot: Bot) -> None:
+    if not MINIAPP_URL:
+        logging.warning("MINIAPP_URL не задан — кнопка Mini App в Telegram не появится")
+        return
+    try:
+        await bot.set_chat_menu_button(
+            menu_button=MenuButtonWebApp(
+                text="TNG Alice",
+                web_app=WebAppInfo(url=MINIAPP_URL.rstrip("/") + "/"),
+            )
+        )
+        logging.info("Mini App menu button → %s", MINIAPP_URL)
+    except Exception:
+        logging.exception("Не удалось поставить кнопку Mini App (бот продолжит работу)")
+
+
 async def start_miniapp_server() -> None:
     import uvicorn
     from api.app import create_app
@@ -501,17 +618,6 @@ async def start_miniapp_server() -> None:
 
 
 async def main():
-    await asyncio.to_thread(init_db)
-    init_pg_pool()
-    await asyncio.to_thread(load_from_db_sync)
-    await asyncio.to_thread(load_rates_sync)
-
-    if not BOT_TOKEN:
-        print("Ошибка: BOT_TOKEN не найден в .env")
-        return
-
-    bot = Bot(token=BOT_TOKEN)
-
     miniapp_task = None
     if MINIAPP_ENABLED:
         miniapp_task = asyncio.create_task(start_miniapp_server())
@@ -522,6 +628,19 @@ async def main():
             ) if not t.cancelled() and t.exception() else None
         )
         logging.info("Mini App HTTP на порту %s", MINIAPP_PORT)
+
+    await asyncio.to_thread(init_db)
+    init_pg_pool()
+    await asyncio.to_thread(load_from_db_sync)
+    await asyncio.to_thread(load_rates_sync)
+    await reload_gen_cleaning(quiet=True)
+
+    if not BOT_TOKEN:
+        print("Ошибка: BOT_TOKEN не найден в .env")
+        return
+
+    bot = Bot(token=BOT_TOKEN)
+    await configure_miniapp_menu(bot)
 
     await load_full_sheet()
 
@@ -546,6 +665,13 @@ async def main():
             exc_info=t.exception(),
         ) if not t.cancelled() and t.exception() else None
     )
+    meeting_reminder_task = asyncio.create_task(supervisor_meeting_reminder_loop(bot))
+    meeting_reminder_task.add_done_callback(
+        lambda t: logging.exception(
+            "supervisor_meeting_reminder_loop: фоновая задача завершилась с ошибкой",
+            exc_info=t.exception(),
+        ) if not t.cancelled() and t.exception() else None
+    )
     schedule_watch_task = asyncio.create_task(schedule_watch_loop())
     schedule_watch_task.add_done_callback(
         lambda t: logging.exception(
@@ -561,7 +687,15 @@ async def main():
         ) if not t.cancelled() and t.exception() else None
     )
 
-    await dp.start_polling(bot)
+    while True:
+        try:
+            await dp.start_polling(bot)
+            logging.warning("start_polling завершился без ошибки — перезапуск через 5 с")
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logging.exception("start_polling упал — перезапуск через 5 с")
+        await asyncio.sleep(5)
 
 
 if __name__ == "__main__":

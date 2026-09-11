@@ -18,6 +18,11 @@ let addParticipantMode = false;
 let salaryPeriods = null;
 let salaryPeriodIndex = 0;
 let namePickRole = null;
+let msgSelectedRoles = [];
+let msgSendAll = false;
+let msgSelectedPerson = null;
+let msgShiftOffset = null;
+let msgTargets = null;
 
 function parseStartParams() {
   const p = new URLSearchParams(window.location.search);
@@ -29,7 +34,31 @@ function parseStartParams() {
   };
 }
 
+function hasBlocks(day) {
+  return Array.isArray(day?.blocks) && day.blocks.length > 0;
+}
+
+function blockTone(block) {
+  if ((block?.kind || "shift") === "meeting") return "meeting";
+  const hour = parseInt(String(block?.start || "").split(":")[0], 10);
+  if (Number.isFinite(hour) && hour < 14) return "morning";
+  return "evening";
+}
+
+function blocksHtml(day, { compact = false } = {}) {
+  if (!hasBlocks(day)) return "";
+  const items = day.blocks.map((block) => {
+    const mark = block.kind === "meeting" ? "◎ " : "";
+    const text = compact ? (block.time || block.label) : block.label;
+    return `<div class="day-block ${blockTone(block)}">${mark}${escapeHtml(text || "")}</div>`;
+  }).join("");
+  return `<div class="my-shift-stack">${items}</div>`;
+}
+
 function shiftLabel(day) {
+  if (hasBlocks(day)) {
+    return day.blocks.map((b) => b.label).join(" · ");
+  }
   if (!day.working) return "—";
   if (day.shift_type === "morning") return "♠ утро";
   if (day.shift_type === "evening") return "♥ вечер";
@@ -78,17 +107,117 @@ async function loadProfile() {
     applyTheme("alice_dark");
     hideSplash();
     document.getElementById("nav")?.classList.add("hidden");
-    document.getElementById("screen-title").textContent = "кто ты?";
-    document.getElementById("screen-subtitle").textContent = "выбери отдел и имя";
-    await renderNamePicker("main", { onboarding: true });
+    await renderOnboardingNamePicker();
     return false;
   }
   applyTheme(profile.theme || "alice_dark");
+  applyRoleUi();
   refreshNavBadges();
   return true;
 }
 
+function applyRoleUi() {
+  const supervisor = !!profile?.supervisor;
+  document.body.classList.toggle("is-supervisor", supervisor);
+  document.querySelector('.nav-btn[data-tab="salary"]')?.classList.toggle("hidden", supervisor);
+  document.querySelector('.nav-btn[data-tab="analytics"]')?.classList.toggle("hidden", supervisor);
+}
+
+async function renderOnboardingNamePicker() {
+  const root = onboardingRoot();
+  root.classList.remove("hidden");
+  root.classList.add("centered");
+  document.getElementById("nav")?.classList.add("hidden");
+  root.innerHTML = `
+    <div class="onb-backdrop"></div>
+    <div class="onb-dialog onb-anim">
+      <div class="card onb-panel">
+        <div class="onb-cards" aria-hidden="true">${cardLoaderHtml()}</div>
+        <div class="onb-brandline">TNG · Alice</div>
+        <div class="onb-h2">кто ты?</div>
+      </div>
+    </div>
+  `;
+
+  const data = await api("/api/departments");
+
+  if (!namePickRole) {
+    const depts = (data.departments || []).map((d) => `
+      <button type="button" class="name-pick-dept" data-role="${escapeAttr(d.role)}">${escapeHtml(d.role_label)}</button>
+    `).join("");
+    root.innerHTML = `
+      <div class="onb-backdrop"></div>
+      <div class="onb-dialog onb-scroll onb-anim">
+        <div class="onb-head">
+          <div class="onb-brandline">шаг 1 · кто ты</div>
+          <div class="onb-h2">выбери подразделение</div>
+          <div class="onb-sub">сначала отдел, потом имя — так бот найдёт твой график.</div>
+        </div>
+        <div class="card">${depts}</div>
+      </div>
+    `;
+    root.querySelectorAll(".name-pick-dept").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        hapticLight();
+        namePickRole = btn.dataset.role;
+        renderOnboardingNamePicker();
+      });
+    });
+    return;
+  }
+
+  const dept = (data.departments || []).find((d) => d.role === namePickRole);
+  const names = (dept?.names || []).map((n) => `
+    <button type="button" class="name-pick-btn" data-name="${escapeAttr(n)}">${escapeHtml(n)}</button>
+  `).join("");
+  root.innerHTML = `
+    <div class="onb-backdrop"></div>
+    <div class="onb-dialog onb-scroll onb-anim">
+      <div class="onb-head">
+        <div class="onb-brandline">шаг 1 · кто ты</div>
+        <div class="onb-h2">${escapeHtml(dept?.role_label || namePickRole)}</div>
+        <div class="onb-sub">выбери своё имя в списке.</div>
+      </div>
+      <div class="card">
+        <div class="name-pick-names">${names}</div>
+      </div>
+      <div class="onb-actions">
+        <button type="button" class="btn onb-ghost" id="name-pick-back">← отдел</button>
+      </div>
+    </div>
+  `;
+  document.getElementById("name-pick-back")?.addEventListener("click", () => {
+    hapticLight();
+    namePickRole = null;
+    renderOnboardingNamePicker();
+  });
+  root.querySelectorAll(".name-pick-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      try {
+        profile = await api("/api/me/profile", {
+          method: "PATCH",
+          body: JSON.stringify({ name: btn.dataset.name, role: namePickRole }),
+        });
+        namePickRole = null;
+        applyTheme(profile.theme || "alice_dark");
+        applyRoleUi();
+        tg?.HapticFeedback?.notificationOccurred("success");
+        root.classList.add("hidden");
+        document.getElementById("nav")?.classList.remove("hidden");
+        refreshNavBadges();
+        startOnboarding();
+      } catch (e) {
+        tg?.showAlert?.(e.message);
+      }
+    });
+  });
+}
+
 async function renderNamePicker(targetId, { onboarding = false } = {}) {
+  if (onboarding) {
+    await renderOnboardingNamePicker();
+    return;
+  }
   const el = document.getElementById(targetId);
   if (!el) return;
   el.innerHTML = `<div class="loading-wrap">${cardLoaderHtml()}</div>`;
@@ -148,7 +277,7 @@ async function renderNamePicker(targetId, { onboarding = false } = {}) {
         if (onboarding) {
           document.getElementById("nav")?.classList.remove("hidden");
           refreshNavBadges();
-          setTab("schedule");
+          startOnboarding();
           return;
         }
         renderSettingsContent();
@@ -179,9 +308,13 @@ function bindScheduleModeToggle() {
 
 function todayCardHtml(today, tomorrow) {
   let todayLine = "нет данных";
+  let todayBlocks = "";
   if (today) {
     const dayLabel = formatScheduleDay(today);
-    if (today.working) {
+    if (hasBlocks(today)) {
+      todayLine = dayLabel;
+      todayBlocks = blocksHtml(today);
+    } else if (today.working) {
       todayLine = `${dayLabel} · ${shiftLabel(today)}`;
       if (today.hours) todayLine += ` · ${today.hours} ч`;
     } else if (today.published === false) {
@@ -193,8 +326,12 @@ function todayCardHtml(today, tomorrow) {
   }
 
   let tomorrowLine = "";
+  let tomorrowBlocks = "";
   if (tomorrow) {
-    if (tomorrow.working) {
+    if (hasBlocks(tomorrow)) {
+      tomorrowLine = "завтра";
+      tomorrowBlocks = blocksHtml(tomorrow, { compact: true });
+    } else if (tomorrow.working) {
       tomorrowLine = `завтра · ${shiftLabel(tomorrow)}`;
       if (tomorrow.hours) tomorrowLine += ` · ${tomorrow.hours} ч`;
     } else if (tomorrow.published === false) {
@@ -215,7 +352,8 @@ function todayCardHtml(today, tomorrow) {
     <div class="card today-card">
       <div class="card-label">сегодня</div>
       <div class="card-title">${escapeHtml(todayLine)}</div>
-      ${tomorrowLine ? `<div class="card-divider"></div><div class="card-meta">${escapeHtml(tomorrowLine)}</div>` : ""}
+      ${todayBlocks}
+      ${tomorrowLine ? `<div class="card-divider"></div><div class="card-meta">${escapeHtml(tomorrowLine)}</div>${tomorrowBlocks}` : ""}
       ${actions}
     </div>
   `;
@@ -234,6 +372,12 @@ function weekViewHintHtml(header) {
 }
 
 function monthShiftShort(day) {
+  if (hasBlocks(day)) {
+    if (day.blocks.some((b) => b.kind === "meeting")) return "◎";
+    if (day.shift_type === "morning") return "♠";
+    if (day.shift_type === "evening") return "♥";
+    return "•";
+  }
   if (!day.published) return "·";
   if (!day.working) return "—";
   if (day.shift_type === "morning") return "♠";
@@ -241,15 +385,25 @@ function monthShiftShort(day) {
   return "•";
 }
 
+function scheduleLegendHtml() {
+  return `<div class="month-legend">
+      <span class="legend-morning">♠ утро</span><span class="legend-evening">♥ вечер</span><span>— вых</span><span class="legend-gen">🧹 ген</span><span>· нет графика</span>
+      ${profile?.supervisor ? `<span class="legend-muted">◎ собрание</span>` : ""}
+    </div>`;
+}
+
 function weekDayCellHtml(d) {
   const genMark = d.gen_cleaning
     ? '<div class="day-gen-cleaning" title="ген уборка 9:00">🧹</div>'
     : "";
+  const shiftInner = hasBlocks(d)
+    ? blocksHtml(d, { compact: true })
+    : `<div class="day-shift ${shiftClass(d)}">${shiftLabel(d)}</div>`;
   return `
     <div class="day-cell day-pick${d.is_today ? " today" : ""}${d.gen_cleaning ? " gen-cleaning" : ""}" data-date="${d.date}" role="button">
       <div class="day-wd">${d.weekday}</div>
       <div class="day-num">${d.day}</div>
-      <div class="day-shift ${shiftClass(d)}">${shiftLabel(d)}</div>
+      ${shiftInner}
       ${genMark}
     </div>
   `;
@@ -310,14 +464,19 @@ async function openDaySheet(dateStr) {
       return;
     }
 
-    const working = (data.departments || []).map((dep) => `
-      <div class="role-block">
-        <div class="role-title">${escapeHtml(dep.role_label)} · ${dep.people.length}</div>
-        <div class="people-list">
-          ${dep.people.map((n) => personChipBtnHtml(n, dep.role, dep.role_label)).join("")}
-        </div>
-      </div>
-    `).join("") || `<div class="empty-team">никого на смене</div>`;
+    const working = (() => {
+      const areas = data.areas || [];
+      if (areas.length) {
+        return areas.map((area) => `
+          <div class="area-block">
+            <div class="area-title">${escapeHtml(area.label)} · ${area.total}</div>
+            ${departmentsBlocksHtml(area.departments)}
+          </div>
+        `).join("") || `<div class="empty-team">никого на смене</div>`;
+      }
+      return departmentsBlocksHtml(data.departments)
+        || `<div class="empty-team">никого на смене</div>`;
+    })();
 
     const offRows = (data.off || []).map((p) => `
       <div class="off-row">
@@ -330,10 +489,14 @@ async function openDaySheet(dateStr) {
       ? '<div class="gen-cleaning-banner">🧹 Ген уборка в 9:00</div>'
       : "";
 
+    const countsMeta = (data.hall_total || data.kitchen_total)
+      ? `зал ${data.hall_total || 0} · кухня ${data.kitchen_total || 0}`
+      : `${data.total_working} на смене`;
+
     content.innerHTML = `
       <div class="hours-title">${escapeHtml(data.weekday)} · ${escapeHtml(data.header)}</div>
       ${genBanner}
-      <div class="card-meta">${data.total_working} на смене</div>
+      <div class="card-meta">${countsMeta}</div>
       <div class="card" style="margin-top:12px">
         <div class="card-label">работают</div>
         ${working}
@@ -367,6 +530,7 @@ async function renderSchedule() {
       ${scheduleModeToggleHtml()}
       <div class="card-label">неделя · ${data.header}</div>
       <div class="week-grid">${daysHtml}</div>
+      ${profile?.supervisor ? scheduleLegendHtml() : ""}
       <div class="week-nav">
         <button type="button" class="btn" id="prev-week">← пред</button>
         <button type="button" class="btn btn-primary" id="next-week">след →</button>
@@ -411,9 +575,7 @@ async function renderScheduleMonth() {
     ${topCard}
     ${scheduleModeToggleHtml()}
     <div class="card-label">${data.header}</div>
-    <div class="month-legend">
-      <span class="legend-morning">♠ утро</span><span class="legend-evening">♥ вечер</span><span>— вых</span><span class="legend-gen">🧹 ген</span><span>· нет графика</span>
-    </div>
+    ${scheduleLegendHtml()}
     <div class="month-grid">
       ${wdHeader}
       ${pad}
@@ -561,6 +723,41 @@ async function renderAnalytics() {
   }
 }
 
+function teamAreaCountsHtml(data) {
+  if (!data?.published) return "";
+  const hall = Number(data.hall_total || 0);
+  const kitchen = Number(data.kitchen_total || 0);
+  if (hall || kitchen) {
+    return `<div class="team-total">зал ${hall} · кухня ${kitchen}</div>`;
+  }
+  return `<div class="team-total">${data.total || 0} чел.</div>`;
+}
+
+function departmentsBlocksHtml(departments) {
+  return (departments || []).map((dep) => `
+    <div class="role-block">
+      <div class="role-title">${escapeHtml(dep.role_label)} · ${dep.people.length}</div>
+      <div class="people-list">
+        ${dep.people.map((name) => personChipBtnHtml(name, dep.role, dep.role_label)).join("")}
+      </div>
+    </div>
+  `).join("");
+}
+
+function teamAreasHtml(data) {
+  const areas = data.areas || [];
+  if (areas.length) {
+    return areas.map((area) => `
+      <div class="area-block">
+        <div class="area-title">${escapeHtml(area.label)} · ${area.total}</div>
+        ${departmentsBlocksHtml(area.departments)}
+      </div>
+    `).join("");
+  }
+  return departmentsBlocksHtml(data.departments)
+    || `<div class="empty-team">никого на смене</div>`;
+}
+
 async function renderTeam() {
   renderLoading();
   try {
@@ -568,7 +765,12 @@ async function renderTeam() {
     const my = data.my_shift;
     let myLine = "выходной";
     let myClass = "";
-    if (my?.working) {
+    let myBlocks = "";
+    if (hasBlocks(my)) {
+      myClass = `working ${my.shift_type || ""}`;
+      myLine = "ты";
+      myBlocks = blocksHtml(my, { compact: true });
+    } else if (my?.working) {
       myClass = `working ${my.shift_type || ""}`;
       myLine = shiftLabel(my);
       if (my.hours) myLine += ` · ${my.hours} ч`;
@@ -580,14 +782,7 @@ async function renderTeam() {
     } else if (!data.total) {
       body = `<div class="empty-team">никого на смене</div>`;
     } else {
-      body = data.departments.map((dep) => `
-        <div class="role-block">
-          <div class="role-title">${escapeHtml(dep.role_label)} · ${dep.people.length}</div>
-          <div class="people-list">
-            ${dep.people.map((name) => personChipBtnHtml(name, dep.role, dep.role_label)).join("")}
-          </div>
-        </div>
-      `).join("");
+      body = teamAreasHtml(data);
     }
 
     document.getElementById("main").innerHTML = `
@@ -598,9 +793,10 @@ async function renderTeam() {
       <div class="card">
         <div class="team-header">
           <div class="card-label">${escapeHtml(data.weekday)} · ${escapeHtml(data.header)}</div>
-          ${data.published ? `<div class="team-total">${data.total} чел.</div>` : ""}
+          ${teamAreaCountsHtml(data)}
         </div>
-        <div class="my-shift-line ${myClass}">ты · ${myLine}</div>
+        <div class="my-shift-line ${myClass}">${hasBlocks(my) ? "ты" : `ты · ${myLine}`}</div>
+        ${myBlocks}
         <div class="card-meta" style="margin-bottom:8px">тап по имени — график коллеги</div>
         ${body}
       </div>
@@ -872,6 +1068,7 @@ function renderSettingsContent() {
       </div>
       <button type="button" class="btn btn-primary" id="save-notify-time" style="width:100%;margin-top:8px">сохранить время</button>
     </div>
+    ${p.supervisor ? "" : `
     <div class="card">
       <div class="card-label">учёт часов</div>
       <div class="setting-row">
@@ -888,11 +1085,21 @@ function renderSettingsContent() {
         </div>
         <button type="button" class="btn toggle-btn${p.notify_hours ? " on" : ""}" id="toggle-notify-hours">${p.notify_hours ? "вкл" : "выкл"}</button>
       </div>
-    </div>
+    </div>`}
     <div class="card" id="settings-theme-card">
       <div class="card-label">тема</div>
       <div class="theme-grid">
         ${themeOptionsHtml(p.theme || "alice_dark")}
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-label">обучение</div>
+      <div class="setting-row">
+        <div class="setting-info">
+          <div class="setting-title">знакомство с ботом</div>
+          <div class="setting-desc">приветствие, настройки и тур по вкладкам</div>
+        </div>
+        <button type="button" class="btn" id="replay-onboarding">пройти</button>
       </div>
     </div>
   `;
@@ -910,6 +1117,12 @@ function renderSettingsContent() {
   document.getElementById("change-name")?.addEventListener("click", () => {
     namePickRole = null;
     renderNamePicker("settings-content");
+  });
+
+  document.getElementById("replay-onboarding")?.addEventListener("click", () => {
+    hapticLight();
+    closeSettingsSheet();
+    startOnboarding();
   });
 
   content.querySelectorAll(".theme-option").forEach((btn) => {
@@ -1253,17 +1466,324 @@ async function renderPeopleList() {
       ? "тап — выбрать участника · внизу «перейти к сравнению»"
       : "тап — график · долгий тап — в сравнение · тап по выбранному — убрать";
 
+    const msgBtn = profile?.can_team_message
+      ? `<button type="button" class="btn btn-primary" id="open-team-message" style="width:100%;margin-bottom:12px">написать команде</button>`
+      : "";
+
     document.getElementById("main").innerHTML = `
+      ${msgBtn}
       <div class="card-label">${hint}</div>
       <div class="card">${blocks || '<div class="empty-team">нет коллег в списке</div>'}</div>
       <p class="quote">everyone's mad here</p>
     `;
 
+    document.getElementById("open-team-message")?.addEventListener("click", () => {
+      hapticLight();
+      openTeamMessageScreen();
+    });
     document.querySelectorAll(".person-chip-btn").forEach((btn) => bindPersonChip(btn));
     renderCompareDock();
   } catch (e) {
     renderError(e.message);
   }
+}
+
+async function openTeamMessageScreen() {
+  msgSelectedRoles = [];
+  msgSendAll = false;
+  msgSelectedPerson = null;
+  msgShiftOffset = null;
+  msgTargets = null;
+  peopleScreen = "message";
+  document.getElementById("screen-title").textContent = "сообщение";
+  document.getElementById("screen-subtitle").textContent = "отдел · смена · всем";
+  renderCompareDock();
+  await renderTeamMessage();
+}
+
+function msgRecipientSummary() {
+  if (!msgTargets) return "загрузка…";
+  if (msgSelectedPerson) {
+    return `только · ${msgSelectedPerson.name}`;
+  }
+  if (msgShiftOffset === 0) {
+    const n = msgTargets.shift_today?.reachable || 0;
+    return `сегодня на смене · ${n} чел.`;
+  }
+  if (msgShiftOffset === 1) {
+    const n = msgTargets.shift_tomorrow?.reachable || 0;
+    return `завтра на смене · ${n} чел.`;
+  }
+  if (msgSendAll) {
+    return `всем · ${msgTargets.reachable_total || 0} чел.`;
+  }
+  if (!msgSelectedRoles.length) return "выбери отдел, смену или человека";
+  let count = 0;
+  for (const dep of msgTargets.departments || []) {
+    if (msgSelectedRoles.includes(dep.role)) count += dep.reachable || 0;
+  }
+  const labels = (msgTargets.departments || [])
+    .filter((d) => msgSelectedRoles.includes(d.role))
+    .map((d) => d.role_label);
+  return `${labels.join(" · ") || "отделы"} · ${count} чел.`;
+}
+
+function toggleMsgRole(role) {
+  msgSelectedPerson = null;
+  msgSendAll = false;
+  msgShiftOffset = null;
+  const idx = msgSelectedRoles.indexOf(role);
+  if (idx >= 0) msgSelectedRoles.splice(idx, 1);
+  else msgSelectedRoles.push(role);
+}
+
+function selectMsgShift(offset) {
+  msgSelectedPerson = null;
+  msgSendAll = false;
+  msgSelectedRoles = [];
+  msgShiftOffset = msgShiftOffset === offset ? null : offset;
+}
+
+async function renderTeamMessage() {
+  const prevText = document.getElementById("msg-text")?.value || "";
+  renderLoading();
+  try {
+    if (!msgTargets) {
+      msgTargets = await api("/api/supervisor/message/targets");
+    }
+    const deps = msgTargets.departments || [];
+    const todayShift = msgTargets.shift_today || {};
+    const tomorrowShift = msgTargets.shift_tomorrow || {};
+    const deptHtml = deps.map((dep) => {
+      const selected = msgShiftOffset == null
+        && !msgSelectedPerson
+        && (msgSendAll || msgSelectedRoles.includes(dep.role));
+      const personHit = msgSelectedPerson
+        && msgSelectedPerson.role === dep.role
+        && dep.people.some((p) => p.name === msgSelectedPerson.name);
+      const cls = [
+        "msg-dept",
+        selected ? "selected" : "",
+        personHit ? "person-pick" : "",
+      ].filter(Boolean).join(" ");
+      return `
+        <button type="button" class="${cls}" data-role="${escapeAttr(dep.role)}" data-label="${escapeAttr(dep.role_label)}">
+          <span class="msg-dept-title">${escapeHtml(dep.role_label)}</span>
+          <span class="msg-dept-meta">${dep.reachable}/${dep.total} в системе</span>
+        </button>
+      `;
+    }).join("");
+
+    const todayLabel = todayShift.published
+      ? `сегодня на смене · ${todayShift.reachable || 0}`
+      : "сегодня · нет графика";
+    const tomorrowLabel = tomorrowShift.published
+      ? `завтра на смене · ${tomorrowShift.reachable || 0}`
+      : "завтра · нет графика";
+
+    document.getElementById("main").innerHTML = `
+      <button type="button" class="btn back-btn" id="msg-back">← к коллегам</button>
+      <div class="card-label">кому</div>
+      <div class="msg-actions">
+        <button type="button" class="btn${msgSendAll && msgShiftOffset == null && !msgSelectedPerson ? " active" : ""}" id="msg-all">всем</button>
+        <button type="button" class="btn${msgShiftOffset === 0 ? " active" : ""}" id="msg-shift-today"${todayShift.published === false ? " disabled" : ""}>${escapeHtml(todayLabel)}</button>
+        <button type="button" class="btn${msgShiftOffset === 1 ? " active" : ""}" id="msg-shift-tomorrow"${tomorrowShift.published === false ? " disabled" : ""}>${escapeHtml(tomorrowLabel)}</button>
+        ${msgSelectedPerson ? `<button type="button" class="btn" id="msg-clear-person">сбросить человека</button>` : ""}
+      </div>
+      <div class="card-meta" style="margin:8px 0 10px">тап — отдел · зажать — человек</div>
+      <div class="msg-dept-grid">${deptHtml || '<div class="empty-team">нет отделов</div>'}</div>
+      <div class="card" style="margin-top:14px">
+        <div class="card-label">получатели</div>
+        <div class="card-title" id="msg-summary" style="font-size:15px">${escapeHtml(msgRecipientSummary())}</div>
+      </div>
+      <div class="card">
+        <div class="card-label">текст</div>
+        <textarea id="msg-text" class="msg-textarea" rows="4" maxlength="1000" placeholder="коротко и по делу…"></textarea>
+        <button type="button" class="btn btn-primary" id="msg-send" style="width:100%;margin-top:10px">отправить</button>
+      </div>
+    `;
+
+    document.getElementById("msg-back")?.addEventListener("click", () => {
+      peopleScreen = "list";
+      document.getElementById("screen-title").textContent = TITLES.people;
+      updateSubtitle();
+      renderPeople();
+    });
+
+    document.getElementById("msg-all")?.addEventListener("click", () => {
+      hapticLight();
+      msgSelectedPerson = null;
+      msgShiftOffset = null;
+      msgSendAll = !msgSendAll;
+      if (msgSendAll) msgSelectedRoles = (msgTargets.departments || []).map((d) => d.role);
+      else msgSelectedRoles = [];
+      renderTeamMessage();
+    });
+
+    document.getElementById("msg-shift-today")?.addEventListener("click", () => {
+      if (todayShift.published === false) return;
+      hapticLight();
+      selectMsgShift(0);
+      renderTeamMessage();
+    });
+
+    document.getElementById("msg-shift-tomorrow")?.addEventListener("click", () => {
+      if (tomorrowShift.published === false) return;
+      hapticLight();
+      selectMsgShift(1);
+      renderTeamMessage();
+    });
+
+    document.getElementById("msg-clear-person")?.addEventListener("click", () => {
+      msgSelectedPerson = null;
+      renderTeamMessage();
+    });
+
+    document.querySelectorAll(".msg-dept").forEach((btn) => bindMsgDept(btn));
+
+    const textEl = document.getElementById("msg-text");
+    if (textEl && prevText) textEl.value = prevText;
+
+    document.getElementById("msg-send")?.addEventListener("click", async () => {
+      const text = document.getElementById("msg-text")?.value?.trim() || "";
+      if (!text) {
+        tg?.showAlert?.("Введи текст сообщения");
+        return;
+      }
+      if (
+        !msgSelectedPerson
+        && msgShiftOffset == null
+        && !msgSendAll
+        && !msgSelectedRoles.length
+      ) {
+        tg?.showAlert?.("Выбери отдел, смену, человека или «всем»");
+        return;
+      }
+      const ok = await tgConfirm(`Отправить?\n${msgRecipientSummary()}`);
+      if (!ok) return;
+      try {
+        const payload = { text };
+        if (msgSelectedPerson) {
+          payload.people = [{
+            name: msgSelectedPerson.name,
+            role: msgSelectedPerson.role,
+            user_id: msgSelectedPerson.user_id || undefined,
+          }];
+        } else if (msgShiftOffset != null) {
+          payload.shift_offset = msgShiftOffset;
+        } else if (msgSendAll) {
+          payload.send_all = true;
+        } else {
+          payload.roles = [...msgSelectedRoles];
+        }
+        const res = await api("/api/supervisor/message", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+        hapticLight();
+        let alertText = `Отправлено: ${res.sent} из ${res.total}`;
+        if (res.failed) {
+          const names = (res.failed_names || []).join(", ");
+          alertText += `\nНе дошло: ${names || res.failed}`;
+          alertText += "\nНужен /start в этом боте";
+        }
+        tg?.showAlert?.(alertText);
+        if (res.sent) document.getElementById("msg-text").value = "";
+      } catch (e) {
+        tg?.showAlert?.(e.message);
+      }
+    });
+  } catch (e) {
+    renderError(e.message);
+  }
+}
+
+function bindMsgDept(btn) {
+  let pressTimer = null;
+  let longPressed = false;
+  const role = btn.dataset.role;
+  const label = btn.dataset.label || role;
+
+  const clear = () => {
+    if (pressTimer) {
+      clearTimeout(pressTimer);
+      pressTimer = null;
+    }
+  };
+
+  const startPress = () => {
+    longPressed = false;
+    pressTimer = setTimeout(() => {
+      longPressed = true;
+      openMsgPersonPicker(role, label);
+      hapticLight();
+    }, 450);
+  };
+
+  btn.addEventListener("touchstart", startPress, { passive: true });
+  btn.addEventListener("mousedown", startPress);
+  btn.addEventListener("touchend", clear);
+  btn.addEventListener("touchmove", clear);
+  btn.addEventListener("mouseup", clear);
+  btn.addEventListener("mouseleave", clear);
+  btn.addEventListener("click", (e) => {
+    if (longPressed) {
+      e.preventDefault();
+      longPressed = false;
+      return;
+    }
+    hapticLight();
+    toggleMsgRole(role);
+    renderTeamMessage();
+  });
+}
+
+async function openMsgPersonPicker(role, roleLabel) {
+  const sheet = document.getElementById("day-sheet");
+  const content = document.getElementById("day-content");
+  if (!sheet || !content || !msgTargets) return;
+
+  const dep = (msgTargets.departments || []).find((d) => d.role === role);
+  if (!dep) return;
+
+  sheet.classList.remove("hidden");
+  content.innerHTML = `<div class="loading-wrap">${cardLoaderHtml()}</div>`;
+  requestAnimationFrame(() => sheet.classList.add("open"));
+
+  const people = dep.people || [];
+  const rows = people.map((p) => {
+    const disabled = !p.registered;
+    return `
+      <button type="button" class="person-chip person-chip-btn${disabled ? " muted" : ""}"
+        data-name="${escapeAttr(p.name)}" data-role="${escapeAttr(role)}"
+        ${disabled ? "disabled" : ""}>
+        ${escapeHtml(p.name)}${disabled ? " · нет в системе" : ""}
+      </button>
+    `;
+  }).join("");
+
+  content.innerHTML = `
+    <div class="hours-title">${escapeHtml(roleLabel)}</div>
+    <div class="card-meta" style="margin:8px 0 12px">выбери человека — сообщение только ему</div>
+    <div class="people-list">${rows || '<div class="empty-team">пусто</div>'}</div>
+  `;
+
+  content.querySelectorAll(".person-chip-btn:not([disabled])").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const person = (dep.people || []).find((p) => p.name === btn.dataset.name);
+      msgSelectedPerson = {
+        name: btn.dataset.name,
+        role: btn.dataset.role,
+        user_id: person?.user_id || null,
+      };
+      msgSendAll = false;
+      msgSelectedRoles = [];
+      msgShiftOffset = null;
+      closeDaySheet();
+      hapticLight();
+      renderTeamMessage();
+    });
+  });
 }
 
 function rosterDisplayName(entry) {
@@ -1550,6 +2070,11 @@ function backToPeopleList() {
   if (peopleScreen === "compare") comparePick = [];
   addParticipantMode = false;
   compareFromColleague = null;
+  msgTargets = null;
+  msgSelectedPerson = null;
+  msgSelectedRoles = [];
+  msgSendAll = false;
+  msgShiftOffset = null;
   peopleScreen = "list";
   colleagueView = null;
   colleagueReturnTab = null;
@@ -1653,6 +2178,7 @@ async function renderCompareResult() {
 function renderPeople() {
   if (peopleScreen === "person") return renderColleagueSchedule();
   if (peopleScreen === "compare") return renderCompareResult();
+  if (peopleScreen === "message") return renderTeamMessage();
   return renderPeopleList();
 }
 
@@ -1714,6 +2240,7 @@ function updateSubtitle() {
 }
 
 function setTab(next) {
+  if (profile?.supervisor && (next === "salary" || next === "analytics")) next = "schedule";
   const main = document.getElementById("main");
   if (tab === next && next === "people" && peopleScreen !== "list") {
     hapticLight();
@@ -1760,6 +2287,11 @@ document.querySelectorAll(".nav-btn").forEach((btn) => {
     hideSplash();
     if (!ok) return;
 
+    if (!profile.onboarding_seen) {
+      startOnboarding();
+      return;
+    }
+
     if (start.view === "team") {
       teamDayOffset = start.teamOffset;
       setTab("team");
@@ -1777,3 +2309,258 @@ document.querySelectorAll(".nav-btn").forEach((btn) => {
     renderError(e.message);
   }
 })();
+
+// ---------- Онбординг нового пользователя ----------
+
+const ONBOARDING_TABS = [
+  { tab: "schedule", label: "график", text: "твой график на неделю и месяц. тапни день — увидишь детали смены." },
+  { tab: "team", label: "смена", text: "кто ещё работает в выбранный день — вся команда на смене." },
+  { tab: "people", label: "коллеги", text: "коллеги и совпадения графиков. можно сравнить свои смены с чужими." },
+  { tab: "salary", label: "зп", text: "примерный расчёт зарплаты за период по твоим сменам." },
+  { tab: "analytics", label: "стат", text: "смены и часы за период — вся статистика в цифрах." },
+];
+
+function onboardingTabs() {
+  if (profile?.supervisor) {
+    return ONBOARDING_TABS.filter((step) => step.tab !== "salary" && step.tab !== "analytics");
+  }
+  return ONBOARDING_TABS;
+}
+
+function onboardingRoot() {
+  let root = document.getElementById("onboarding");
+  if (!root) {
+    root = document.createElement("div");
+    root.id = "onboarding";
+    root.className = "onboarding hidden";
+    document.body.appendChild(root);
+  }
+  return root;
+}
+
+function startOnboarding() {
+  applyRoleUi();
+  document.getElementById("nav")?.classList.remove("hidden");
+  try { setTab("schedule"); } catch (_) { /* noop */ }
+  renderOnboardingWelcome();
+}
+
+function renderOnboardingWelcome() {
+  const root = onboardingRoot();
+  root.classList.remove("hidden");
+  root.classList.add("centered");
+  const name = escapeHtml(profile?.name || "");
+  root.innerHTML = `
+    <div class="onb-backdrop"></div>
+    <div class="onb-dialog onb-anim">
+      <div class="card onb-panel">
+        <div class="onb-cards" aria-hidden="true">
+          <div class="card-loader">
+            <div class="card-stack">
+              <span class="playing-card c1">♠</span>
+              <span class="playing-card c2">♥</span>
+              <span class="playing-card c3">♦</span>
+            </div>
+          </div>
+        </div>
+        <div class="onb-brandline">TNG · Alice</div>
+        <div class="onb-h1">добро пожаловать${name ? ",<br>" + name : ""}</div>
+        <div class="onb-sub">давай настроим бота под тебя и покажем, что где живёт. это займёт минуту.</div>
+        <button type="button" class="btn btn-primary onb-btn-wide" id="onb-start">настроить</button>
+        <button type="button" class="btn onb-btn-wide onb-ghost" id="onb-skip">пропустить</button>
+      </div>
+    </div>
+  `;
+  document.getElementById("onb-start")?.addEventListener("click", () => { hapticLight(); renderOnboardingWizard(); });
+  document.getElementById("onb-skip")?.addEventListener("click", () => finishOnboarding());
+}
+
+async function onbPatch(body) {
+  try {
+    await patchSettings(body);
+    return true;
+  } catch (e) {
+    tg?.showAlert?.(e.message);
+    return false;
+  }
+}
+
+function renderOnboardingWizard() {
+  const root = onboardingRoot();
+  root.classList.remove("hidden");
+  root.classList.add("centered");
+  const p = profile || {};
+  const t = p.notify_time || "09:00";
+  root.innerHTML = `
+    <div class="onb-backdrop"></div>
+    <div class="onb-dialog onb-scroll onb-anim">
+      <div class="onb-head">
+        <div class="onb-brandline">шаг 1 · настройки</div>
+        <div class="onb-h2">настроим под тебя</div>
+        <div class="onb-sub">включи только то, что нужно — потом всё можно поменять в настройках.</div>
+      </div>
+
+      <div class="card">
+        <div class="card-label">уведомления</div>
+        <div class="setting-row">
+          <div class="setting-info">
+            <div class="setting-title">🔔 ежедневное напоминание</div>
+            <div class="setting-desc">утром пишу в чат, во сколько ты сегодня на смене</div>
+          </div>
+          <button type="button" class="btn toggle-btn${p.notify ? " on" : ""}" id="onb-notify">${p.notify ? "вкл" : "выкл"}</button>
+        </div>
+        <div class="setting-row onb-time-row${p.notify ? "" : " hidden"}" id="onb-time-row">
+          <div class="setting-info"><div class="setting-title">время</div></div>
+          <input class="hours-input settings-time" id="onb-notify-time" value="${escapeAttr(t)}" placeholder="09:00" />
+        </div>
+      </div>
+
+      ${p.supervisor ? "" : `
+      <div class="card">
+        <div class="card-label">часы и зарплата</div>
+        <div class="setting-row">
+          <div class="setting-info">
+            <div class="setting-title">💰 учёт часов</div>
+            <div class="setting-desc">считаю зарплату и аналитику по реально отработанным сменам</div>
+          </div>
+          <button type="button" class="btn toggle-btn${p.track_hours ? " on" : ""}" id="onb-track">${p.track_hours ? "вкл" : "выкл"}</button>
+        </div>
+        <div class="setting-row${p.track_hours ? "" : " onb-dim"}">
+          <div class="setting-info">
+            <div class="setting-title">⏰ напоминание внести часы</div>
+            <div class="setting-desc">после смены пришлю кнопку — быстро отметить часы</div>
+          </div>
+          <button type="button" class="btn toggle-btn${p.notify_hours ? " on" : ""}" id="onb-notify-hours">${p.notify_hours ? "вкл" : "выкл"}</button>
+        </div>
+      </div>`}
+
+      <div class="card">
+        <div class="card-label">тема оформления</div>
+        <div class="theme-grid">${themeOptionsHtml(p.theme || "alice_dark")}</div>
+      </div>
+
+      <div class="onb-actions">
+        <button type="button" class="btn onb-ghost" id="onb-skip2">пропустить</button>
+        <button type="button" class="btn btn-primary" id="onb-next">далее →</button>
+      </div>
+    </div>
+  `;
+
+  document.getElementById("onb-notify")?.addEventListener("click", async () => {
+    hapticLight();
+    if (p.notify) {
+      if (await onbPatch({ notify: false })) renderOnboardingWizard();
+    } else {
+      const time = document.getElementById("onb-notify-time")?.value?.trim() || "09:00";
+      if (await onbPatch({ notify: true, notify_time: time })) renderOnboardingWizard();
+    }
+  });
+
+  document.getElementById("onb-track")?.addEventListener("click", async () => {
+    hapticLight();
+    if (await onbPatch({ track_hours: !p.track_hours })) {
+      refreshNavBadges();
+      renderOnboardingWizard();
+    }
+  });
+
+  document.getElementById("onb-notify-hours")?.addEventListener("click", async () => {
+    if (!p.track_hours) {
+      tg?.showAlert?.("Сначала включи учёт часов");
+      return;
+    }
+    hapticLight();
+    if (await onbPatch({ notify_hours: !p.notify_hours })) renderOnboardingWizard();
+  });
+
+  root.querySelectorAll(".theme-option").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const nextTheme = btn.dataset.theme;
+      if (!nextTheme || nextTheme === p.theme) return;
+      hapticLight();
+      if (await onbPatch({ theme: nextTheme })) {
+        applyTheme(profile.theme || nextTheme);
+        renderOnboardingWizard();
+      }
+    });
+  });
+
+  document.getElementById("onb-next")?.addEventListener("click", () => { hapticLight(); startOnboardingTour(0); });
+  document.getElementById("onb-skip2")?.addEventListener("click", () => finishOnboarding());
+}
+
+function startOnboardingTour(index) {
+  const root = onboardingRoot();
+  root.classList.remove("hidden");
+  root.classList.remove("centered");
+  const steps = onboardingTabs();
+  const step = steps[index];
+  if (!step) { finishOnboarding(); return; }
+
+  try { setTab(step.tab); } catch (_) { /* noop */ }
+
+  const btn = document.querySelector(`.nav-btn[data-tab="${step.tab}"]`);
+  const rect = btn ? btn.getBoundingClientRect() : null;
+  const isLast = index === steps.length - 1;
+
+  document.getElementById("nav")?.classList.add("onb-touring");
+  document.querySelectorAll(".nav-btn").forEach((b) => {
+    b.classList.toggle("onb-tab-highlight", b.dataset.tab === step.tab);
+  });
+
+  root.innerHTML = `
+    <div class="onb-backdrop tour"></div>
+    <div class="onb-bubble card onb-anim" id="onb-bubble">
+      <div class="onb-brandline">${index + 1} / ${steps.length}</div>
+      <div class="onb-bubble-title">${escapeHtml(step.label)}</div>
+      <div class="onb-bubble-text">${escapeHtml(step.text)}</div>
+      <div class="onb-actions">
+        <button type="button" class="btn onb-ghost" id="onb-tour-skip">пропустить</button>
+        <button type="button" class="btn btn-primary" id="onb-tour-next">${isLast ? "готово" : "далее"}</button>
+      </div>
+      <div class="onb-bubble-arrow" id="onb-arrow"></div>
+    </div>
+  `;
+
+  const bubble = document.getElementById("onb-bubble");
+  if (bubble) {
+    const bw = Math.min(320, window.innerWidth - 24);
+    bubble.style.width = bw + "px";
+    if (rect) {
+      let left = rect.left + rect.width / 2 - bw / 2;
+      left = Math.max(12, Math.min(left, window.innerWidth - bw - 12));
+      bubble.style.left = left + "px";
+      bubble.style.bottom = (window.innerHeight - rect.top + 16) + "px";
+      const arrow = document.getElementById("onb-arrow");
+      if (arrow) {
+        const ax = rect.left + rect.width / 2 - left;
+        arrow.style.left = Math.max(16, Math.min(ax, bw - 16)) + "px";
+      }
+    } else {
+      bubble.style.left = "50%";
+      bubble.style.transform = "translateX(-50%)";
+      bubble.style.bottom = "96px";
+      document.getElementById("onb-arrow")?.style.setProperty("display", "none");
+    }
+  }
+
+  document.getElementById("onb-tour-next")?.addEventListener("click", () => { hapticLight(); startOnboardingTour(index + 1); });
+  document.getElementById("onb-tour-skip")?.addEventListener("click", () => finishOnboarding());
+}
+
+async function finishOnboarding() {
+  document.getElementById("nav")?.classList.remove("onb-touring");
+  document.querySelectorAll(".nav-btn.onb-tab-highlight").forEach((b) => {
+    b.classList.remove("onb-tab-highlight");
+  });
+  const root = document.getElementById("onboarding");
+  if (root) {
+    root.classList.add("hidden");
+    root.classList.remove("centered");
+    root.innerHTML = "";
+  }
+  await onbPatch({ onboarding_seen: true });
+  applyTheme(profile?.theme || "alice_dark");
+  refreshNavBadges();
+  setTab("schedule");
+}

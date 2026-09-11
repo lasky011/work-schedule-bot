@@ -15,6 +15,7 @@ from app_config import (
     BOT_TOKEN,
     MINIAPP_ENABLED,
     MINIAPP_PORT,
+    MINIAPP_URL,
     SHEET_PERIODS_REFRESH_SECONDS,
     now_local,
 )
@@ -158,6 +159,7 @@ class ShiftLogBody(BaseModel):
 class ColleagueRef(BaseModel):
     name: str
     role: str | None = None
+    user_id: int | None = None
 
 
 class CompareBody(BaseModel):
@@ -168,12 +170,21 @@ class CompareBody(BaseModel):
     end: int = Field(ge=1, le=31)
 
 
+class SupervisorMessageBody(BaseModel):
+    text: str = Field(min_length=1, max_length=1000)
+    send_all: bool = False
+    roles: list[str] = Field(default_factory=list)
+    people: list[ColleagueRef] = Field(default_factory=list)
+    shift_offset: int | None = Field(default=None, ge=0, le=1)
+
+
 class SettingsPatch(BaseModel):
     notify: bool | None = None
     notify_time: str | None = None
     track_hours: bool | None = None
     notify_hours: bool | None = None
     theme: str | None = None
+    onboarding_seen: bool | None = None
 
 
 class ProfilePatch(BaseModel):
@@ -227,6 +238,7 @@ def create_app() -> FastAPI:
             },
             "flags": {
                 "miniapp_enabled": MINIAPP_ENABLED,
+                "miniapp_url_set": bool(MINIAPP_URL),
                 "sheet_periods_refresh_seconds": SHEET_PERIODS_REFRESH_SECONDS,
             },
             "ready": ready,
@@ -254,6 +266,7 @@ def create_app() -> FastAPI:
             track_hours=body.track_hours,
             notify_hours=body.notify_hours,
             theme=body.theme,
+            onboarding_seen=body.onboarding_seen,
         )
         if data.get("error") == "not_registered":
             raise HTTPException(status_code=403, detail="Сначала выбери имя в боте")
@@ -416,6 +429,56 @@ def create_app() -> FastAPI:
         )
         if data.get("error") == "not_registered":
             raise HTTPException(status_code=403, detail="Сначала выбери имя в боте")
+        return data
+
+    @app.get("/api/supervisor/message/targets")
+    async def supervisor_message_targets(user_id: int = Depends(get_user_id)):
+        data = await miniapp_service.list_supervisor_message_targets(user_id)
+        if data.get("error") == "not_registered":
+            raise HTTPException(status_code=403, detail="Сначала выбери имя в боте")
+        if data.get("error") == "forbidden":
+            raise HTTPException(
+                status_code=403,
+                detail="Нет доступа к сообщениям команде",
+            )
+        return data
+
+    @app.post("/api/supervisor/message")
+    async def supervisor_message(body: SupervisorMessageBody, user_id: int = Depends(get_user_id)):
+        data = await miniapp_service.send_supervisor_message(
+            user_id,
+            body.text,
+            send_all=body.send_all,
+            roles=body.roles,
+            people=[c.model_dump() for c in body.people],
+            shift_offset=body.shift_offset,
+        )
+        err = data.get("error")
+        if err == "not_registered":
+            raise HTTPException(status_code=403, detail="Сначала выбери имя в боте")
+        if err == "forbidden":
+            raise HTTPException(
+                status_code=403,
+                detail="Нет доступа к сообщениям команде",
+            )
+        if err == "empty_text":
+            raise HTTPException(status_code=400, detail="Введи текст сообщения")
+        if err == "text_too_long":
+            raise HTTPException(status_code=400, detail="Слишком длинное сообщение")
+        if err == "bad_shift_offset":
+            raise HTTPException(status_code=400, detail="Некорректный день смены")
+        if err == "unpublished_day":
+            raise HTTPException(status_code=400, detail="График на этот день ещё не опубликован")
+        if err == "no_targets":
+            raise HTTPException(
+                status_code=400,
+                detail="Выбери отдел, человека, смену или «всем»",
+            )
+        if err == "no_recipients":
+            raise HTTPException(
+                status_code=400,
+                detail="Нет получателей с ботом в выбранной аудитории",
+            )
         return data
 
     @app.get("/api/team")

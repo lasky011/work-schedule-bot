@@ -44,6 +44,19 @@ def is_valid_time(text: str) -> bool:
         return False
 
 
+def normalize_hhmm(text: str | None) -> str | None:
+    """Приводит '9:30' и '09:30' к одному виду '09:30'."""
+    if text is None:
+        return None
+    raw = str(text).strip()
+    if not raw:
+        return None
+    try:
+        return datetime.strptime(raw, "%H:%M").strftime("%H:%M")
+    except ValueError:
+        return raw
+
+
 def with_loading(text="⏳ Загружаю..."):
     """Декоратор: показывает loading → хендлер → удаляет loading."""
     def decorator(func):

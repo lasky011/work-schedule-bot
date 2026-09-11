@@ -1,30 +1,43 @@
 """Данные для Telegram Mini App."""
 
 import calendar
+import logging
 from datetime import date, datetime, timedelta
 
-from app_config import now_local
+from app_config import is_team_message_extra_name, now_local
 from departments_manager import (
     DEPARTMENTS,
     is_person_name,
     normalize_role_name,
     ordered_role_keys,
     person_has_ambiguous_role,
+    role_area,
     role_display_label,
     roles_for_person,
 )
 from keyboards.compare import get_available_periods
 from repositories.shifts_repo import delete_shift, get_shift_for_date, get_shifts_for_month, save_shift
-from repositories.users_repo import get_user, save_user
+from repositories.users_repo import get_onboarding_seen, get_registered_users, get_user, save_user
 from schedule_utils import detect_shift, detect_shift_type, format_date, get_standard_hours, is_work_shift
-from ui_utils import is_valid_time
+from ui_utils import is_valid_time, normalize_hhmm
 from services import salary_service
 from services import schedule_service as schedule
 from services.gen_cleaning_service import is_gen_cleaning_day
+from services.supervisor_schedule import (
+    is_supervisor_role,
+    month_schedule as supervisor_month_schedule,
+    shift_for_weekday as supervisor_shift_for_weekday,
+    uses_fixed_schedule,
+    week_schedule as supervisor_week_schedule,
+)
 from services.telegram_notify import send_user_message
 
 
 WEEKDAYS_SHORT = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]
+
+
+def _same_person_name(a: str, b: str) -> bool:
+    return schedule.person_names_match(a, b)
 
 
 def _roster_person_name(entry: str) -> str:
@@ -32,6 +45,71 @@ def _roster_person_name(entry: str) -> str:
     if sep in entry:
         return entry.split(sep, 1)[0].strip()
     return entry.strip()
+
+
+def _can_team_message(name: str | None, role: str | None) -> bool:
+    return (
+        uses_fixed_schedule(name, role)
+        or normalize_role_name(role) == "Менеджеры"
+        or is_team_message_extra_name(name)
+    )
+
+
+def _departments_map() -> dict:
+    return {k: list(v) for k, v in DEPARTMENTS.items()}
+
+
+def _department_people_count(dep: dict) -> int:
+    return len(dep.get("people") or [])
+
+
+def _group_departments_by_area(departments: list[dict]) -> list[dict]:
+    """Группирует роли в зоны «Зал» / «Кухня» с подсчётом людей."""
+    buckets: dict[str, list[dict]] = {"hall": [], "kitchen": []}
+    for dep in departments:
+        area = role_area(dep.get("role"))
+        buckets.setdefault(area, []).append(dep)
+
+    areas = []
+    for key, label in (("hall", "Зал"), ("kitchen", "Кухня")):
+        deps = buckets.get(key) or []
+        if not deps:
+            continue
+        total = sum(_department_people_count(d) for d in deps)
+        areas.append({
+            "key": key,
+            "label": label,
+            "total": total,
+            "departments": deps,
+        })
+    return areas
+
+
+def _area_totals(areas: list[dict]) -> tuple[int, int]:
+    hall = kitchen = 0
+    for area in areas:
+        if area.get("key") == "kitchen":
+            kitchen = int(area.get("total") or 0)
+        else:
+            hall = int(area.get("total") or 0)
+    return hall, kitchen
+
+
+def _is_supervisor(name: str | None, role: str | None = None) -> bool:
+    return uses_fixed_schedule(name, role)
+
+
+def _roster_shift_counts(by_role: dict) -> tuple[int, int, int]:
+    total = morning = evening = 0
+    for people in by_role.values():
+        for entry in people or []:
+            total += 1
+            text = str(entry).lower()
+            if "утро" in text:
+                morning += 1
+            elif "вечер" in text:
+                evening += 1
+    return total, morning, evening
 
 
 THEMES = {
@@ -70,6 +148,11 @@ async def get_profile(user_id: int) -> dict:
     notify_time = user[3] if len(user) > 3 else None
     theme = user[8] if len(user) > 8 and user[8] else "alice_dark"
     role_label = role_display_label(role) if role else None
+    try:
+        onboarding_seen = await get_onboarding_seen(user_id)
+    except Exception:
+        onboarding_seen = True
+    supervisor = _is_supervisor(user[1], role)
 
     return {
         "registered": True,
@@ -82,6 +165,9 @@ async def get_profile(user_id: int) -> dict:
         "notify_time": notify_time,
         "notify_hours": notify_hours,
         "theme": theme,
+        "onboarding_seen": onboarding_seen,
+        "supervisor": supervisor,
+        "can_team_message": _can_team_message(user[1], role),
     }
 
 
@@ -93,6 +179,7 @@ async def update_user_settings(
     track_hours: bool | None = None,
     notify_hours: bool | None = None,
     theme: str | None = None,
+    onboarding_seen: bool | None = None,
 ) -> dict:
     user = await get_user(user_id)
     if not user or not user[1]:
@@ -100,13 +187,15 @@ async def update_user_settings(
 
     if notify_time is not None and not is_valid_time(notify_time):
         return {"error": "bad_time"}
+    if notify_time is not None:
+        notify_time = normalize_hhmm(notify_time) or notify_time
     if theme is not None and theme not in THEMES:
         return {"error": "bad_theme"}
 
     chat_msgs: list[str] = []
 
     if notify is True:
-        time_val = notify_time or user[3]
+        time_val = normalize_hhmm(notify_time or user[3]) or (notify_time or user[3])
         if not time_val:
             return {"error": "need_time"}
         await save_user(user_id, notify=1, notify_time=time_val)
@@ -127,6 +216,8 @@ async def update_user_settings(
         await save_user(user_id, notify_hours=1 if notify_hours else 0)
     if theme is not None:
         await save_user(user_id, theme=theme)
+    if onboarding_seen is not None:
+        await save_user(user_id, onboarding_seen=1 if onboarding_seen else 0)
 
     for msg in chat_msgs:
         await send_user_message(user_id, msg)
@@ -178,16 +269,34 @@ async def remove_shift_log(user_id: int, date_str: str) -> dict:
 
 
 async def _shift_for_person(name: str, role: str | None, dt: datetime) -> dict:
+    if uses_fixed_schedule(name, role):
+        return supervisor_shift_for_weekday(dt.weekday())
     try:
         row, _ = await schedule.find_row(
             name, dt.day, dt.month, dt.year, target_role=role,
         )
+        if not row and role and not person_has_ambiguous_role(name):
+            row, _ = await schedule.find_row(
+                name, dt.day, dt.month, dt.year, target_role=None,
+            )
         if not row:
-            return {"working": False, "shift_type": None, "label": None, "hours": None}
+            return {
+                "working": False,
+                "shift_type": None,
+                "label": None,
+                "hours": None,
+                "in_sheet": False,
+            }
 
         value = await schedule.get_day_value(row, dt.day, dt.month, dt.year)
         if not is_work_shift(value):
-            return {"working": False, "shift_type": None, "label": "вых", "hours": None}
+            return {
+                "working": False,
+                "shift_type": None,
+                "label": "вых",
+                "hours": None,
+                "in_sheet": True,
+            }
 
         shift_type = detect_shift_type(str(value) if value else "")
         std = get_standard_hours(shift_type, dt) if shift_type else None
@@ -198,9 +307,17 @@ async def _shift_for_person(name: str, role: str | None, dt: datetime) -> dict:
             "label": label,
             "hours": std,
             "raw": str(value).strip() if value else None,
+            "in_sheet": True,
         }
     except (ValueError, ConnectionError):
-        return {"working": False, "shift_type": None, "label": None, "hours": None, "error": True}
+        return {
+            "working": False,
+            "shift_type": None,
+            "label": None,
+            "hours": None,
+            "error": True,
+            "in_sheet": False,
+        }
 
 
 def _person_working_in_role(departments: list[dict], role_key: str, name: str) -> bool:
@@ -251,6 +368,53 @@ async def _day_schedule_entry(
     }
 
 
+async def _roster_counts_for(dt: datetime, published: bool) -> dict:
+    if not published:
+        return {
+            "total_working": None,
+            "roster_morning": None,
+            "roster_evening": None,
+        }
+    try:
+        by_role = await schedule.get_people_for_day(dt.day, dt.month, dt.year)
+    except (ValueError, ConnectionError):
+        by_role = {}
+    total, morning, evening = _roster_shift_counts(by_role)
+    return {
+        "total_working": total,
+        "roster_morning": morning,
+        "roster_evening": evening,
+    }
+
+
+async def _enrich_with_roster_counts(payload: dict) -> dict:
+    """Добавляет численность смены, не трогая личный график."""
+    cache: dict[str, dict] = {}
+    entries = list(payload.get("days") or [])
+    for key in ("today", "tomorrow"):
+        if payload.get(key):
+            entries.append(payload[key])
+    for entry in entries:
+        date_str = entry.get("date")
+        if not date_str:
+            continue
+        if date_str not in cache:
+            try:
+                dt = datetime.strptime(date_str, "%Y-%m-%d")
+            except ValueError:
+                continue
+            cache[date_str] = await _roster_counts_for(dt, bool(entry.get("published")))
+        entry.update(cache[date_str])
+    return payload
+
+
+def _week_header(days: list[dict]) -> str:
+    first, last = days[0], days[-1]
+    if first["month"] == last["month"]:
+        return f"{first['day']}–{last['day']} {schedule.MONTHS[first['month']]}"
+    return f"{first['day']}–{last['day']}"
+
+
 async def _week_schedule_for(name: str, role: str | None, week_offset: int = 0) -> dict:
     now = now_local()
     week_start = (now - timedelta(days=now.weekday())).replace(
@@ -263,12 +427,6 @@ async def _week_schedule_for(name: str, role: str | None, week_offset: int = 0) 
         dt = week_start + timedelta(days=i)
         days.append(await _day_schedule_entry(name, role, dt, today))
 
-    first, last = days[0], days[-1]
-    if first["month"] == last["month"]:
-        header = f"{first['day']}–{last['day']} {schedule.MONTHS[first['month']]}"
-    else:
-        header = f"{first['day']}–{last['day']}"
-
     today_dt = now.replace(hour=0, minute=0, second=0, microsecond=0)
     tomorrow_dt = today_dt + timedelta(days=1)
     today_entry = await _day_schedule_entry(name, role, today_dt, today)
@@ -278,7 +436,7 @@ async def _week_schedule_for(name: str, role: str | None, week_offset: int = 0) 
         "name": name,
         "role": role,
         "role_label": role_display_label(role) if role else None,
-        "header": header,
+        "header": _week_header(days),
         "week_offset": week_offset,
         "today": today_entry,
         "tomorrow": tomorrow_entry,
@@ -291,9 +449,10 @@ async def get_week_schedule(user_id: int, week_offset: int = 0) -> dict:
     if not user or not user[1]:
         return {"error": "not_registered"}
 
-    return await _week_schedule_for(
-        user[1], user[4] if len(user) > 4 else None, week_offset,
-    )
+    role = user[4] if len(user) > 4 else None
+    if uses_fixed_schedule(user[1], role):
+        return supervisor_week_schedule(user[1], role, week_offset)
+    return await _week_schedule_for(user[1], role, week_offset)
 
 
 async def get_month_schedule(user_id: int, month_offset: int = 0) -> dict:
@@ -301,9 +460,10 @@ async def get_month_schedule(user_id: int, month_offset: int = 0) -> dict:
     if not user or not user[1]:
         return {"error": "not_registered"}
 
-    return await _month_schedule_for(
-        user[1], user[4] if len(user) > 4 else None, month_offset,
-    )
+    role = user[4] if len(user) > 4 else None
+    if uses_fixed_schedule(user[1], role):
+        return supervisor_month_schedule(user[1], role, month_offset)
+    return await _month_schedule_for(user[1], role, month_offset)
 
 
 async def _month_schedule_for(name: str, role: str | None, month_offset: int = 0) -> dict:
@@ -361,6 +521,8 @@ async def _month_schedule_for(name: str, role: str | None, month_offset: int = 0
 
 
 async def get_colleague_month(name: str, role: str | None, month_offset: int = 0) -> dict:
+    if uses_fixed_schedule(name, role):
+        return supervisor_month_schedule(name, role, month_offset)
     return await _month_schedule_for(name, role, month_offset)
 
 
@@ -419,6 +581,9 @@ async def get_day_roster(date_str: str) -> dict:
                     working_plain_names.add(person_name)
                     continue
 
+                if _is_supervisor(person_name, role_key):
+                    continue
+
                 off_seen.add(key)
                 off_people.append({
                     "name": person_name,
@@ -432,6 +597,9 @@ async def get_day_roster(date_str: str) -> dict:
 
     off_people.sort(key=lambda p: (p["role_label"] or "", p["name"]))
 
+    areas = _group_departments_by_area(departments)
+    hall_total, kitchen_total = _area_totals(areas)
+
     return {
         "date": date_str,
         "day": day,
@@ -442,6 +610,9 @@ async def get_day_roster(date_str: str) -> dict:
         "published": published,
         "gen_cleaning": is_gen_cleaning_day(dt.date()),
         "total_working": len(working_plain_names),
+        "hall_total": hall_total,
+        "kitchen_total": kitchen_total,
+        "areas": areas,
         "departments": departments,
         "off": off_people,
     }
@@ -558,20 +729,17 @@ async def get_people_on_shift(user_id: int, day_offset: int = 0) -> dict:
     published = schedule.is_day_published(day, month, year)
     my_shift = await _shift_for_person(name, role, target)
 
-    departments: list[dict] = []
-    total = 0
-    if published:
-        by_role = await schedule.get_people_for_day(day, month, year)
-        for role_key in ordered_role_keys(by_role):
-            people = by_role.get(role_key, [])
-            if not people:
-                continue
-            total += len(people)
-            departments.append({
-                "role": role_key,
-                "role_label": role_display_label(role_key),
-                "people": people,
-            })
+    roster = await get_day_roster(target.strftime("%Y-%m-%d"))
+    departments = list(roster.get("departments") or [])
+    areas = list(roster.get("areas") or _group_departments_by_area(departments))
+    total = int(roster.get("total_working") or 0)
+    if not total:
+        total = sum(len(dep.get("people") or []) for dep in departments)
+    hall_total = int(roster.get("hall_total") or 0)
+    kitchen_total = int(roster.get("kitchen_total") or 0)
+    if areas and not (hall_total or kitchen_total):
+        hall_total, kitchen_total = _area_totals(areas)
+    published = bool(roster.get("published", published))
 
     return {
         "date": target.strftime("%Y-%m-%d"),
@@ -582,7 +750,10 @@ async def get_people_on_shift(user_id: int, day_offset: int = 0) -> dict:
         "header": f"{day} {schedule.MONTHS[month]}",
         "published": published,
         "total": total,
+        "hall_total": hall_total,
+        "kitchen_total": kitchen_total,
         "my_shift": my_shift,
+        "areas": areas,
         "departments": departments,
         "day_offset": day_offset,
     }
@@ -704,6 +875,8 @@ async def get_colleagues(user_id: int) -> dict:
 
 
 async def get_colleague_week(name: str, role: str | None, week_offset: int = 0) -> dict:
+    if uses_fixed_schedule(name, role):
+        return supervisor_week_schedule(name, role, week_offset)
     return await _week_schedule_for(name, role, week_offset)
 
 
@@ -722,6 +895,17 @@ async def compare_with_colleagues(
     my_name = user[1]
     my_role = user[4] if len(user) > 4 else None
     roster = [(my_name, my_role)] + [(c["name"], c.get("role")) for c in colleagues]
+    tz = now_local().tzinfo
+
+    def _is_working(val) -> bool:
+        if isinstance(val, dict) and "working" in val:
+            return bool(val["working"])
+        return is_work_shift(val)
+
+    def _shift_label(val) -> str:
+        if isinstance(val, dict):
+            return val.get("label") or ("смена" if val.get("working") else "вых")
+        return detect_shift(val)
 
     common_work: list[dict] = []
     common_off: list[dict] = []
@@ -729,6 +913,11 @@ async def compare_with_colleagues(
     for day in range(period_start, period_end + 1):
         values: dict[str, object] = {}
         for name, role in roster:
+            if uses_fixed_schedule(name, role):
+                dt = datetime(year, month, day, tzinfo=tz)
+                values[name] = supervisor_shift_for_weekday(dt.weekday())
+                continue
+
             target_role = role
             row = None
             try:
@@ -755,13 +944,13 @@ async def compare_with_colleagues(
         if len(values) != len(roster):
             continue
 
-        if all(is_work_shift(v) for v in values.values()):
+        if all(_is_working(v) for v in values.values()):
             common_work.append({
                 "day": day,
                 "date": format_date(day, month, year),
-                "shifts": {name: detect_shift(values[name]) for name in values},
+                "shifts": {name: _shift_label(values[name]) for name in values},
             })
-        elif all(not is_work_shift(v) for v in values.values()):
+        elif all(not _is_working(v) for v in values.values()):
             common_off.append({
                 "day": day,
                 "date": format_date(day, month, year),
@@ -835,4 +1024,328 @@ async def get_team_analytics() -> dict:
         "team": rows[:20],
         "coverage": coverage,
         "thin_days": thin_days,
+    }
+
+
+async def _team_messenger_or_error(user_id: int):
+    """Управляющий, менеджер или allowlist — могут писать команде."""
+    user = await get_user(user_id)
+    if not user or not user[1]:
+        return None, {"error": "not_registered"}
+    role = user[4] if len(user) > 4 else None
+    if not _can_team_message(user[1], role):
+        return None, {"error": "forbidden"}
+    return user, None
+
+
+def _match_registered_users(
+    name: str,
+    role_key: str | None,
+    registered: list,
+    *,
+    exclude_user_id: int | None = None,
+) -> list[tuple[int, str, str | None]]:
+    """Все telegram-аккаунты с этим именем штата (дубликаты важны для доставки)."""
+    hits = []
+    role_n = normalize_role_name(role_key) if role_key else None
+    name_norm = " ".join((name or "").replace("\xa0", " ").strip().lower().split())
+    for row in registered:
+        uid, uname = row[0], row[1]
+        urole = row[2] if len(row) > 2 else None
+        if uses_fixed_schedule(uname, urole):
+            continue
+        if exclude_user_id is not None and uid == exclude_user_id:
+            continue
+        if not uname or not _same_person_name(uname, name):
+            continue
+        hits.append((uid, uname, urole))
+    if not hits:
+        return []
+    exact = [
+        h for h in hits
+        if " ".join((h[1] or "").replace("\xa0", " ").strip().lower().split()) == name_norm
+    ]
+    if exact:
+        hits = exact
+    if role_n:
+        role_hits = [h for h in hits if normalize_role_name(h[2]) == role_n]
+        if role_hits:
+            return role_hits
+    return hits
+
+
+def _expand_name_duplicate_recipients(
+    recipients: dict[int, str],
+    registered: list,
+    *,
+    exclude_user_id: int | None = None,
+) -> dict[int, str]:
+    """Если одно имя в боте на нескольких user_id — шлём всем."""
+    expanded = dict(recipients)
+    for name in {n for n in recipients.values() if n}:
+        for uid, uname, _role in _match_registered_users(
+            name, None, registered, exclude_user_id=exclude_user_id,
+        ):
+            expanded[uid] = uname
+            if uid not in recipients:
+                logging.warning(
+                    "team_message: дубликат имени name=%s extra_user_id=%s",
+                    uname, uid,
+                )
+    return expanded
+
+
+async def _shift_day_recipients(
+    user_id: int,
+    day_offset: int,
+    registered: list,
+) -> tuple[dict[int, str], bool]:
+    """Кто на смене сегодня/завтра и есть в боте. Возвращает (recipients, published)."""
+    target = (now_local() + timedelta(days=day_offset)).replace(
+        hour=0, minute=0, second=0, microsecond=0,
+    )
+    day, month, year = target.day, target.month, target.year
+    if not schedule.is_day_published(day, month, year):
+        return {}, False
+
+    by_role = await schedule.get_people_for_day(day, month, year)
+    recipients: dict[int, str] = {}
+    for role_key, entries in (by_role or {}).items():
+        for entry in entries or []:
+            name = _roster_person_name(entry)
+            if not name:
+                continue
+            for matched in _match_registered_users(
+                name, role_key, registered, exclude_user_id=user_id,
+            ):
+                recipients[matched[0]] = matched[1]
+    return recipients, True
+
+
+async def list_supervisor_message_targets(user_id: int) -> dict:
+    """Отделы и люди для быстрых сообщений (управляющий / менеджер)."""
+    user, err = await _team_messenger_or_error(user_id)
+    if err:
+        return err
+
+    registered = await get_registered_users()
+    departments = []
+    total_reachable = 0
+
+    for dep_label, names in _departments_map().items():
+        role = dep_label.split(" ", 1)[-1] if " " in dep_label else dep_label
+        if is_supervisor_role(role):
+            continue
+        people = []
+        reachable = 0
+        for name in names:
+            matched_all = _match_registered_users(
+                name, role, registered, exclude_user_id=user_id,
+            )
+            user_ids = [m[0] for m in matched_all]
+            item = {
+                "name": name,
+                "role": role,
+                "registered": bool(user_ids),
+                "user_id": user_ids[0] if user_ids else None,
+                "user_ids": user_ids,
+                "accounts": len(user_ids),
+            }
+            if user_ids:
+                reachable += 1
+            people.append(item)
+        if not people:
+            continue
+        total_reachable += reachable
+        departments.append({
+            "role": role,
+            "role_label": dep_label,
+            "reachable": reachable,
+            "total": len(people),
+            "people": people,
+        })
+
+    today_rec, today_pub = await _shift_day_recipients(user_id, 0, registered)
+    tomorrow_rec, tomorrow_pub = await _shift_day_recipients(user_id, 1, registered)
+
+    return {
+        "departments": departments,
+        "reachable_total": total_reachable,
+        "shift_today": {
+            "reachable": len(today_rec),
+            "published": today_pub,
+        },
+        "shift_tomorrow": {
+            "reachable": len(tomorrow_rec),
+            "published": tomorrow_pub,
+        },
+    }
+
+
+async def send_supervisor_message(
+    user_id: int,
+    text: str,
+    *,
+    send_all: bool = False,
+    roles: list[str] | None = None,
+    people: list[dict] | None = None,
+    shift_offset: int | None = None,
+) -> dict:
+    """Рассылка команде: всем / отделы / человек / смена сегодня|завтра."""
+    import asyncio
+
+    from app_config import NOTIFY_DRY_RUN
+    from services.notify_status_service import report_delivery_to_admins
+    from services.telegram_notify import send_user_message_result
+
+    user, err = await _team_messenger_or_error(user_id)
+    if err:
+        return err
+
+    body = (text or "").strip()
+    if not body:
+        return {"error": "empty_text"}
+    if len(body) > 1000:
+        return {"error": "text_too_long"}
+
+    targets = await list_supervisor_message_targets(user_id)
+    if targets.get("error"):
+        return targets
+
+    recipients: dict[int, str] = {}
+    registered = await get_registered_users()
+    audience = None
+
+    if shift_offset is not None:
+        if shift_offset not in (0, 1):
+            return {"error": "bad_shift_offset"}
+        recipients, published = await _shift_day_recipients(
+            user_id, shift_offset, registered,
+        )
+        if not published:
+            return {"error": "unpublished_day"}
+        audience = "сегодня на смене" if shift_offset == 0 else "завтра на смене"
+    elif people:
+        audience = "выбранные люди"
+        for p in people:
+            pname = (p.get("name") or "").strip()
+            prole = normalize_role_name(p.get("role"))
+            explicit_uid = p.get("user_id")
+            if not pname and not explicit_uid:
+                continue
+            for dep in targets.get("departments") or []:
+                dep_role = normalize_role_name(dep["role"])
+                if prole and dep_role != prole:
+                    continue
+                for person in dep["people"]:
+                    if not person.get("registered"):
+                        continue
+                    ids = person.get("user_ids") or (
+                        [person["user_id"]] if person.get("user_id") else []
+                    )
+                    if explicit_uid and int(explicit_uid) in {int(x) for x in ids}:
+                        for uid in ids:
+                            recipients[int(uid)] = person["name"]
+                        break
+                    if pname and person["name"] == pname:
+                        for uid in ids:
+                            recipients[int(uid)] = person["name"]
+                        break
+        if len({n for n in recipients.values()}) == 1 and recipients:
+            only = next(iter(recipients.values()))
+            audience = f"один · {only}"
+            if len(recipients) > 1:
+                audience += f" ({len(recipients)} аккаунта)"
+    elif send_all:
+        audience = "всем в системе"
+        for dep in targets.get("departments") or []:
+            for person in dep["people"]:
+                ids = person.get("user_ids") or (
+                    [person["user_id"]] if person.get("user_id") else []
+                )
+                for uid in ids:
+                    recipients[int(uid)] = person["name"]
+    elif roles:
+        role_set = {normalize_role_name(r) for r in roles if r}
+        audience = "отделы: " + ", ".join(sorted(role_set))
+        for dep in targets.get("departments") or []:
+            if normalize_role_name(dep["role"]) not in role_set:
+                continue
+            for person in dep["people"]:
+                ids = person.get("user_ids") or (
+                    [person["user_id"]] if person.get("user_id") else []
+                )
+                for uid in ids:
+                    recipients[int(uid)] = person["name"]
+    else:
+        return {"error": "no_targets"}
+
+    recipients = _expand_name_duplicate_recipients(
+        recipients, registered, exclude_user_id=user_id,
+    )
+
+    if not recipients:
+        return {"error": "no_recipients"}
+
+    sender = user[1]
+    role = user[4] if len(user) > 4 else None
+    if uses_fixed_schedule(sender, role):
+        header = "📩 Сообщение от управляющего"
+        kind = "Сообщение управляющего"
+    elif normalize_role_name(role) == "Менеджеры":
+        header = "📩 Сообщение от менеджера"
+        kind = "Сообщение менеджера"
+    else:
+        header = "📩 Сообщение от сотрудника"
+        kind = "Сообщение сотрудника"
+    message = f"{header}\n{sender}\n\n{body}"
+    sent = 0
+    failed = 0
+    failed_names: list[str] = []
+    failed_items: list[tuple[str, str | None]] = []
+    dry_run = False
+    for uid, name in recipients.items():
+        result = await send_user_message_result(uid, message)
+        dry_run = dry_run or result.dry_run
+        if result.ok:
+            sent += 1
+            logging.info(
+                "team_message ok user_id=%s name=%s dry_run=%s",
+                uid, name, result.dry_run,
+            )
+        else:
+            failed += 1
+            label = f"{name} ({uid})"
+            failed_names.append(label)
+            failed_items.append((label, result.error))
+            logging.warning(
+                "team_message: не доставлено user_id=%s name=%s error=%s",
+                uid, name, result.error,
+            )
+        await asyncio.sleep(0.05)
+
+    logging.info(
+        "team_message summary sender=%s audience=%s total=%s sent=%s failed=%s dry_run=%s",
+        sender, audience, len(recipients), sent, failed, dry_run or NOTIFY_DRY_RUN,
+    )
+    await report_delivery_to_admins(
+        kind=kind,
+        sender=sender,
+        audience=audience,
+        total=len(recipients),
+        sent=sent,
+        failed=failed,
+        failed_items=failed_items,
+        dry_run=dry_run or NOTIFY_DRY_RUN,
+        preview=body,
+    )
+
+    return {
+        "ok": True,
+        "sent": sent,
+        "failed": failed,
+        "total": len(recipients),
+        "names": list(recipients.values()),
+        "failed_names": failed_names,
+        "dry_run": dry_run or NOTIFY_DRY_RUN,
     }

@@ -31,6 +31,7 @@ from keyboards.inline_schedule import CB_WEEK_DAY, CB_WEEK_NEXT, CB_WEEK_PREV, w
 import message_format as mf
 from schedule_utils import detect_shift, is_work_shift
 from services import schedule_service as schedule
+from services.supervisor_schedule import shift_for_weekday, uses_fixed_schedule
 from ui_utils import MIN_LOADING_SEC, answer_html, loading_answer
 
 router = Router(name="schedule")
@@ -72,15 +73,22 @@ async def my_schedule_menu(message: Message, state: FSMContext):
     if name:
         now = now_local()
         try:
-            row, _ = await schedule.find_row(name, now.day, now.month, now.year, target_role=role)
-            if row:
-                value = await schedule.get_day_value(row, now.day, now.month, now.year)
-                if is_work_shift(value):
-                    today_line = f"\n\n📅 Сегодня: ✅ <code>{mf.esc(detect_shift(value))}</code>"
+            if uses_fixed_schedule(name, role):
+                shift = shift_for_weekday(now.weekday())
+                if shift["working"]:
+                    today_line = f"\n\n📅 Сегодня: ✅ <code>{mf.esc(shift['label'])}</code>"
                 else:
                     today_line = "\n\n🏖 Сегодня: выходной"
             else:
-                today_line = "\n\n📋 График на сегодня ещё не составлен"
+                row, _ = await schedule.find_row(name, now.day, now.month, now.year, target_role=role)
+                if row:
+                    value = await schedule.get_day_value(row, now.day, now.month, now.year)
+                    if is_work_shift(value):
+                        today_line = f"\n\n📅 Сегодня: ✅ <code>{mf.esc(detect_shift(value))}</code>"
+                    else:
+                        today_line = "\n\n🏖 Сегодня: выходной"
+                else:
+                    today_line = "\n\n📋 График на сегодня ещё не составлен"
         except Exception:
             pass
 
@@ -188,13 +196,12 @@ async def _show_week_schedule(
         month_short = ru_months_short[dt.month]
         is_today = dt.date() == today_date
         try:
-            row, _ = await schedule.find_row(name, dt.day, dt.month, dt.year, target_role=role)
-            if row:
-                value = await schedule.get_day_value(row, dt.day, dt.month, dt.year)
-                if is_work_shift(value):
+            if uses_fixed_schedule(name, role):
+                shift = shift_for_weekday(dt.weekday())
+                if shift["working"]:
                     day_lines.append(
                         mf.week_day_line(
-                            day_short, dt.day, month_short, True, detect_shift(value), is_today,
+                            day_short, dt.day, month_short, True, shift["label"], is_today,
                         )
                     )
                 else:
@@ -202,8 +209,22 @@ async def _show_week_schedule(
                         mf.week_day_line(day_short, dt.day, month_short, False, None, is_today)
                     )
             else:
-                line = f"{day_short} {dt.day} {month_short} · 📋 нет данных"
-                day_lines.append(f"👉 <b>{line}</b>" if is_today else line)
+                row, _ = await schedule.find_row(name, dt.day, dt.month, dt.year, target_role=role)
+                if row:
+                    value = await schedule.get_day_value(row, dt.day, dt.month, dt.year)
+                    if is_work_shift(value):
+                        day_lines.append(
+                            mf.week_day_line(
+                                day_short, dt.day, month_short, True, detect_shift(value), is_today,
+                            )
+                        )
+                    else:
+                        day_lines.append(
+                            mf.week_day_line(day_short, dt.day, month_short, False, None, is_today)
+                        )
+                else:
+                    line = f"{day_short} {dt.day} {month_short} · 📋 нет данных"
+                    day_lines.append(f"👉 <b>{line}</b>" if is_today else line)
         except (ValueError, ConnectionError):
             day_lines.append(f"{day_short} {dt.day} {month_short} · ⚠️ таблица недоступна")
 

@@ -7,22 +7,42 @@ from datetime import date, datetime, timedelta
 
 from app_config import now_local
 from services.sheet_periods_service import SHEET_GID_MAP
+from services.supervisor_schedule import shift_for_weekday, uses_fixed_schedule
 from departments_manager import (
     SHEET_ROLES,
     normalize_role_name,
     ordered_role_keys,
+    role_area,
     role_display_label,
 )
 from schedule_utils import clean_value, detect_shift, format_date, is_work_shift
 from repositories.users_repo import get_user
 import message_format as mf
 
-SCHEDULE_MAX_DAY_COL = 16
+SCHEDULE_MAX_DAY_COL = 22
 ROLES = SHEET_ROLES
+
+# Служебные строки в колонке имён (не сотрудники).
+_SKIP_PERSON_ROWS = frozenset({
+    "должно быть",
+    "телефон",
+    "др",
+})
 
 MONTHS = None
 RU_HOLIDAYS = None
 _load_sheet = None
+
+
+def _area_totals_from_people(people_by_role: dict) -> tuple[int, int, int]:
+    hall = kitchen = 0
+    for role_key, people in people_by_role.items():
+        count = len(people or [])
+        if role_area(role_key) == "kitchen":
+            kitchen += count
+        else:
+            hall += count
+    return hall + kitchen, hall, kitchen
 
 
 def configure_schedule_service(load_sheet, months, ru_holidays):
@@ -95,6 +115,8 @@ def get_day_column(df, day):
                     return col_index
 
     return None
+
+
 def normalize_person_lookup_name(name: str | None) -> str:
     """Нормализация имени для поиска сотрудника в Google Sheets."""
     if name is None:
@@ -105,6 +127,18 @@ def normalize_person_lookup_name(name: str | None) -> str:
     text = text.lower()
     text = re.sub(r"\s+", " ", text).strip()
     return text
+
+
+def person_names_match(a: str | None, b: str | None) -> bool:
+    """Совпадение имён с учётом короткого/полного («Никита» ≡ «Никита Рафаэлович»)."""
+    na = normalize_person_lookup_name(a)
+    nb = normalize_person_lookup_name(b)
+    if not na or not nb:
+        return False
+    if na == nb:
+        return True
+    short, long = (na, nb) if len(na) <= len(nb) else (nb, na)
+    return long.startswith(short + " ")
 
 
 async def find_row(name, day, month=None, year=None, target_role=None):
@@ -189,6 +223,8 @@ async def get_people_for_day(day, month=None, year=None):
     role_aliases = {
         "менеджеры": "Менеджеры",
         "менеджер": "Менеджеры",
+        "управляющий": "Управляющий",
+        "управляющие": "Управляющий",
         "официант": "Официант",
         "официанты": "Официант",
         "стажер": "Стажер",
@@ -199,6 +235,9 @@ async def get_people_for_day(day, month=None, year=None):
         "кальянщик": "Кальян",
         "кальянщики": "Кальян",
         "хостес": "Хостес",
+        "повар": "Повар",
+        "повара": "Повар",
+        "повары": "Повар",
     }
 
     weekdays = {"вт", "ср", "чт", "пт", "сб", "вс", "пн"}
@@ -206,6 +245,7 @@ async def get_people_for_day(day, month=None, year=None):
     def detect_role_from_cell(value):
         text = str(value or "").replace("\xa0", " ").strip()
         text_norm = re.sub(r"\s+", " ", text).lower()
+        text_norm = re.sub(r"^[^0-9a-zа-яё]+", "", text_norm, flags=re.IGNORECASE)
         return role_aliases.get(text_norm)
 
     def find_day_col_in_row(row_idx: int):
@@ -229,6 +269,22 @@ async def get_people_for_day(day, month=None, year=None):
         current_day_col = get_day_column(df, day)
     except Exception:
         current_day_col = None
+
+    # Если первая строка листа — пустая/пробел (нет заголовка блока),
+    # а в ней присутствует номер нужного дня → это неявный блок «Менеджеры».
+    # Пример: лист «Авг 16-31», где строка 0 = ' ' вместо 'Менеджеры'.
+    if len(df) > 0:
+        first_cell = str(df.iat[0, 0] or "").replace("\xa0", " ").strip()
+        if not first_cell or first_cell.lower() == "nan":
+            # строка выглядит как шапка дат без заголовка роли
+            day_col_row0 = find_day_col_in_row(0)
+            if day_col_row0 is not None:
+                current_role = "Менеджеры"
+                current_day_col = day_col_row0
+                logging.debug(
+                    "get_people_for_day: implicit Менеджеры block at row 0, day_col=%s",
+                    day_col_row0,
+                )
 
     for i in range(len(df)):
         raw_first = df.iat[i, 0] if len(df.columns) > 0 else ""
@@ -269,6 +325,8 @@ async def get_people_for_day(day, month=None, year=None):
         if "кол-во" in lower_name or "смен" in lower_name:
             continue
         if lower_name in role_aliases:
+            continue
+        if lower_name in _SKIP_PERSON_ROWS or "должно быть" in lower_name:
             continue
 
         try:
@@ -337,6 +395,13 @@ async def get_my_status_for_day(user_id, day, month=None, year=None):
     if not my_name:
         return "👤 Твоё имя не выбрано."
 
+    if uses_fixed_schedule(my_name, my_role):
+        dt = datetime(year, month, day, tzinfo=now.tzinfo)
+        shift = shift_for_weekday(dt.weekday())
+        if shift["working"]:
+            return f"✅ Ты работаешь: <code>{mf.esc(shift['label'])}</code>"
+        return "🏖 Ты отдыхаешь."
+
     if not is_day_published(day, month, year):
         return "👤 Твой график: график пока не составлен."
 
@@ -362,6 +427,42 @@ async def get_day_schedule(name, day, month=None, year=None, target_role=None):
     if day > max_day:
         return "Такой даты в этом месяце нет."
 
+    if uses_fixed_schedule(name, target_role):
+        dt = datetime(year, month, day, tzinfo=now.tzinfo)
+        shift = shift_for_weekday(dt.weekday())
+        working = shift["working"]
+        shift_line = shift["label"] if working else None
+        role_label = role_display_label(target_role) if target_role else None
+        team_section = None
+        off_section = None
+        if is_day_published(day, month, year):
+            people_by_role = await get_people_for_day(day, month, year)
+            role_blocks = [
+                (role_display_label(role_key), people)
+                for role_key in ordered_role_keys(people_by_role)
+                for people in [people_by_role.get(role_key, [])]
+                if people
+            ]
+            total_on_shift, hall_total, kitchen_total = _area_totals_from_people(people_by_role)
+            team_section = (
+                mf.team_on_shift(
+                    total_on_shift,
+                    role_blocks,
+                    hall_total=hall_total,
+                    kitchen_total=kitchen_total,
+                )
+                if role_blocks else None
+            )
+        return mf.day_schedule_card(
+            format_date(day, month, year),
+            name,
+            role_label,
+            working,
+            shift_line,
+            team_section,
+            off_section,
+        )
+
     if not is_day_published(day, month, year):
         return mf.empty_state(
             "📭",
@@ -386,8 +487,16 @@ async def get_day_schedule(name, day, month=None, year=None, target_role=None):
         for people in [people_by_role.get(role_key, [])]
         if people
     ]
-    total_on_shift = sum(len(v) for v in people_by_role.values())
-    team_section = mf.team_on_shift(total_on_shift, role_blocks) if role_blocks else None
+    total_on_shift, hall_total, kitchen_total = _area_totals_from_people(people_by_role)
+    team_section = (
+        mf.team_on_shift(
+            total_on_shift,
+            role_blocks,
+            hall_total=hall_total,
+            kitchen_total=kitchen_total,
+        )
+        if role_blocks else None
+    )
 
     off_section = None
     if not working:
@@ -421,9 +530,10 @@ async def get_range_schedule(name, start_day, end_day, month=None, year=None, ta
     role_line_index = None
     unpublished_start = None
     day_lines: list[str] = []
+    fixed = uses_fixed_schedule(name, target_role)
 
     for day in range(start_day, end_day + 1):
-        if not is_day_published(day, month, year):
+        if not fixed and not is_day_published(day, month, year):
             if unpublished_start is None:
                 unpublished_start = day
             continue
@@ -438,6 +548,16 @@ async def get_range_schedule(name, start_day, end_day, month=None, year=None, ta
                     f"{unpublished_start}–{day - 1} {MONTHS[month]} — график пока не составлен"
                 )
             unpublished_start = None
+
+        if fixed:
+            dt = datetime(year, month, day, tzinfo=now.tzinfo)
+            shift = shift_for_weekday(dt.weekday())
+            found_any = True
+            if target_role:
+                saved_role = target_role
+            label = shift["label"] if shift["working"] else "вых"
+            day_lines.append(mf.range_schedule_day(format_date(day, month, year), label))
+            continue
 
         row, role = await find_row(name, day, month, year, target_role=target_role)
 
@@ -482,6 +602,20 @@ async def build_today_summary(name, role, user_id, track_hours: bool = False) ->
     year = now.year
 
     role_label = role_display_label(role) if role else None
+
+    if uses_fixed_schedule(name, role):
+        today_shift = shift_for_weekday(now.weekday())
+        if today_shift["working"]:
+            today_line = f"✅ Работаешь — <code>{mf.esc(today_shift['label'])}</code>"
+        else:
+            today_line = "🏖 Выходной"
+        tomorrow_shift = shift_for_weekday((now + timedelta(days=1)).weekday())
+        if tomorrow_shift["working"]:
+            tomorrow_hint = f"✅ {tomorrow_shift['label']}"
+        else:
+            tomorrow_hint = "🏖 выходной"
+        hours_hint = None
+        return mf.today_summary_card(name, role_label, today_line, tomorrow_hint, hours_hint)
 
     if not is_day_published(today, month, year):
         today_line = "📭 График на сегодня ещё не составлен"
@@ -548,8 +682,15 @@ async def get_people(day, user_id, month=None, year=None):
         for role_key in ordered_role_keys(result)
         for people in [result.get(role_key, [])]
     ]
+    _total, hall_total, kitchen_total = _area_totals_from_people(result)
 
-    return mf.who_works_card(format_date(day, month, year), my_status, role_blocks)
+    return mf.who_works_card(
+        format_date(day, month, year),
+        my_status,
+        role_blocks,
+        hall_total=hall_total,
+        kitchen_total=kitchen_total,
+    )
 
 async def find_next_shift(name, from_day, from_month=None, from_year=None, target_role=None):
     """Ищет следующую смену начиная с from_day, переходит через месяц если нужно."""
@@ -560,8 +701,15 @@ async def find_next_shift(name, from_day, from_month=None, from_year=None, targe
         from_year = now.year
 
     # Смотрим вперёд на 45 дней максимум
-    from datetime import date
     start = date(from_year, from_month, from_day)
+
+    if uses_fixed_schedule(name, target_role):
+        for offset in range(1, 46):
+            target = start + timedelta(days=offset)
+            shift = shift_for_weekday(target.weekday())
+            if shift["working"]:
+                return target, shift["label"]
+        return None, None
 
     for offset in range(1, 46):
         target = start + timedelta(days=offset)
@@ -587,6 +735,11 @@ async def get_notification_text(name, target_role=None):
     today = now.day
     month = now.month
     year = now.year
+
+    if uses_fixed_schedule(name, target_role):
+        # Управляющему — дайджест состава смены, не личный «классический» текст.
+        from services.supervisor_schedule import team_digest_text
+        return await team_digest_text()
 
     if not is_day_published(today, month, year):
         next_dt, next_value = await find_next_shift(name, today, month, year, target_role=target_role)
