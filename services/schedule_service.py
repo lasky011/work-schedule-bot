@@ -19,8 +19,15 @@ from schedule_utils import clean_value, detect_shift, format_date, is_work_shift
 from repositories.users_repo import get_user
 import message_format as mf
 
-SCHEDULE_MAX_DAY_COL = 16
+SCHEDULE_MAX_DAY_COL = 22
 ROLES = SHEET_ROLES
+
+# Служебные строки в колонке имён (не сотрудники).
+_SKIP_PERSON_ROWS = frozenset({
+    "должно быть",
+    "телефон",
+    "др",
+})
 
 MONTHS = None
 RU_HOLIDAYS = None
@@ -304,6 +311,8 @@ async def get_people_for_day(day, month=None, year=None):
         if "кол-во" in lower_name or "смен" in lower_name:
             continue
         if lower_name in role_aliases:
+            continue
+        if lower_name in _SKIP_PERSON_ROWS or "должно быть" in lower_name:
             continue
 
         try:

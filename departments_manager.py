@@ -265,8 +265,12 @@ def parse_departments(df) -> dict:
         if current_role is None:
             continue
         name = clean_value(first)
-        if name:
-            result[current_role].append(_clean_person_name(name))
+        if not name:
+            continue
+        lower = name.lower().strip()
+        if lower in {"должно быть", "телефон", "др"} or "должно быть" in lower:
+            continue
+        result[current_role].append(_clean_person_name(name))
     return result
 
 

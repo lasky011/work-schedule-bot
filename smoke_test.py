@@ -813,6 +813,70 @@ def test_people_on_shift_includes_managers():
     assert "hall" in area_keys and "kitchen" in area_keys, data["areas"]
 
 
+def test_sheet_sep16_extra_columns_and_skip_staffing_row():
+    """Лист 16–30: колонки Телефон/ДР слева; «Должно быть» не сотрудник."""
+    import asyncio
+
+    import pandas as pd
+
+    from departments_manager import configure_departments_manager, parse_departments
+    from services import schedule_service as schedule
+    from schedule_utils import configure_schedule_utils
+
+    # cols: 0=name, 1=phone, 2=bday, 3..=days 16..30
+    days = list(range(16, 31))
+    width = 3 + len(days)
+    rows = []
+
+    def blank_row():
+        return [""] * width
+
+    header = ["Менеджеры", "Телефон", "ДР"] + [str(d) for d in days]
+    rows.append(header)
+    rows.append(["", "", ""] + ["пн"] * len(days))
+    rina = ["Рина", "8-999", "01.01.1990"] + [""] * len(days)
+    rina[3] = "11:00"  # day 16
+    rows.append(rina)
+
+    rows.append(["Официант", "", ""] + [str(d) for d in days])
+    rows.append(["", "", ""] + ["пн"] * len(days))
+    vitaly = ["Виталий", "8-111", "01.01.2000"] + [""] * len(days)
+    vitaly[3] = "16:00"
+    rows.append(vitaly)
+    staffing = ["Должно быть", "", ""] + ["4"] * len(days)
+    rows.append(staffing)
+
+    rows.append(["Бармен", "", ""] + [str(d) for d in days])
+    lina = ["Лина", "8-222", "01.01.2001"] + [""] * len(days)
+    lina[3 + (30 - 16)] = "11:00"  # day 30
+    rows.append(lina)
+
+    df = pd.DataFrame(rows)
+
+    async def fake_load(*_a, **_k):
+        return df
+
+    months = {i: str(i) for i in range(13)}
+    schedule.configure_schedule_service(fake_load, months, set())
+    configure_schedule_utils(months, set())
+    configure_departments_manager(lambda n: str(n).strip(), None)
+
+    parsed = parse_departments(df)
+    assert "Должно быть" not in parsed.get("Официант", [])
+
+    async def run():
+        assert schedule.get_day_column(df, 16) == 3
+        assert schedule.get_day_column(df, 30) == 17
+        day16 = await schedule.get_people_for_day(16, 9, 2026)
+        day30 = await schedule.get_people_for_day(30, 9, 2026)
+        assert any("Виталий" in p for p in day16.get("Официант", [])), day16
+        assert not any("Должно быть" in p for people in day16.values() for p in people), day16
+        assert any("Лина" in p for p in day30.get("Бармен", [])), day30
+        assert schedule.SCHEDULE_MAX_DAY_COL >= 22
+
+    asyncio.run(run())
+
+
 def test_cook_role_aliases():
     from departments_manager import normalize_role_name, role_area, role_display_label
     from schedule_utils import detect_shift_type, is_work_shift
@@ -1378,6 +1442,7 @@ def main():
         ("gen_cleaning_admin_kb", test_gen_cleaning_admin_keyboard),
         ("people_on_shift_managers", test_people_on_shift_includes_managers),
         ("cook_role_aliases", test_cook_role_aliases),
+        ("sheet_sep16_extra_cols", test_sheet_sep16_extra_columns_and_skip_staffing_row),
         ("schedule_gen_cleaning_flag", test_schedule_gen_cleaning_flag),
         ("miniapp_static_assets", test_miniapp_static_assets),
         ("miniapp_health_endpoint", test_miniapp_health_endpoint),
