@@ -714,31 +714,9 @@ async def get_notification_text(name, target_role=None):
     year = now.year
 
     if uses_fixed_schedule(name, target_role):
-        shift = shift_for_weekday(now.weekday())
-        if shift["working"]:
-            return (
-                f"🔔 Ежедневное уведомление\n\n"
-                f"{name}\n"
-                f"{format_date(today, month, year)}\n"
-                f"✅ Сегодня ты работаешь: {shift['label']}"
-            )
-        next_dt, next_value = await find_next_shift(
-            name, today, month, year, target_role=target_role,
-        )
-        text = (
-            f"🔔 Ежедневное уведомление\n\n"
-            f"{name}\n"
-            f"{format_date(today, month, year)}\n"
-            f"🏖 Сегодня ты отдыхаешь"
-        )
-        if next_dt:
-            today_date = date(year, month, today)
-            off_days = (next_dt - today_date).days
-            text += (
-                f"\n\nБлижайшая смена: {format_date(next_dt.day, next_dt.month, next_dt.year)}"
-                f" — {next_value}\nДо неё: {off_days} дн."
-            )
-        return text
+        # Управляющему — дайджест состава смены, не личный «классический» текст.
+        from services.supervisor_schedule import team_digest_text
+        return await team_digest_text()
 
     if not is_day_published(today, month, year):
         next_dt, next_value = await find_next_shift(name, today, month, year, target_role=target_role)

@@ -302,7 +302,7 @@ def month_schedule(
 
 async def team_digest_text(location_name: str | None = None) -> str | None:
     """Утренний дайджест «кто сегодня на смене» для supervisor."""
-    from departments_manager import ordered_role_keys, role_display_label
+    from departments_manager import ordered_role_keys, role_area, role_display_label
     from schedule_utils import format_date
     from services import schedule_service as schedule
 
@@ -319,13 +319,21 @@ async def team_digest_text(location_name: str | None = None) -> str | None:
         )
 
     people_by_role = await schedule.get_people_for_day(day, month, year)
-    total = sum(len(v) for v in people_by_role.values())
+    total, hall, kitchen = 0, 0, 0
+    for role_key, people in people_by_role.items():
+        count = len(people or [])
+        total += count
+        if role_area(role_key) == "kitchen":
+            kitchen += count
+        else:
+            hall += count
+
     lines = [
         "🔔 Кто сегодня на смене",
         "",
         place,
         format_date(day, month, year),
-        f"👥 На смене: {total} чел.",
+        f"👥 На смене: {total} чел. (зал {hall} · кухня {kitchen})",
     ]
     if not total:
         lines.append("\nСегодня никого в графике.")

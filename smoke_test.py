@@ -461,6 +461,33 @@ def test_supervisor_fixed_schedule():
     assert "собрание" in ss.MEETING_REMINDER_TEXT.lower()
 
 
+def test_supervisor_daily_notify_is_team_digest():
+    from unittest.mock import AsyncMock, patch
+
+    from services import schedule_service as schedule
+
+    async def run():
+        with patch.object(schedule, "is_day_published", return_value=True), patch.object(
+            schedule,
+            "get_people_for_day",
+            new=AsyncMock(return_value={
+                "Официант": ["Виталий — 11:00 — утро"],
+                "Повар": ["Азим — 12 — утро"],
+            }),
+        ):
+            text = await schedule.get_notification_text(
+                "Владислав Байкалов", target_role="Управляющий",
+            )
+        assert text is not None
+        assert "Кто сегодня на смене" in text
+        assert "Виталий" in text
+        assert "Азим" in text
+        assert "зал" in text and "кухня" in text
+        assert "ты работаешь" not in text
+
+    asyncio.run(run())
+
+
 def test_supervisor_week_uses_fixed_schedule_not_sheets():
     from datetime import datetime
     from unittest.mock import patch
@@ -1342,6 +1369,7 @@ def main():
         ("miniapp_auth", test_miniapp_auth),
         ("miniapp_week_today", test_miniapp_week_today_stays_real_when_offset_changes),
         ("supervisor_fixed_schedule", test_supervisor_fixed_schedule),
+        ("supervisor_daily_team_digest", test_supervisor_daily_notify_is_team_digest),
         ("supervisor_week_fixed", test_supervisor_week_uses_fixed_schedule_not_sheets),
         ("supervisor_compare_fixed", test_supervisor_compare_uses_fixed_schedule),
         ("supervisor_roster_off", test_supervisor_skipped_from_day_roster_off),
