@@ -4,6 +4,7 @@ Python Telegram bots (aiogram, long polling) plus a Mini App served from the sta
 
 - Staff: `python3 bot.py` (polling, notifications, Mini App on `MINIAPP_PORT`)
 - Admin: `python3 admin_bot.py` (polling, no HTTP)
+- Local Mini App only (no polling): `python3 scripts/dev_miniapp.py`
 - Tests: `python3 smoke_test.py` or `make check`
 
 Do not run two processes with the same `BOT_TOKEN`. Prod and test must use different tokens.
@@ -19,3 +20,7 @@ Postgres is Supabase (`DATABASE_URL`). Google Sheets is public CSV, no service a
 Mini App Telegram WebApp needs a public HTTPS `MINIAPP_URL`. Health: `GET /api/health` on the staff bot.
 
 Notification loops live in `bot.py` and die if the process sleeps. Always-on hosting only.
+
+Cloud Agent setup installs `requirements.txt` with `python3 -m pip install --user -r requirements.txt`. `python3 smoke_test.py` needs no database and no Telegram token.
+
+`python3 scripts/dev_miniapp.py` serves the Mini App on port 8080 and creates `users.db` when `DATABASE_URL` is unset. Leave `BOT_TOKEN` unset for that process (it uses a local placeholder and does not poll). Do not start `bot.py` or `admin_bot.py` with the production token in this environment: a second poller steals updates from the live bot.
